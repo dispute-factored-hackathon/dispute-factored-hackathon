@@ -67,6 +67,13 @@ To evaluate the live structured-output model against the versioned synthetic ben
 uv run python -m dispute_agent.model_evaluation
 ```
 
+To evaluate country-code inference, regional locale selection, ambiguity handling, language order,
+and opening latency against `evals/openings.jsonl`:
+
+```bash
+uv run python -m dispute_agent.language_evaluation
+```
+
 This produces JSON metrics for intent accuracy, language accuracy, accent-insensitive name extraction, answer presence, prompt-abuse accuracy/precision/recall/F1, complete-example accuracy, average latency, p95 latency, API calls, and individual failures. The benchmark lives in `evals/turns.jsonl`; it contains only synthetic multilingual examples.
 
 To upload the same benchmark and row-level scores as a LangSmith experiment:

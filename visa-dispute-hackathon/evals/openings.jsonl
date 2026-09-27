@@ -1,0 +1,8 @@
+{"country_code":"+55","expected_country":"Brazil","primary_language":"pt","locale":"pt-BR","ambiguous":false,"language_order":["português","inglês","espanhol"]}
+{"country_code":"+351","expected_country":"Portugal","primary_language":"pt","locale":"pt-PT","ambiguous":false,"language_order":["português","inglês","espanhol"]}
+{"country_code":"+57","expected_country":"Colombia","primary_language":"es","locale":"es-CO","ambiguous":false,"language_order":["español","inglés","portugués"]}
+{"country_code":"+52","expected_country":"Mexico","primary_language":"es","locale":"es-MX","ambiguous":false,"language_order":["español","inglés","portugués"]}
+{"country_code":"+54","expected_country":"Argentina","primary_language":"es","locale":"es-AR","ambiguous":false,"language_order":["español","inglés","portugués"]}
+{"country_code":"+34","expected_country":"Spain","primary_language":"es","locale":"es-ES","ambiguous":false,"language_order":["español","inglés","portugués"]}
+{"country_code":"+1","expected_country":"region","primary_language":"en","locale":"en-US","ambiguous":true,"language_order":["English","Spanish","Portuguese"]}
+{"country_code":"+999","expected_country":"code","primary_language":"en","locale":"en-US","ambiguous":true,"language_order":["English","Spanish","Portuguese"]}

@@ -378,6 +378,9 @@ class AuthenticationAgent:
     def apply_llm_classification(self, analysis: TurnAnalysis) -> AuthenticationResult:
         """Apply a validated schema decision without reclassification."""
 
+        language_result = self._select_language(analysis)
+        if language_result:
+            return language_result
         if self.current_customer is not None:
             return AuthenticationResult(
                 AuthStatus.AUTHENTICATED,
@@ -386,9 +389,6 @@ class AuthenticationAgent:
                 "DEMO_ONLY_NAME_MATCH_CONFIRMED",
             )
 
-        language_result = self._select_language(analysis)
-        if language_result:
-            return language_result
         global_result = self._handle_global_intent(analysis.intent)
         if global_result:
             return global_result
@@ -397,9 +397,9 @@ class AuthenticationAgent:
         return self._handle_name_collection(analysis)
 
     def _select_language(self, analysis: TurnAnalysis) -> AuthenticationResult | None:
-        if self.language != "auto":
-            return None
         explicit_selection = analysis.intent is TurnIntent.SELECTS_LANGUAGE
+        if self.language != "auto" and not explicit_selection:
+            return None
         substantive_turn = analysis.intent not in {TurnIntent.OTHER, TurnIntent.OUT_OF_SCOPE}
         if analysis.language not in DEFAULT_LOCALES or not (explicit_selection or substantive_turn):
             return AuthenticationResult(AuthStatus.NEEDS_NAME, AUTO_LANGUAGE_RETRY)
@@ -410,6 +410,18 @@ class AuthenticationAgent:
             else DEFAULT_LOCALES[self.language]
         )
         if explicit_selection:
+            if self.current_customer:
+                return AuthenticationResult(
+                    AuthStatus.AUTHENTICATED,
+                    self._message("already", name=self.current_customer.full_name),
+                    self.current_customer,
+                    "DEMO_ONLY_NAME_MATCH_CONFIRMED",
+                )
+            if self.pending_customer:
+                return AuthenticationResult(
+                    AuthStatus.NEEDS_CONFIRMATION,
+                    self._message("confirmation_unclear", name=self.pending_customer.full_name),
+                )
             return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("start"))
         return None
 

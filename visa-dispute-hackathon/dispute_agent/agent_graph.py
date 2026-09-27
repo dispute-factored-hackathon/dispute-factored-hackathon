@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Literal, TypedDict
 from uuid import uuid4
 
 from langgraph.graph import END, START, StateGraph
@@ -67,9 +67,16 @@ class LangGraphAuthenticationAgent:
         "https://",
     )
 
-    def __init__(self, policy: AuthenticationAgent, interpreter: OpenAITurnInterpreter):
+    def __init__(
+        self,
+        policy: AuthenticationAgent,
+        interpreter: OpenAITurnInterpreter,
+        *,
+        channel: Literal["cli", "voice", "gui"] = "cli",
+    ):
         self.policy = policy
         self.interpreter = interpreter
+        self.channel = channel
         self.session_id = uuid4().hex
         self.llm_failures = 0
         builder = StateGraph(AuthenticationGraphState)
@@ -256,7 +263,7 @@ class LangGraphAuthenticationAgent:
             "metadata": {
                 "thread_id": self.session_id,
                 "phase": "name_confirmation" if self.policy.pending_customer else "name_collection",
-                "channel": "cli",
+                "channel": self.channel,
                 "synthetic_data": True,
             },
         }
