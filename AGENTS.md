@@ -11,7 +11,7 @@ Help build and document an issuer-side Visa dispute experience for a Latin Ameri
 - `visa-dispute-hackathon/`: Python package, LangGraph workflow, classifiers, CLI, and tests.
 - `docs/`: Obsidian-compatible product and research documentation.
 - `data/`: synthetic hackathon data and derived labels.
-- `AGENTIC_UX_REVIEWER.md`: reusable rubric for agentic UX review.
+- `agents/AGENTIC_UX_REVIEWER.md`: reusable rubric for agentic UX review.
 
 Before changing a directory, inspect its README and nearby tests. More deeply nested `AGENTS.md` files, if added later, override this file for their subtree.
 
@@ -72,7 +72,7 @@ Run the complete suite after changes. When the user experience changes, also exe
 
 ## UX review
 
-For a substantive experience change, follow [`AGENTIC_UX_REVIEWER.md`](AGENTIC_UX_REVIEWER.md): inspect the code, interact with the real interface, report evidence-based issues, implement authorized fixes, and repeat until no significant in-scope complaints remain.
+For a substantive experience change, follow [`agents/AGENTIC_UX_REVIEWER.md`](agents/AGENTIC_UX_REVIEWER.md): inspect the code, interact with the real interface, report evidence-based issues, implement authorized fixes, and repeat until no significant in-scope complaints remain.
 
 Do not invent low-value complaints to prolong a review. Stop when the defined journey is reliable and remaining work would require production infrastructure or expanded scope.
 

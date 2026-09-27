@@ -27,7 +27,7 @@ The implementation focuses on identifying a synthetic customer, understanding na
 | [`visa-dispute-hackathon/`](visa-dispute-hackathon/) | Python application, tests, and runtime configuration |
 | [`docs/`](docs/README.md) | Obsidian-compatible research and product documentation |
 | [`data/`](data/) | Synthetic hackathon data and classifier labels |
-| [`AGENTIC_UX_REVIEWER.md`](AGENTIC_UX_REVIEWER.md) | Tool-agnostic agent definition for iterative UX reviews |
+| [`agents/AGENTIC_UX_REVIEWER.md`](agents/AGENTIC_UX_REVIEWER.md) | Tool-agnostic agent definition for iterative UX reviews |
 | [`AGENTS.md`](AGENTS.md) | Instructions for coding agents working in this repository |
 | [`CONTRIBUTE.md`](CONTRIBUTE.md) | Contribution workflow and quality requirements |
 

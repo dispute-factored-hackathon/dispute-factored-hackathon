@@ -6,7 +6,7 @@ Thank you for contributing to the Dispute Factored Hackathon project. The reposi
 
 1. Read the root [`README.md`](README.md).
 2. For application changes, read [`visa-dispute-hackathon/README.md`](visa-dispute-hackathon/README.md).
-3. For agent-experience changes, use [`AGENTIC_UX_REVIEWER.md`](AGENTIC_UX_REVIEWER.md) as the review rubric.
+3. For agent-experience changes, use [`agents/AGENTIC_UX_REVIEWER.md`](agents/AGENTIC_UX_REVIEWER.md) as the review rubric.
 4. If you are using a coding agent, follow [`AGENTS.md`](AGENTS.md).
 
 ## Development setup
