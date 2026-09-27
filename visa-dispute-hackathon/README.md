@@ -66,7 +66,8 @@ The graph can directly answer short questions about the agent's identity, role, 
 Controls are layered rather than delegated entirely to the model:
 
 - customer text is explicitly treated as untrusted data;
-- prompt-extraction, credential-extraction, and jailbreak markers are blocked locally before an API call;
+- a local zero-shot safety model detects prompt manipulation, hidden-instruction extraction, credential extraction, and unrelated-data access attempts before an API call;
+- abuse blocking requires both a high-confidence abuse class and a minimum probability margin, reducing false positives on legitimate banking questions;
 - inputs are limited to 500 characters and sessions default to 20 uncached LLM calls;
 - repeated turns use a phase-and-locale-aware cache;
 - unrelated requests receive a fixed scope response;

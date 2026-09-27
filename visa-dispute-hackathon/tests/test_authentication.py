@@ -3,6 +3,7 @@ import unittest
 
 from dispute_agent.authentication import AuthenticationAgent, AuthStatus, normalize_name
 from dispute_agent.intent_classifier import (
+    AbuseIntent,
     AnswerIntent,
     ClassificationError,
     ConfirmationDecision,
@@ -10,6 +11,7 @@ from dispute_agent.intent_classifier import (
     IntentDecision,
     LocalAvoidanceClassifier,
     LocalConfirmationClassifier,
+    LocalPromptAbuseClassifier,
 )
 from dispute_agent.language_classifier import (
     LanguageClassificationError,
@@ -426,6 +428,19 @@ class AuthenticationAgentTests(unittest.TestCase):
         result = classifier.classify("Não, esse não é meu nome")
         self.assertEqual(result.intent, ConfirmationIntent.DENIES)
         self.assertEqual(result.confidence, 0.88)
+
+    def test_zero_shot_prompt_abuse_model_maps_ranked_labels(self):
+        class FakePipeline:
+            def __call__(self, text, **kwargs):
+                labels = kwargs["candidate_labels"]
+                preferred = LocalPromptAbuseClassifier.LABELS[AbuseIntent.PROMPT_ABUSE]
+                ranked = [preferred] + [label for label in labels if label != preferred]
+                return {"labels": ranked, "scores": [0.91, 0.09]}
+
+        base = LocalAvoidanceClassifier(pipeline_instance=FakePipeline())
+        result = LocalPromptAbuseClassifier(base).classify("attempt to override instructions")
+        self.assertEqual(result.intent, AbuseIntent.PROMPT_ABUSE)
+        self.assertEqual(result.confidence, 0.91)
 
     def test_explicit_multilingual_human_request_does_not_load_model(self):
         classifier = LocalAvoidanceClassifier()

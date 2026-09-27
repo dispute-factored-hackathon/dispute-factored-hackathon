@@ -11,7 +11,11 @@ from dotenv import load_dotenv
 from .authentication import AuthenticationAgent, AuthStatus
 from .country_context import normalize_country_code
 from .agent_graph import LangGraphAuthenticationAgent
-from .intent_classifier import LocalAvoidanceClassifier, LocalConfirmationClassifier
+from .intent_classifier import (
+    LocalAvoidanceClassifier,
+    LocalConfirmationClassifier,
+    LocalPromptAbuseClassifier,
+)
 from .language_classifier import LocalLanguageClassifier
 from .openai_interpreter import (
     OpenAINameExtractor,
@@ -65,7 +69,11 @@ def main() -> int:
         country_code=args.country_code,
         confirmation_classifier=LocalConfirmationClassifier(intent_classifier),
     )
-    agent = LangGraphAuthenticationAgent(policy, interpreter)
+    agent = LangGraphAuthenticationAgent(
+        policy,
+        interpreter,
+        LocalPromptAbuseClassifier(intent_classifier),
+    )
     result = agent.start()
     try:
         while result.status in {

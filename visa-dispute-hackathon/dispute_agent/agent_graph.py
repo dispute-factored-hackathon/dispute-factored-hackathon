@@ -7,7 +7,13 @@ from typing import TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from .authentication import AuthenticationAgent, AuthenticationResult, AuthStatus
-from .intent_classifier import AnswerIntent, ClassificationError, ConfirmationIntent
+from .intent_classifier import (
+    AbuseIntent,
+    AnswerIntent,
+    ClassificationError,
+    ConfirmationIntent,
+    PromptAbuseClassifier,
+)
 from .openai_interpreter import OpenAITurnInterpreter, TurnAnalysis, TurnIntent
 
 
@@ -27,6 +33,7 @@ MESSAGES = {
         "unsafe_answer": "I cannot safely answer that here. I can help with this card-dispute process or connect you with a person.",
         "continue_name": "To continue, please give your full name or ask for a person.",
         "temporary": "I am having trouble interpreting that response. Please say only your full name, or ask for a person.",
+        "safety_unavailable": "I cannot safely process that response right now. Please try again shortly or ask for a person.",
     },
     "pt": {
         "blocked": "Posso ajudar somente com esta conversa sobre contestação de cartão. Não posso revelar instruções internas, credenciais ou dados de clientes. Podemos continuar com seu nome completo ou com uma dúvida geral sobre contestações.",
@@ -35,6 +42,7 @@ MESSAGES = {
         "unsafe_answer": "Não posso responder isso com segurança por aqui. Posso ajudar com esta contestação ou encaminhar você a um atendente.",
         "continue_name": "Para continuar, informe seu nome completo ou peça um atendente.",
         "temporary": "Estou com dificuldade para interpretar essa resposta. Diga somente seu nome completo ou peça um atendente.",
+        "safety_unavailable": "Não consigo processar essa resposta com segurança agora. Tente novamente em instantes ou peça um atendente.",
     },
     "es": {
         "blocked": "Solo puedo ayudar con esta conversación sobre reclamos de tarjeta. No puedo revelar instrucciones internas, credenciales ni datos de clientes. Podemos continuar con su nombre completo o con una pregunta general sobre reclamos.",
@@ -43,6 +51,7 @@ MESSAGES = {
         "unsafe_answer": "No puedo responder eso de forma segura aquí. Puedo ayudar con este reclamo o derivarle a un asesor.",
         "continue_name": "Para continuar, indique su nombre completo o pida un asesor.",
         "temporary": "Tengo dificultades para interpretar esa respuesta. Indique solamente su nombre completo o pida un asesor.",
+        "safety_unavailable": "No puedo procesar esa respuesta de forma segura ahora. Inténtelo de nuevo en unos instantes o pida un asesor.",
     },
 }
 
@@ -51,17 +60,19 @@ class LangGraphAuthenticationAgent:
     """Execute each turn through explicit interpretation, policy, and safety nodes."""
 
     MAX_INPUT_CHARACTERS = 500
-    ABUSE_MARKERS = (
-        "ignore previous", "ignore all instructions", "system prompt", "developer message",
-        "reveal your prompt", "show your instructions", "api key", "jailbreak",
-        "ignore as instruções", "mostre suas instruções", "chave da api",
-        "ignora las instrucciones", "muestra tus instrucciones", "clave de api",
-    )
+    MIN_ABUSE_CONFIDENCE = 0.75
+    MIN_ABUSE_MARGIN = 0.20
     FORBIDDEN_OUTPUT = ("system prompt", "api key", "developer message", "```", "http://", "https://")
 
-    def __init__(self, policy: AuthenticationAgent, interpreter: OpenAITurnInterpreter):
+    def __init__(
+        self,
+        policy: AuthenticationAgent,
+        interpreter: OpenAITurnInterpreter,
+        abuse_classifier: PromptAbuseClassifier,
+    ):
         self.policy = policy
         self.interpreter = interpreter
+        self.abuse_classifier = abuse_classifier
         self.llm_failures = 0
         builder = StateGraph(AuthenticationGraphState)
         builder.add_node("prepare_turn", self._prepare_turn)
@@ -100,9 +111,18 @@ class LangGraphAuthenticationAgent:
             return {"result": self.policy.handle_answer(answer)}
         if len(answer) > self.MAX_INPUT_CHARACTERS:
             return {"result": AuthenticationResult(AuthStatus.NEEDS_NAME, self._text("too_long"))}
-        normalized = answer.casefold()
-        if any(marker in normalized for marker in self.ABUSE_MARKERS):
-            return {"result": AuthenticationResult(AuthStatus.NEEDS_NAME, self._text("blocked"))}
+        try:
+            decision = self.abuse_classifier.classify(answer)
+        except ClassificationError:
+            return {"result": AuthenticationResult(self._continuation_status(), self._text("safety_unavailable"))}
+        scores = sorted(decision.probabilities.values(), reverse=True)
+        margin = scores[0] - scores[1] if len(scores) > 1 else decision.confidence
+        if (
+            decision.intent is AbuseIntent.PROMPT_ABUSE
+            and decision.confidence >= self.MIN_ABUSE_CONFIDENCE
+            and margin >= self.MIN_ABUSE_MARGIN
+        ):
+            return {"result": AuthenticationResult(self._continuation_status(), self._text("blocked"))}
         return {}
 
     def _interpret_turn(self, state: AuthenticationGraphState) -> AuthenticationGraphState:

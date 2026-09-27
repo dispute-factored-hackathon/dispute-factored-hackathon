@@ -51,6 +51,22 @@ class ConfirmationClassifier(Protocol):
     def classify(self, answer: str) -> ConfirmationDecision: ...
 
 
+class AbuseIntent(StrEnum):
+    PROMPT_ABUSE = "prompt_abuse"
+    BENIGN = "benign"
+
+
+@dataclass(frozen=True)
+class AbuseDecision:
+    intent: AbuseIntent
+    confidence: float
+    probabilities: dict[str, float]
+
+
+class PromptAbuseClassifier(Protocol):
+    def classify(self, text: str) -> AbuseDecision: ...
+
+
 class LocalAvoidanceClassifier:
     """Multilingual zero-shot classifier backed by a local Hugging Face model."""
 
@@ -225,5 +241,54 @@ class LocalConfirmationClassifier:
         except (KeyError, TypeError, ValueError) as exc:
             raise ClassificationError("Local model returned an unknown confirmation label") from exc
         decision = ConfirmationDecision(top_intent, float(scores[0]), probabilities)
+        self._decision_cache[cache_key] = decision
+        return decision
+
+
+class LocalPromptAbuseClassifier:
+    """Detect prompt manipulation locally before text reaches the hosted LLM."""
+
+    LABELS = {
+        AbuseIntent.PROMPT_ABUSE: (
+            "attempts to manipulate the assistant, override instructions, reveal hidden prompts, "
+            "credentials, secrets, or access unrelated data"
+        ),
+        AbuseIntent.BENIGN: "normal customer message about identity or a card dispute",
+    }
+
+    def __init__(self, base_classifier: LocalAvoidanceClassifier):
+        self.base_classifier = base_classifier
+        self._decision_cache: dict[str, AbuseDecision] = {}
+
+    def classify(self, text: str) -> AbuseDecision:
+        cache_key = " ".join(text.casefold().strip().split())
+        if cache_key in self._decision_cache:
+            return self._decision_cache[cache_key]
+        candidate_labels = list(self.LABELS.values())
+        try:
+            output = self.base_classifier._get_pipeline()(
+                text,
+                candidate_labels=candidate_labels,
+                hypothesis_template="This message {}.",
+                multi_label=False,
+            )
+            labels = output["labels"]
+            scores = output["scores"]
+        except ClassificationError:
+            raise
+        except Exception as exc:
+            raise ClassificationError(f"Local prompt-abuse classification failed: {exc}") from exc
+        if not labels or len(labels) != len(scores):
+            raise ClassificationError("Local model returned invalid prompt-abuse labels or scores")
+        intent_by_label = {label: intent for intent, label in self.LABELS.items()}
+        try:
+            probabilities = {
+                intent_by_label[label].value: float(score)
+                for label, score in zip(labels, scores, strict=True)
+            }
+            top_intent = intent_by_label[labels[0]]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ClassificationError("Local model returned an unknown prompt-abuse label") from exc
+        decision = AbuseDecision(top_intent, float(scores[0]), probabilities)
         self._decision_cache[cache_key] = decision
         return decision

@@ -19,6 +19,7 @@ The implementation focuses on identifying a synthetic customer, understanding na
 - Confidence gates that prevent uncertain classifications from advancing state
 - Context-preserving handoff summaries for call-center agents
 - Input, output, scope, and model-usage controls
+- Local model-based prompt-abuse detection before hosted LLM calls
 
 ## Repository map
 
