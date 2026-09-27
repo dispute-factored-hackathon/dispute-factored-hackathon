@@ -56,22 +56,48 @@ def opening_prompt(value: str) -> str:
     context = COUNTRIES.get(code)
     if context is None:
         return (
-            f"Hello! This is Bank Factored. We see you are calling from country code {code}. "
-            "Would you like to continue this call in English, Spanish, or Portuguese?"
+            f"Hi! You've reached Bank Factored. We see you're calling from country code {code}. "
+            "Would you like to continue in English, Spanish, or Portuguese?"
         )
     if context.opening_language == "es":
+        if code == "+57":
+            return (
+                "¡Hola! Se ha comunicado con Bank Factored. Vemos que llama desde Colombia. "
+                "¿Desea continuar esta llamada en español, inglés o portugués?"
+            )
+        if code == "+52":
+            return (
+                "¡Hola! Gracias por llamar a Bank Factored. Vemos que llama desde México. "
+                "¿Desea continuar esta llamada en español, inglés o portugués?"
+            )
+        if code == "+54":
+            return (
+                "¡Hola! Te comunicaste con Bank Factored. Vemos que llamás desde Argentina. "
+                "¿Querés continuar esta llamada en español, inglés o portugués?"
+            )
         return (
-            f"¡Hola! Somos Bank Factored. Vemos que llama desde {context.country_es}. "
+            f"¡Hola! Se ha comunicado con Bank Factored. Vemos que llama desde {context.country_es}. "
             "¿Desea continuar esta llamada en español, inglés o portugués?"
         )
     if context.opening_language == "pt":
+        country_origin = context.country_pt
+        if country_origin.startswith("o "):
+            country_origin = f"do {country_origin[2:]}"
+        elif country_origin.startswith("a "):
+            country_origin = f"da {country_origin[2:]}"
+        elif country_origin.startswith("os "):
+            country_origin = f"dos {country_origin[3:]}"
+        elif country_origin.startswith("as "):
+            country_origin = f"das {country_origin[3:]}"
+        else:
+            country_origin = f"de {country_origin}"
         return (
-            f"Olá! Aqui é o Bank Factored. Vemos que você está ligando desde {context.country_pt}. "
-            "Deseja continuar esta ligação em português, inglês ou espanhol?"
+            f"Olá! Você ligou para o Bank Factored. Identificamos que você está ligando {country_origin}. "
+            "Gostaria de continuar esta ligação em português, inglês ou espanhol?"
         )
     return (
-        f"Hello! This is Bank Factored. We see you are calling from {context.country_en}. "
-        "Would you like to continue this call in English, Spanish, or Portuguese?"
+        f"Hi! You've reached Bank Factored. We see you're calling from {context.country_en}. "
+        "Would you like to continue in English, Spanish, or Portuguese?"
     )
 
 

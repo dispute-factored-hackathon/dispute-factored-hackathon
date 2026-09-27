@@ -9,38 +9,48 @@ class CountryContextTests(unittest.TestCase):
         message = opening_prompt("+52")
         self.assertIn("México", message)
         self.assertTrue(message.startswith("¡Hola!"))
+        self.assertIn("Gracias por llamar a Bank Factored", message)
         self.assertIn("español, inglés o portugués", message)
 
     def test_colombia_opens_in_spanish(self):
         message = opening_prompt("57")
         self.assertIn("Colombia", message)
+        self.assertIn("Se ha comunicado con Bank Factored", message)
         self.assertIn("español, inglés o portugués", message)
 
     def test_argentina_opens_in_spanish(self):
         message = opening_prompt("+54")
         self.assertIn("Argentina", message)
+        self.assertIn("Te comunicaste", message)
+        self.assertIn("llamás", message)
+        self.assertIn("¿Querés", message)
         self.assertIn("español, inglés o portugués", message)
 
     def test_brazil_opens_in_portuguese_with_requested_language_order(self):
         message = opening_prompt("+55")
         self.assertIn("Brasil", message)
         self.assertTrue(message.startswith("Olá!"))
+        self.assertIn("Você ligou para o Bank Factored", message)
+        self.assertIn("está ligando do Brasil", message)
+        self.assertNotIn("desde o Brasil", message)
         self.assertIn("português, inglês ou espanhol", message)
 
     def test_portugal_opens_in_portuguese(self):
         message = opening_prompt("351")
         self.assertIn("Portugal", message)
+        self.assertIn("está ligando de Portugal", message)
         self.assertIn("português, inglês ou espanhol", message)
 
     def test_united_states_opens_in_english_with_requested_language_order(self):
         message = opening_prompt("+1")
         self.assertIn("the United States", message)
-        self.assertTrue(message.startswith("Hello!"))
+        self.assertTrue(message.startswith("Hi! You've reached Bank Factored"))
         self.assertIn("English, Spanish, or Portuguese", message)
 
     def test_other_country_opens_in_english(self):
         message = opening_prompt("+81")
         self.assertIn("Japan", message)
+        self.assertIn("We see you're calling from Japan", message)
         self.assertIn("English, Spanish, or Portuguese", message)
 
     def test_unknown_code_opens_in_english_and_names_code(self):
