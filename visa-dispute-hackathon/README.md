@@ -4,6 +4,12 @@ Issuer-side Visa dispute resolution for the call-center channel.
 
 Project documentation is maintained in the repository's [`docs`](../docs/README.md) directory. Open that directory as an Obsidian vault and start with `Home`.
 
+## Synthetic GUI login contract
+
+The GUI demo uses `GuiDemoLoginService` to populate a searchable customer dropdown. Search is partial, case-insensitive, and accent-insensitive. Dropdown options expose only a display name, safe location context when needed to distinguish duplicates, and a short-lived opaque selection token. Typing a name is not enough to log in: the browser must submit a server-issued option token.
+
+Selecting an option creates a short-lived server-side `AuthenticatedCustomerContext`. The customer ID is derived from that selection and is never accepted from chat text, a URL, or model output. Tokens are single-use, sessions expire, and logout revokes the session. This remains a deliberately insecure synthetic demo login and must not protect real banking data.
+
 ## Mock customer identification
 
 The default agent is orchestrated with LangGraph. A single OpenAI Structured Output call receives the raw customer turn and returns a Pydantic-generated JSON Schema containing language, one closed intent class, confidence, prompt-abuse class, abuse confidence, grounded name extraction, and an optional scoped answer. No tokenization, label-vector mapping, regex intent preprocessing, or local zero-shot inference is required.
