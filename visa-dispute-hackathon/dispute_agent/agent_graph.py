@@ -15,6 +15,7 @@ from .intent_classifier import (
     PromptAbuseClassifier,
 )
 from .openai_interpreter import OpenAITurnInterpreter, TurnAnalysis, TurnIntent
+from .safety import screen_prompt_abuse
 
 
 class AuthenticationGraphState(TypedDict, total=False):
@@ -111,10 +112,22 @@ class LangGraphAuthenticationAgent:
             return {"result": self.policy.handle_answer(answer)}
         if len(answer) > self.MAX_INPUT_CHARACTERS:
             return {"result": AuthenticationResult(AuthStatus.NEEDS_NAME, self._text("too_long"))}
+        return {}
+
+    def _check_prompt_abuse(self, answer: str | None) -> AuthenticationResult | None:
+        """Screen one valid customer message before it enters the graph."""
+
+        text = (answer or "").strip()
+        if not text or len(text) > self.MAX_INPUT_CHARACTERS:
+            return None
         try:
-            decision = self.abuse_classifier.classify(answer)
+            decision = self.abuse_classifier.classify(text)
         except ClassificationError:
-            return {"result": AuthenticationResult(self._continuation_status(), self._text("safety_unavailable"))}
+            message = self._contextual_safety_message("safety_unavailable")
+            result = AuthenticationResult(self._continuation_status(), message)
+            self.policy.last_customer_utterance = text
+            self.policy.last_agent_message = result.message
+            return result
         scores = sorted(decision.probabilities.values(), reverse=True)
         margin = scores[0] - scores[1] if len(scores) > 1 else decision.confidence
         if (
@@ -122,8 +135,18 @@ class LangGraphAuthenticationAgent:
             and decision.confidence >= self.MIN_ABUSE_CONFIDENCE
             and margin >= self.MIN_ABUSE_MARGIN
         ):
-            return {"result": AuthenticationResult(self._continuation_status(), self._text("blocked"))}
-        return {}
+            message = self._contextual_safety_message("blocked")
+            result = AuthenticationResult(self._continuation_status(), message)
+            self.policy.last_customer_utterance = text
+            self.policy.last_agent_message = result.message
+            return result
+        return None
+
+    def _contextual_safety_message(self, key: str) -> str:
+        message = self._text(key)
+        if self.policy.pending_customer:
+            message = f"{message} {self.policy._message('confirmation_unclear', name=self.policy.pending_customer.full_name)}"
+        return message
 
     def _interpret_turn(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
         try:
@@ -240,6 +263,7 @@ class LangGraphAuthenticationAgent:
         self.policy.last_agent_message = result.message
         return result
 
+    @screen_prompt_abuse
     def handle_answer(self, answer: str | None) -> AuthenticationResult:
         self.policy.last_customer_utterance = (answer or "").strip() or None
         result = self.graph.invoke({"answer": answer})["result"]

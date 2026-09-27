@@ -50,6 +50,7 @@ Use `uv`; do not introduce a second package-management workflow without explicit
 - Never use real customer information in examples or tests.
 - Treat customer utterances and model output as untrusted input.
 - Preserve the model-based prompt-abuse gate and the scope, length, output, rate, and tool-access controls.
+- Keep prompt-abuse screening on the shared customer-message ingress; do not make individual graph branches responsible for invoking it.
 - Do not weaken a safety control solely to make a scenario pass.
 - Do not claim mocked authentication, transfers, integrations, evidence retrieval, or dispute submission are real.
 - Escalate safely when an authoritative decision cannot be made.

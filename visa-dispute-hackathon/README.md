@@ -65,6 +65,7 @@ The graph can directly answer short questions about the agent's identity, role, 
 
 Controls are layered rather than delegated entirely to the model:
 
+- a reusable ingress decorator applies prompt-abuse screening to every non-empty, size-valid customer message before graph execution;
 - customer text is explicitly treated as untrusted data;
 - a local zero-shot safety model detects prompt manipulation, hidden-instruction extraction, credential extraction, and unrelated-data access attempts before an API call;
 - abuse blocking requires both a high-confidence abuse class and a minimum probability margin, reducing false positives on legitimate banking questions;
@@ -74,6 +75,8 @@ Controls are layered rather than delegated entirely to the model:
 - generated answers are length-limited and rejected if they contain internal-instruction, credential, code-block, or URL markers;
 - the model has no customer-database or tool access; and
 - API errors or exhausted limits fail closed to the existing human-handoff path.
+
+LangChain provides `@before_agent` and `@before_model` middleware decorators for agents created with its high-level `create_agent` API. This prototype uses a custom LangGraph `StateGraph`, so its equivalent cross-cutting guard is the `@screen_prompt_abuse` decorator on the public `handle_answer` entry point. This keeps the safety requirement independent of individual graph branches while preserving the custom workflow.
 
 ## Run the interactive demo with the full synthetic dataset
 
