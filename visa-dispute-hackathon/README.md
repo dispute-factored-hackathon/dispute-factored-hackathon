@@ -41,6 +41,8 @@ Install the local ML dependencies with the optional `ml` extra:
 uv sync --extra ml
 ```
 
+On Intel Macs, the project pins PyTorch 2.2.2 because newer PyTorch releases no longer publish macOS x86_64 wheels. It also uses NumPy 1.x and Transformers 4.x, which are compatible with that PyTorch build. Other supported platforms continue to use the current PyTorch release selected by `uv`.
+
 The first interactive run downloads the model from Hugging Face. Later runs use the local cache. No API key or classification service is required.
 
 ```bash

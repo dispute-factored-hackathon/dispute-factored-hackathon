@@ -116,6 +116,21 @@ class AuthenticationAgent:
         if not answer:
             intent = AnswerIntent.AVOIDS_ANSWER
         else:
+            matches = self.directory.find_by_full_name(answer)
+            if len(matches) == 1:
+                self.current_customer = matches[0]
+                return AuthenticationResult(
+                    AuthStatus.AUTHENTICATED,
+                    f"Thank you. I found the synthetic customer record for {matches[0].full_name}.",
+                    matches[0],
+                    "DEMO_ONLY_NAME_MATCH",
+                )
+            if len(matches) > 1:
+                return AuthenticationResult(
+                    AuthStatus.AMBIGUOUS,
+                    "I found more than one synthetic customer with that name. A human must resolve the ambiguity before transactions are shown.",
+                )
+
             try:
                 decision = self.intent_classifier.classify(answer)
             except ClassificationError:
@@ -146,21 +161,6 @@ class AuthenticationAgent:
             return AuthenticationResult(
                 AuthStatus.NEEDS_NAME,
                 "I need your full name to find your synthetic customer record. You may also ask for a human. What is your full name?",
-            )
-
-        matches = self.directory.find_by_full_name(answer)
-        if len(matches) == 1:
-            self.current_customer = matches[0]
-            return AuthenticationResult(
-                AuthStatus.AUTHENTICATED,
-                f"Thank you. I found the synthetic customer record for {matches[0].full_name}.",
-                matches[0],
-                "DEMO_ONLY_NAME_MATCH",
-            )
-        if len(matches) > 1:
-            return AuthenticationResult(
-                AuthStatus.AMBIGUOUS,
-                "I found more than one synthetic customer with that name. A human must resolve the ambiguity before transactions are shown.",
             )
 
         self.failed_attempts += 1

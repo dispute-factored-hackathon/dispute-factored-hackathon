@@ -53,7 +53,7 @@ class LocalAvoidanceClassifier:
                 from transformers import pipeline
             except ImportError as exc:
                 raise ClassificationError(
-                    "Install the local ML dependencies with: pip install -e '.[ml]'"
+                    "Install the local ML dependencies with: uv sync --extra ml"
                 ) from exc
             try:
                 self._pipeline = pipeline(

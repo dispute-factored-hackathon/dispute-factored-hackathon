@@ -98,8 +98,12 @@ class AuthenticationAgentTests(unittest.TestCase):
         self.assertIn("not sure", result.message)
 
     def test_classifier_failure_fails_closed_to_human(self):
-        result = make_agent(classifier=FakeIntentClassifier(error=True)).handle_answer("Ana Silva")
+        result = make_agent(classifier=FakeIntentClassifier(error=True)).handle_answer("I will not answer")
         self.assertEqual(result.status, AuthStatus.HUMAN_HANDOFF)
+
+    def test_exact_customer_match_does_not_depend_on_classifier(self):
+        result = make_agent(classifier=FakeIntentClassifier(error=True)).handle_answer("Ana Silva")
+        self.assertTrue(result.authenticated)
 
     def test_local_model_maps_ranked_labels_to_intents(self):
         class FakePipeline:
