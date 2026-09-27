@@ -10,6 +10,7 @@ requires-python = ">=3.11"
 
 [project.scripts]
 dispute-auth-demo = "dispute_agent.cli:main"
+dispute-auth-setup = "dispute_agent.model_setup:main"
 
 [project.optional-dependencies]
 ml = [
@@ -29,3 +30,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.uv]
+package = true

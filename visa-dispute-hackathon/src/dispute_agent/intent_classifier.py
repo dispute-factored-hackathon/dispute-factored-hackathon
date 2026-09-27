@@ -47,18 +47,52 @@ class LocalAvoidanceClassifier:
         self.model_id = model_id or os.getenv("AVOIDANCE_MODEL_ID", self.DEFAULT_MODEL)
         self._pipeline = pipeline_instance
 
+    @staticmethod
+    def _explicit_intent(answer: str) -> AnswerIntent | None:
+        normalized = " ".join(answer.casefold().strip().split())
+        phrases = {
+            AnswerIntent.REQUESTS_HUMAN: (
+                "human", "representative", "agent", "atendente", "falar com uma pessoa",
+                "asesor", "hablar con una persona",
+            ),
+            AnswerIntent.ASKS_WHY: (
+                "why", "por que", "por quê", "porque precisam", "para que precisam",
+                "por qué", "para qué",
+            ),
+            AnswerIntent.AVOIDS_ANSWER: (
+                "prefer not", "won't say", "will not say", "não quero informar",
+                "prefiro não", "no quiero decir", "prefiero no",
+            ),
+        }
+        for intent, markers in phrases.items():
+            if any(marker in normalized for marker in markers):
+                return intent
+        return None
+
     def _get_pipeline(self):
         if self._pipeline is None:
             try:
-                from transformers import pipeline
+                from transformers import (
+                    AutoModelForSequenceClassification,
+                    AutoTokenizer,
+                    logging as transformers_logging,
+                    pipeline,
+                )
             except ImportError as exc:
                 raise ClassificationError(
                     "Install the local ML dependencies with: uv sync --extra ml"
                 ) from exc
             try:
+                transformers_logging.set_verbosity_error()
+                tokenizer = AutoTokenizer.from_pretrained(self.model_id, local_files_only=True)
+                model = AutoModelForSequenceClassification.from_pretrained(
+                    self.model_id,
+                    local_files_only=True,
+                )
                 self._pipeline = pipeline(
                     "zero-shot-classification",
-                    model=self.model_id,
+                    model=model,
+                    tokenizer=tokenizer,
                     device=-1,
                 )
             except Exception as exc:
@@ -66,6 +100,12 @@ class LocalAvoidanceClassifier:
         return self._pipeline
 
     def classify(self, answer: str) -> IntentDecision:
+        explicit_intent = self._explicit_intent(answer)
+        if explicit_intent is not None:
+            probabilities = {intent.value: 0.0025 for intent in AnswerIntent}
+            probabilities[explicit_intent.value] = 0.99
+            return IntentDecision(explicit_intent, 0.99, probabilities)
+
         candidate_labels = list(self.LABELS.values())
         try:
             output = self._get_pipeline()(

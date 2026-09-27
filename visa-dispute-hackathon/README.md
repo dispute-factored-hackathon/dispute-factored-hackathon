@@ -43,11 +43,18 @@ uv sync --extra ml
 
 On Intel Macs, the project pins PyTorch 2.2.2 because newer PyTorch releases no longer publish macOS x86_64 wheels. It also uses NumPy 1.x and Transformers 4.x, which are compatible with that PyTorch build. Other supported platforms continue to use the current PyTorch release selected by `uv`.
 
-The first interactive run downloads the model from Hugging Face. Later runs use the local cache. No API key or classification service is required.
+Prepare the model once, before starting a customer interaction:
+
+```bash
+uv run --extra ml dispute-auth-setup
+```
+
+The setup downloads the model from Hugging Face. Customer interactions then load it from the local cache and do not make network requests. No API key or remote classification service is required.
 
 ```bash
 uv run --extra ml dispute-auth-demo \
-  --customers /Users/silvs/Documents/projetos/visa-dispute-hackathon/data/raw/customers.csv
+  --customers /Users/silvs/Documents/projetos/visa-dispute-hackathon/data/raw/customers.csv \
+  --language pt
 ```
 
 Example successful name from the supplied synthetic dataset:
@@ -63,6 +70,8 @@ For a negative case, enter a name absent from the dataset. To test avoidance cla
 ```bash
 uv run --extra ml dispute-auth-demo --customers tests/fixtures/customers.csv
 ```
+
+Use `--language pt`, `--language es` or `--language en` when the IVR already knows the caller's preference. The default `--language auto` recognizes common Portuguese and Spanish service phrases. Add `--debug` only for development; customer-facing output hides internal IDs and assurance labels.
 
 Use:
 

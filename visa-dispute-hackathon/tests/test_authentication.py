@@ -34,7 +34,8 @@ class AuthenticationAgentTests(unittest.TestCase):
     def test_initial_question_asks_for_full_name(self):
         result = make_agent().start()
         self.assertEqual(result.status, AuthStatus.NEEDS_NAME)
-        self.assertEqual(result.message, "What is your full name?")
+        self.assertIn("card dispute", result.message)
+        self.assertIn("full name", result.message)
 
     def test_unique_full_name_authenticates(self):
         result = make_agent().handle_answer("Ana Silva")
@@ -52,21 +53,34 @@ class AuthenticationAgentTests(unittest.TestCase):
         self.assertEqual(result.status, AuthStatus.NOT_FOUND)
         self.assertFalse(result.authenticated)
 
-    def test_second_unknown_name_routes_to_human(self):
+    def test_third_unknown_name_routes_to_human_with_summary(self):
         agent = make_agent()
         agent.handle_answer("Unknown One")
-        result = agent.handle_answer("Unknown Two")
+        agent.handle_answer("Unknown Two")
+        result = agent.handle_answer("Unknown Three")
         self.assertEqual(result.status, AuthStatus.HUMAN_HANDOFF)
+        self.assertEqual(result.handoff_summary["reason"], "name_not_found_after_retries")
 
     def test_duplicate_name_is_ambiguous(self):
         result = make_agent().handle_answer("Alex Santos")
-        self.assertEqual(result.status, AuthStatus.AMBIGUOUS)
+        self.assertEqual(result.status, AuthStatus.HUMAN_HANDOFF)
+        self.assertEqual(result.handoff_summary["reason"], "duplicate_name")
         self.assertFalse(result.authenticated)
 
     def test_empty_answer_is_treated_as_avoidance(self):
         result = make_agent().handle_answer("")
         self.assertEqual(result.status, AuthStatus.NEEDS_NAME)
-        self.assertIn("need your full name", result.message)
+        self.assertIn("did not hear", result.message)
+
+    def test_repeated_silence_checks_audio_before_handoff(self):
+        agent = make_agent()
+        first = agent.handle_answer("")
+        second = agent.handle_answer("")
+        third = agent.handle_answer("")
+        self.assertIn("did not hear", first.message)
+        self.assertIn("audio or connection", second.message)
+        self.assertEqual(third.status, AuthStatus.HUMAN_HANDOFF)
+        self.assertEqual(third.handoff_summary["reason"], "repeated_no_response")
 
     def test_avoidance_is_reprompted_then_handed_off(self):
         classifier = FakeIntentClassifier({
@@ -76,8 +90,59 @@ class AuthenticationAgentTests(unittest.TestCase):
         agent = make_agent(classifier=classifier)
         first = agent.handle_answer("Why do you need that?")
         second = agent.handle_answer("I prefer not to say")
+        third = agent.handle_answer("I prefer not to say")
         self.assertEqual(first.status, AuthStatus.NEEDS_NAME)
-        self.assertEqual(second.status, AuthStatus.HUMAN_HANDOFF)
+        self.assertEqual(second.status, AuthStatus.NEEDS_NAME)
+        self.assertEqual(third.status, AuthStatus.HUMAN_HANDOFF)
+
+    def test_privacy_question_is_answered_without_consuming_avoidance_budget(self):
+        classifier = FakeIntentClassifier({
+            "Why do you need that?": (AnswerIntent.ASKS_WHY, 0.96),
+        })
+        agent = make_agent(classifier=classifier)
+        result = agent.handle_answer("Why do you need that?")
+        self.assertIn("only to locate", result.message)
+        self.assertEqual(agent.avoidance_attempts, 0)
+
+    def test_portuguese_human_request_stays_in_portuguese(self):
+        classifier = FakeIntentClassifier({
+            "Quero falar com um atendente": (AnswerIntent.REQUESTS_HUMAN, 0.99),
+        })
+        result = make_agent(classifier=classifier, language="auto").handle_answer(
+            "Quero falar com um atendente"
+        )
+        self.assertIn("atendente", result.message)
+        self.assertEqual(result.handoff_summary["language"], "pt")
+
+    def test_auto_mode_first_asks_for_language_then_uses_selection(self):
+        agent = make_agent(language="auto")
+        self.assertIn("Português", agent.start().message)
+        result = agent.handle_answer("Português, por favor")
+        self.assertEqual(result.status, AuthStatus.NEEDS_NAME)
+        self.assertIn("nome completo", result.message)
+
+    def test_auto_mode_accepts_natural_spanish_language_selection(self):
+        agent = make_agent(language="auto")
+        result = agent.handle_answer("Español, por favor")
+        self.assertEqual(result.status, AuthStatus.NEEDS_NAME)
+        self.assertIn("nombre completo", result.message)
+
+    def test_auto_mode_repeats_menu_for_unknown_language_choice(self):
+        agent = make_agent(language="auto")
+        result = agent.handle_answer("maybe later")
+        self.assertEqual(result.status, AuthStatus.NEEDS_NAME)
+        self.assertIn("Não reconheci", result.message)
+        self.assertEqual(agent.language, "auto")
+
+    def test_spanish_privacy_question_stays_in_spanish(self):
+        classifier = FakeIntentClassifier({
+            "¿Por qué necesitan mi nombre?": (AnswerIntent.ASKS_WHY, 0.99),
+        })
+        result = make_agent(classifier=classifier, language="auto").handle_answer(
+            "¿Por qué necesitan mi nombre?"
+        )
+        self.assertIn("Uso tu nombre", result.message)
+        self.assertNotIn("I use", result.message)
 
     def test_normalization_is_deterministic(self):
         self.assertEqual(normalize_name(" José  Muñoz "), "jose munoz")
@@ -95,7 +160,7 @@ class AuthenticationAgentTests(unittest.TestCase):
         })
         result = make_agent(classifier=classifier).handle_answer("Maybe Ana")
         self.assertEqual(result.status, AuthStatus.NEEDS_NAME)
-        self.assertIn("not sure", result.message)
+        self.assertIn("did not understand", result.message)
 
     def test_classifier_failure_fails_closed_to_human(self):
         result = make_agent(classifier=FakeIntentClassifier(error=True)).handle_answer("I will not answer")
@@ -114,10 +179,16 @@ class AuthenticationAgentTests(unittest.TestCase):
                 return {"labels": ranked, "scores": [0.82, 0.08, 0.05, 0.03, 0.02]}
 
         classifier = LocalAvoidanceClassifier(pipeline_instance=FakePipeline())
-        result = classifier.classify("I prefer not to say")
+        result = classifier.classify("This response cannot be interpreted directly")
         self.assertEqual(result.intent, AnswerIntent.AVOIDS_ANSWER)
         self.assertEqual(result.confidence, 0.82)
         self.assertEqual(set(result.probabilities), {intent.value for intent in AnswerIntent})
+
+    def test_explicit_multilingual_human_request_does_not_load_model(self):
+        classifier = LocalAvoidanceClassifier()
+        result = classifier.classify("Quero falar com um atendente")
+        self.assertEqual(result.intent, AnswerIntent.REQUESTS_HUMAN)
+        self.assertEqual(result.confidence, 0.99)
 
 
 if __name__ == "__main__":
