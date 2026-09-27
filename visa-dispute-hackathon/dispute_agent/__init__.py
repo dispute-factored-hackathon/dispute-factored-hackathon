@@ -7,9 +7,9 @@ from .authentication import (
     AuthStatus,
     Language,
 )
-from .country_context import CountryContext, country_context, locale_for, opening_prompt
 from .openai_interpreter import (
     AbuseClass,
+    CallOpening,
     OpenAITurnInterpreter,
     TurnAnalysis,
     TurnIntent,
@@ -20,13 +20,10 @@ __all__ = [
     "AuthStatus",
     "AuthenticationAgent",
     "AuthenticationResult",
-    "CountryContext",
+    "CallOpening",
     "LangGraphAuthenticationAgent",
     "Language",
     "OpenAITurnInterpreter",
     "TurnAnalysis",
     "TurnIntent",
-    "country_context",
-    "locale_for",
-    "opening_prompt",
 ]

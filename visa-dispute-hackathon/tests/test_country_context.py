@@ -1,66 +1,61 @@
 import unittest
 
+from dispute_agent.agent_graph import LangGraphAuthenticationAgent
+from dispute_agent.authentication import AuthenticationAgent
 from dispute_agent.cli import build_parser
-from dispute_agent.country_context import (
-    locale_for,
-    normalize_country_code,
-    opening_prompt,
-)
+from dispute_agent.country_context import normalize_country_code
+from dispute_agent.openai_interpreter import CallOpening, OpenAITurnInterpreter
+
+
+class FakeOpeningModel:
+    def __init__(self, opening):
+        self.opening = opening
+        self.calls = []
+
+    def invoke(self, messages):
+        self.calls.append(messages)
+        return self.opening
 
 
 class CountryContextTests(unittest.TestCase):
-    def test_mexico_opens_in_spanish_with_requested_language_order(self):
-        message = opening_prompt("+52")
-        self.assertIn("México", message)
-        self.assertTrue(message.startswith("¡Hola!"))
-        self.assertIn("Gracias por llamar a Bank Factored", message)
-        self.assertIn("español, inglés o portugués", message)
+    def test_llm_generates_opening_and_agent_stores_inferred_context(self):
+        opening = CallOpening(
+            country_name="Brazil",
+            country_is_ambiguous=False,
+            primary_language="pt",
+            locale="pt-BR",
+            welcome_message=(
+                "Olá! Você ligou para o Bank Factored. Pelo código telefônico, sua ligação "
+                "parece vir do Brasil. Deseja continuar em português, inglês ou espanhol?"
+            ),
+        )
+        model = FakeOpeningModel(opening)
+        interpreter = OpenAITurnInterpreter(opening_model=model)
+        policy = AuthenticationAgent(
+            "tests/fixtures/customers.csv", language="auto", country_code="+55"
+        )
 
-    def test_colombia_opens_in_spanish(self):
-        message = opening_prompt("57")
-        self.assertIn("Colombia", message)
-        self.assertIn("Se ha comunicado con Bank Factored", message)
-        self.assertIn("español, inglés o portugués", message)
+        result = LangGraphAuthenticationAgent(policy, interpreter).start()
 
-    def test_argentina_opens_in_spanish(self):
-        message = opening_prompt("+54")
-        self.assertIn("Argentina", message)
-        self.assertIn("Te comunicaste", message)
-        self.assertIn("llamás", message)
-        self.assertIn("¿Querés", message)
-        self.assertIn("español, inglés o portugués", message)
+        self.assertEqual(result.message, opening.welcome_message)
+        self.assertEqual(policy.inferred_country, "Brazil")
+        self.assertEqual(policy.inferred_language, "pt")
+        self.assertEqual(policy.inferred_locale, "pt-BR")
+        self.assertEqual(model.calls[-1][-1][1], "Telephone country calling code: +55")
 
-    def test_brazil_opens_in_portuguese_with_requested_language_order(self):
-        message = opening_prompt("+55")
-        self.assertIn("Brasil", message)
-        self.assertTrue(message.startswith("Olá!"))
-        self.assertIn("Você ligou para o Bank Factored", message)
-        self.assertIn("está ligando do Brasil", message)
-        self.assertNotIn("desde o Brasil", message)
-        self.assertIn("português, inglês ou espanhol", message)
-
-    def test_portugal_opens_in_portuguese(self):
-        message = opening_prompt("351")
-        self.assertIn("Portugal", message)
-        self.assertIn("está ligando de Portugal", message)
-        self.assertIn("português, inglês ou espanhol", message)
-
-    def test_united_states_opens_in_english_with_requested_language_order(self):
-        message = opening_prompt("+1")
-        self.assertIn("the United States", message)
-        self.assertTrue(message.startswith("Hi! You've reached Bank Factored"))
-        self.assertIn("English, Spanish, or Portuguese", message)
-
-    def test_other_country_opens_in_english(self):
-        message = opening_prompt("+81")
-        self.assertIn("Japan", message)
-        self.assertIn("We see you're calling from Japan", message)
-        self.assertIn("English, Spanish, or Portuguese", message)
-
-    def test_unknown_code_opens_in_english_and_names_code(self):
-        message = opening_prompt("+999")
-        self.assertIn("country code +999", message)
-        self.assertIn("English, Spanish, or Portuguese", message)
+    def test_schema_supports_ambiguous_shared_calling_codes(self):
+        opening = CallOpening(
+            country_name="North American Numbering Plan region",
+            country_is_ambiguous=True,
+            primary_language="en",
+            locale="en-US",
+            welcome_message=(
+                "Hi! You've reached Bank Factored. Your +1 calling code is shared by several "
+                "countries and territories. Continue in English, Spanish, or Portuguese?"
+            ),
+        )
+        self.assertTrue(opening.country_is_ambiguous)
+        self.assertNotIn("United States", opening.welcome_message)
 
     def test_code_normalization_accepts_optional_plus(self):
         self.assertEqual(normalize_country_code("55"), "+55")
@@ -70,21 +65,15 @@ class CountryContextTests(unittest.TestCase):
         args = build_parser().parse_args(["--country-code", "+57"])
         self.assertEqual(args.country_code, "+57")
 
+    def test_cli_requires_country_code_and_has_no_language_override(self):
+        with self.assertRaises(SystemExit):
+            build_parser().parse_args([])
+        with self.assertRaises(SystemExit):
+            build_parser().parse_args(["--country-code", "+55", "--language", "pt"])
+
     def test_invalid_code_is_rejected(self):
         with self.assertRaises(ValueError):
             normalize_country_code("Brazil")
-
-    def test_regional_locale_mapping(self):
-        self.assertEqual(locale_for("pt", "+55"), "pt-BR")
-        self.assertEqual(locale_for("es", "+57"), "es-CO")
-        self.assertEqual(locale_for("es", "+52"), "es-MX")
-        self.assertEqual(locale_for("es", "+54"), "es-AR")
-        self.assertEqual(locale_for("en", "+1"), "en-US")
-
-    def test_language_choice_uses_default_variant_when_country_differs(self):
-        self.assertEqual(locale_for("en", "+57"), "en-US")
-        self.assertEqual(locale_for("pt", "+52"), "pt-BR")
-        self.assertEqual(locale_for("es", "+55"), "es-419")
 
 
 if __name__ == "__main__":

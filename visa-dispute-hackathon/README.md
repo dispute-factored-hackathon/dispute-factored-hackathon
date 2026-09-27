@@ -61,6 +61,22 @@ uv run python -m dispute_agent.evaluation
 
 This credential-free offline evaluation runs the same scenario suite and exits nonzero on any regression. Its JSON summary reports test count, failures, errors, skipped scenarios, and pass rate.
 
+To evaluate the live structured-output model against the versioned synthetic benchmark:
+
+```bash
+uv run python -m dispute_agent.model_evaluation
+```
+
+This produces JSON metrics for intent accuracy, language accuracy, accent-insensitive name extraction, answer presence, prompt-abuse accuracy/precision/recall/F1, complete-example accuracy, average latency, p95 latency, API calls, and individual failures. The benchmark lives in `evals/turns.jsonl`; it contains only synthetic multilingual examples.
+
+To upload the same benchmark and row-level scores as a LangSmith experiment:
+
+```bash
+LANGSMITH_TRACING=true uv run python -m dispute_agent.model_evaluation --langsmith
+```
+
+The command creates `visa-dispute-authentication-turns-v1` when it does not exist and records five deterministic evaluators: intent, language, abuse, name extraction, and expected answer presence. Use `--dataset NAME` to target a separately versioned dataset rather than silently changing an existing benchmark.
+
 ## Configure the OpenAI API
 
 Create `.env` from the safe template and provide a project-scoped key. The real `.env` is ignored by Git.
@@ -82,7 +98,7 @@ Customer utterances are sent to OpenAI for structured interpretation. Do not use
 
 ## Optional LangSmith tracing
 
-Tracing is disabled by default. To inspect graph and model runs in LangSmith, set `LANGSMITH_TRACING=true` and provide a project-scoped `LANGSMITH_API_KEY`. Public turns include a random opaque `thread_id` and only non-sensitive metadata (locale, phase, channel, and the `synthetic_data` flag) for filtering and multi-turn grouping. The trace payload itself contains the customer utterance and model output, so enable tracing only with synthetic data in this prototype. Never put real names, account information, secrets, or production banking data in these traces.
+Tracing is disabled by default. To inspect graph and model runs in LangSmith, set `LANGSMITH_TRACING=true` and provide a project-scoped `LANGSMITH_API_KEY`. Explicit spans identify call start, country-context inference, each customer turn, schema classification, LangGraph nodes, and the underlying model request. Public turns include a random opaque `thread_id` and only non-sensitive metadata (locale, phase, channel, and the `synthetic_data` flag) for filtering and multi-turn grouping. The trace payload itself contains the customer utterance and model output, so enable tracing only with synthetic data in this prototype. Never put real names, account information, secrets, or production banking data in these traces.
 
 Use the local evaluation command for pull-request and offline regression checks. LangSmith datasets and online evaluators can be added later when the team has an approved workspace, privacy policy, sampling policy, and production-like labeled examples.
 
@@ -113,19 +129,17 @@ The current CLI creates one agent object for one caller. Cross-turn counters, th
 uv sync --dev
 uv run python -m dispute_agent.cli \
   --customers /Users/silvs/Documents/projetos/visa-dispute-hackathon/data/raw/customers.csv \
-  --country-code +55 \
-  --language auto
+  --country-code +55
 ```
 
-When `--language auto` is used, `--country-code` localizes the opening without forcing the customer's choice. Spanish-speaking country codes open in Spanish and offer Spanish, English, then Portuguese. Portuguese-speaking codes open in Portuguese and offer Portuguese, English, then Spanish. Other or unknown codes open in English and offer English, Spanish, then Portuguese.
+The telephone country code is the only caller-context input. The multilingual LLM infers a likely country, primary language, and regional locale, then generates the welcome and language question. It does not treat this inference as verified location. Shared codes such as `+1`, and unknown codes, are described as ambiguous instead of being assigned to a country.
 
 The selected language is also regionalized for the rest of the interaction: Brazil uses Brazilian Portuguese (`pt-BR`), Colombia uses Colombian Spanish (`es-CO`), Mexico uses Mexican Spanish (`es-MX`), Argentina uses Argentine Spanish with voseo (`es-AR`), and English uses American English (`en-US`). When the caller chooses a language different from the country's main language, the agent uses American English, Brazilian Portuguese, or neutral Latin American Spanish (`es-419`) as the corresponding fallback.
 
 ```bash
 uv run python -m dispute_agent.cli \
   --customers ../data/raw/customers.csv \
-  --country-code +55 \
-  --language auto
+  --country-code +55
 ```
 
 Example successful name from the supplied synthetic dataset:
@@ -139,10 +153,10 @@ For a negative case, enter a name absent from the dataset. To test avoidance cla
 ## Run with the small test fixture
 
 ```bash
-uv run python -m dispute_agent.cli --customers tests/fixtures/customers.csv
+uv run python -m dispute_agent.cli --customers tests/fixtures/customers.csv --country-code +55
 ```
 
-Use `--language pt`, `--language es` or `--language en` when the IVR already knows the caller's preference. The default `--language auto` accepts explicit menu choices and uses the structured LLM when language must be inferred from free-form text. Add `--debug` only for development; customer-facing output hides internal IDs and assurance labels.
+There is one multilingual agent, not separate agents per language. It asks the caller to choose a language, can infer the language of a substantive free-form answer, and then keeps the selected regional locale for the session. Add `--debug` only for development; customer-facing output hides internal IDs and assurance labels.
 
 Use:
 

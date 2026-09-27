@@ -29,14 +29,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to customers.csv (or set CUSTOMERS_CSV).",
     )
     parser.add_argument(
-        "--language",
-        choices=("auto", "en", "pt", "es"),
-        default=os.getenv("CALLER_LANGUAGE", "auto"),
-        help="Caller language: auto, en, pt or es (default: auto).",
-    )
-    parser.add_argument(
         "--country-code",
         type=country_code_argument,
+        required=True,
         help="Caller's telephone country code, for example +55, 52 or +1.",
     )
     parser.add_argument("--debug", action="store_true", help="Show internal demo identifiers.")
@@ -54,7 +49,7 @@ def main() -> int:
     interpreter = OpenAITurnInterpreter()
     policy = AuthenticationAgent(
         args.customers,
-        language=args.language,
+        language="auto",
         country_code=args.country_code,
     )
     agent = LangGraphAuthenticationAgent(policy, interpreter)

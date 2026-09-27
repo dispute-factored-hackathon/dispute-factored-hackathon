@@ -9,10 +9,10 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .country_context import locale_for, opening_prompt
+from .openai_interpreter import TurnIntent
 
 if TYPE_CHECKING:
-    from .openai_interpreter import TurnAnalysis
+    from .openai_interpreter import CallOpening, TurnAnalysis
 
 
 class AuthStatus(StrEnum):
@@ -107,7 +107,9 @@ MESSAGES = {
 # call-center wording consistent with the caller's country and chosen language.
 MESSAGES["en-US"] = {**MESSAGES["en"]}
 MESSAGES["pt-BR"] = {**MESSAGES["pt"]}
+MESSAGES["pt-PT"] = {**MESSAGES["pt"]}
 MESSAGES["es-419"] = {**MESSAGES["es"]}
+MESSAGES["es-ES"] = {**MESSAGES["es"]}
 MESSAGES["es-CO"] = {
     **MESSAGES["es"],
     "start": "Hola. Puedo ayudarle a iniciar una reclamación sobre su tarjeta. Para localizar su perfil de demostración, ¿cuál es su nombre completo? También puede preguntar por qué lo necesito o pedir un asesor.",
@@ -167,6 +169,8 @@ AUTO_LANGUAGE_RETRY = (
     "Não reconheci o idioma. Diga Inglês, Português ou Espanhol. / "
     "No reconocí el idioma. Di Inglés, Portugués o Español."
 )
+
+DEFAULT_LOCALES = {"en": "en-US", "pt": "pt-BR", "es": "es-419"}
 
 
 @dataclass(frozen=True)
@@ -261,9 +265,19 @@ class AuthenticationAgent:
         self.questions_answered = 0
         self.language = language if language in {"en", "pt", "es", "auto"} else "en"
         self.country_code = country_code
-        self.locale = (
-            locale_for(self.language, country_code) if self.language != "auto" else "en-US"
-        )
+        self.locale = DEFAULT_LOCALES.get(self.language, "en-US")
+        self.inferred_country: str | None = None
+        self.inferred_language: str | None = None
+        self.inferred_locale: str | None = None
+
+    def apply_opening(self, opening: CallOpening) -> AuthenticationResult:
+        """Store inferred regional context while leaving the customer's choice open."""
+
+        self.inferred_country = opening.country_name
+        self.inferred_language = opening.primary_language
+        self.inferred_locale = opening.locale
+        self.locale = opening.locale
+        return AuthenticationResult(AuthStatus.NEEDS_NAME, opening.welcome_message)
 
     def _message(self, key: str, **values: str) -> str:
         return MESSAGES[self.locale][key].format(**values)
@@ -364,8 +378,6 @@ class AuthenticationAgent:
     def apply_llm_classification(self, analysis: TurnAnalysis) -> AuthenticationResult:
         """Apply a validated schema decision without reclassification."""
 
-        from .openai_interpreter import TurnIntent
-
         if self.current_customer is not None:
             return AuthenticationResult(
                 AuthStatus.AUTHENTICATED,
@@ -374,44 +386,61 @@ class AuthenticationAgent:
                 "DEMO_ONLY_NAME_MATCH_CONFIRMED",
             )
 
-        if self.language == "auto":
-            supported_language = analysis.language in {"en", "pt", "es"}
-            explicit_selection = analysis.intent is TurnIntent.SELECTS_LANGUAGE
-            substantive_turn = analysis.intent not in {
-                TurnIntent.OTHER,
-                TurnIntent.OUT_OF_SCOPE,
-            }
-            if not supported_language or not (explicit_selection or substantive_turn):
-                return AuthenticationResult(AuthStatus.NEEDS_NAME, AUTO_LANGUAGE_RETRY)
-            self.language = analysis.language
-            self.locale = locale_for(self.language, self.country_code)
-            if explicit_selection:
-                return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("start"))
+        language_result = self._select_language(analysis)
+        if language_result:
+            return language_result
+        global_result = self._handle_global_intent(analysis.intent)
+        if global_result:
+            return global_result
+        if self.pending_customer:
+            return self._handle_confirmation(analysis)
+        return self._handle_name_collection(analysis)
 
-        if analysis.intent is TurnIntent.REQUESTS_HUMAN:
+    def _select_language(self, analysis: TurnAnalysis) -> AuthenticationResult | None:
+        if self.language != "auto":
+            return None
+        explicit_selection = analysis.intent is TurnIntent.SELECTS_LANGUAGE
+        substantive_turn = analysis.intent not in {TurnIntent.OTHER, TurnIntent.OUT_OF_SCOPE}
+        if analysis.language not in DEFAULT_LOCALES or not (explicit_selection or substantive_turn):
+            return AuthenticationResult(AuthStatus.NEEDS_NAME, AUTO_LANGUAGE_RETRY)
+        self.language = analysis.language
+        self.locale = (
+            self.inferred_locale
+            if self.language == self.inferred_language and self.inferred_locale
+            else DEFAULT_LOCALES[self.language]
+        )
+        if explicit_selection:
+            return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("start"))
+        return None
+
+    def _handle_global_intent(self, intent: TurnIntent) -> AuthenticationResult | None:
+        if intent is TurnIntent.REQUESTS_HUMAN:
             return self._handoff("handoff_requested", "customer_requested_human")
-        if analysis.intent is TurnIntent.CANCELS:
+        if intent is TurnIntent.CANCELS:
             self.pending_customer = None
             return AuthenticationResult(AuthStatus.CANCELLED, self._message("cancelled"))
-        if analysis.intent is TurnIntent.RESTARTS:
+        if intent is TurnIntent.RESTARTS:
             return self._reset_identification()
+        return None
 
+    def _handle_confirmation(self, analysis: TurnAnalysis) -> AuthenticationResult:
+        customer = self.pending_customer
+        assert customer is not None
         claimed_name = analysis.extracted_name
-        if self.pending_customer:
-            customer = self.pending_customer
-            if claimed_name and normalize_name(claimed_name) != normalize_name(customer.full_name):
-                self.pending_customer = None
-                return self._match_claimed_name(claimed_name) or self._name_not_found(claimed_name)
-            if analysis.intent is TurnIntent.CONFIRMS:
-                return self._authenticate(customer)
-            if analysis.intent is TurnIntent.DENIES:
-                self.pending_customer = None
-                return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("name_denied"))
-            return AuthenticationResult(
-                AuthStatus.NEEDS_CONFIRMATION,
-                self._message("confirmation_unclear", name=customer.full_name),
-            )
+        if claimed_name and normalize_name(claimed_name) != normalize_name(customer.full_name):
+            self.pending_customer = None
+            return self._match_claimed_name(claimed_name) or self._name_not_found(claimed_name)
+        if analysis.intent is TurnIntent.CONFIRMS:
+            return self._authenticate(customer)
+        if analysis.intent is TurnIntent.DENIES:
+            self.pending_customer = None
+            return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("name_denied"))
+        return AuthenticationResult(
+            AuthStatus.NEEDS_CONFIRMATION,
+            self._message("confirmation_unclear", name=customer.full_name),
+        )
 
+    def _handle_name_collection(self, analysis: TurnAnalysis) -> AuthenticationResult:
         if analysis.intent is TurnIntent.ASKS_WHY:
             return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("why"))
         if analysis.intent is TurnIntent.AVOIDS_ANSWER:
@@ -419,14 +448,13 @@ class AuthenticationAgent:
             if self.avoidance_attempts >= self.max_avoidance_attempts:
                 return self._handoff("handoff_refusal", "name_not_provided")
             return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("refusal"))
-        if claimed_name:
-            return self._match_claimed_name(claimed_name) or self._name_not_found(claimed_name)
+        if analysis.extracted_name:
+            return self._match_claimed_name(analysis.extracted_name) or self._name_not_found(
+                analysis.extracted_name
+            )
         return self.handle_unclear_classification()
 
     def start(self) -> AuthenticationResult:
         if self.language == "auto":
-            prompt = (
-                opening_prompt(self.country_code) if self.country_code else AUTO_LANGUAGE_PROMPT
-            )
-            return AuthenticationResult(AuthStatus.NEEDS_NAME, prompt)
+            return AuthenticationResult(AuthStatus.NEEDS_NAME, AUTO_LANGUAGE_PROMPT)
         return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("start"))

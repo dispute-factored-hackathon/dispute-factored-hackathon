@@ -6,6 +6,7 @@ from typing import TypedDict
 from uuid import uuid4
 
 from langgraph.graph import END, START, StateGraph
+from langsmith import traceable
 
 from .authentication import AuthenticationAgent, AuthenticationResult, AuthStatus
 from .openai_interpreter import (
@@ -226,12 +227,27 @@ class LangGraphAuthenticationAgent:
             raise RuntimeError("Conversation policy returned an empty customer response")
         return {}
 
+    @traceable(name="start-dispute-call", run_type="chain")
     def start(self) -> AuthenticationResult:
-        result = self.policy.start()
+        if self.policy.language == "auto" and self.policy.country_code:
+            try:
+                result = self.policy.apply_opening(
+                    self.interpreter.generate_opening(self.policy.country_code)
+                )
+            except ClassificationError:
+                result = AuthenticationResult(
+                    AuthStatus.NEEDS_NAME,
+                    f"Hi! You've reached Bank Factored. Your calling code is "
+                    f"{self.policy.country_code}. Would you like to continue in English, "
+                    "Spanish, or Portuguese?",
+                )
+        else:
+            result = self.policy.start()
         self.policy.last_agent_message = result.message
         return result
 
     @screen_prompt_abuse
+    @traceable(name="handle-customer-turn", run_type="chain")
     def handle_answer(self, answer: str | None) -> AuthenticationResult:
         self.policy.last_customer_utterance = (answer or "").strip() or None
         config = {
