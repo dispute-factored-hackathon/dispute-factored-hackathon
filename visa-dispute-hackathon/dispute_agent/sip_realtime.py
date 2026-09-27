@@ -19,6 +19,7 @@ from .voice_call import VoiceCallService, VoiceCallStage, VoiceCallState
 LOGGER = logging.getLogger(__name__)
 DEFAULT_CUSTOMERS = Path(__file__).parents[2] / "data" / "raw" / "customers.csv"
 WebsocketConnector = Callable[..., Awaitable[Any]]
+SIDEBAND_RETRY_DELAYS = (0.0, 0.25, 0.5, 1.0, 2.0, 4.0)
 
 
 def _value(value: Any, name: str, default: Any = None) -> Any:
@@ -141,16 +142,44 @@ class SipRealtimeGateway:
         return self._async_client.realtime.connect(call_id=call_id)
 
     async def _control_sideband(self, call_id: str, state: VoiceCallState) -> None:
-        connection = self._connect(call_id)
-        async with connection as websocket:
-            await self._speak(websocket, self._message_for(state, "opening"))
-            async for raw_event in websocket:
-                event = self._event_dict(raw_event)
-                event_type = event.get("type")
-                if event_type == "transport.dtmf.received":
-                    await self._handle_dtmf(websocket, call_id, str(event.get("event", "")))
-                elif event_type == "response.done":
-                    await self._handle_tool_calls(websocket, call_id, event)
+        for attempt, delay in enumerate(SIDEBAND_RETRY_DELAYS, start=1):
+            if delay:
+                await asyncio.sleep(delay)
+            try:
+                async with self._connect(call_id) as websocket:
+                    LOGGER.info("Realtime sideband attached for call %s", call_id)
+                    await self._speak(websocket, self._message_for(state, "opening"))
+                    async for raw_event in websocket:
+                        event = self._event_dict(raw_event)
+                        event_type = event.get("type")
+                        if event_type in {
+                            "transport.ringing",
+                            "transport.answered",
+                            "transport.failed",
+                            "session.closed",
+                        }:
+                            LOGGER.info("Realtime call %s event: %s", call_id, event_type)
+                        if event_type == "transport.dtmf.received":
+                            await self._handle_dtmf(
+                                websocket, call_id, str(event.get("event", ""))
+                            )
+                        elif event_type == "response.done":
+                            await self._handle_tool_calls(websocket, call_id, event)
+                return
+            except Exception as error:
+                if attempt == len(SIDEBAND_RETRY_DELAYS) or not self._is_not_ready(error):
+                    raise
+                LOGGER.warning(
+                    "Realtime sideband not ready for call %s; retrying (%d/%d)",
+                    call_id,
+                    attempt,
+                    len(SIDEBAND_RETRY_DELAYS),
+                )
+
+    @staticmethod
+    def _is_not_ready(error: Exception) -> bool:
+        response = getattr(error, "response", None)
+        return getattr(response, "status_code", None) == 404
 
     async def _handle_dtmf(self, websocket: Any, call_id: str, key: str) -> None:
         before = self.calls.get(call_id)
