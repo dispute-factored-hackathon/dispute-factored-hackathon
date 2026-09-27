@@ -336,8 +336,10 @@ dependencies = [
     { name = "langchain-openai" },
     { name = "langgraph" },
     { name = "langsmith" },
+    { name = "openai" },
     { name = "python-dotenv" },
     { name = "uvicorn" },
+    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
@@ -353,8 +355,10 @@ requires-dist = [
     { name = "langchain-openai", specifier = ">=0.3,<2" },
     { name = "langgraph", specifier = ">=0.4,<2" },
     { name = "langsmith", specifier = ">=0.3,<1" },
+    { name = "openai", specifier = ">=3.19,<4" },
     { name = "python-dotenv", specifier = ">=1,<2" },
     { name = "uvicorn", specifier = ">=0.30,<1" },
+    { name = "websockets", specifier = ">=15,<17" },
 ]
 
 [package.metadata.requires-dev]
