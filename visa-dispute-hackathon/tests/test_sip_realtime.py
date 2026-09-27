@@ -118,12 +118,22 @@ class FakeWebsocket:
 class FakeConnector:
     def __init__(self, websocket):
         self.websocket = websocket
-        self.url = None
+        self.call_id = None
         self.kwargs = None
 
-    def __call__(self, url, **kwargs):
-        self.url = url
+    def __call__(self, *, call_id, **kwargs):
+        self.call_id = call_id
         self.kwargs = kwargs
+        return self.websocket
+
+
+class FakeRealtime:
+    def __init__(self, websocket):
+        self.websocket = websocket
+        self.call_id = None
+
+    def connect(self, *, call_id):
+        self.call_id = call_id
         return self.websocket
 
 
@@ -136,6 +146,22 @@ class FakeAcceptCalls:
 
 
 class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
+    async def test_uses_sdk_connection_for_accepted_call(self):
+        websocket = FakeWebsocket([])
+        realtime = FakeRealtime(websocket)
+        calls = FakeAcceptCalls()
+        gateway = SipRealtimeGateway(
+            FIXTURE,
+            api_key="sk-test",
+            openai_client=SimpleNamespace(realtime=SimpleNamespace(calls=calls)),
+            async_openai_client=SimpleNamespace(realtime=realtime),
+        )
+
+        await gateway.accept_and_control("call_sdk", "+5511999990001")
+
+        self.assertEqual(realtime.call_id, "call_sdk")
+        self.assertEqual(websocket.sent[0]["type"], "response.create")
+
     async def test_customer_directory_is_loaded_only_for_a_valid_call(self):
         calls = FakeAcceptCalls()
         client = SimpleNamespace(realtime=SimpleNamespace(calls=calls))
@@ -189,13 +215,8 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(session_updates), 1)
         self.assertIn("es-CO", session_updates[0]["session"]["instructions"])
         self.assertNotIn("123456789", json.dumps(websocket.sent))
-        self.assertEqual(
-            connector.kwargs["additional_headers"],
-            {
-                "Authorization": "Bearer sk-test",
-                "OpenAI-Beta": "realtime=v1",
-            },
-        )
+        self.assertEqual(connector.call_id, "call_unknown")
+        self.assertEqual(connector.kwargs, {})
 
 
 if __name__ == "__main__":

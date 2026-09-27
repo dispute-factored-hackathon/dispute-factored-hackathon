@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 
 from .voice_call import VoiceCallService, VoiceCallStage, VoiceCallState
 
@@ -54,6 +54,7 @@ class SipRealtimeGateway:
         voice: str | None = None,
         webhook_secret: str | None = None,
         openai_client: Any | None = None,
+        async_openai_client: Any | None = None,
         websocket_connect: Callable[..., Any] | None = None,
     ) -> None:
         self.api_key = api_key or os.getenv("OPENAI_API_KEY", "")
@@ -63,6 +64,7 @@ class SipRealtimeGateway:
             api_key=self.api_key,
             webhook_secret=webhook_secret or os.getenv("OPENAI_WEBHOOK_SECRET"),
         )
+        self._async_client = async_openai_client
         self._customers_csv = Path(customers_csv)
         self._calls: VoiceCallService | None = None
         self._websocket_connect = websocket_connect
@@ -129,26 +131,21 @@ class SipRealtimeGateway:
         except Exception:
             LOGGER.exception("Realtime sideband ended unexpectedly for call %s", call_id)
 
-    def _connect(self, url: str) -> Any:
-        connector = self._websocket_connect
-        if connector is None:
-            from websockets.asyncio.client import connect
+    def _connect(self, call_id: str) -> Any:
+        """Attach through the SDK so project and authentication headers stay consistent."""
 
-            connector = connect
-        return connector(
-            url,
-            additional_headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "OpenAI-Beta": "realtime=v1",
-            },
-        )
+        if self._websocket_connect is not None:
+            return self._websocket_connect(call_id=call_id)
+        if self._async_client is None:
+            self._async_client = AsyncOpenAI(api_key=self.api_key)
+        return self._async_client.realtime.connect(call_id=call_id)
 
     async def _control_sideband(self, call_id: str, state: VoiceCallState) -> None:
-        connection = self._connect(f"wss://api.openai.com/v1/realtime?call_id={call_id}")
+        connection = self._connect(call_id)
         async with connection as websocket:
             await self._speak(websocket, self._message_for(state, "opening"))
             async for raw_event in websocket:
-                event = json.loads(raw_event)
+                event = self._event_dict(raw_event)
                 event_type = event.get("type")
                 if event_type == "transport.dtmf.received":
                     await self._handle_dtmf(websocket, call_id, str(event.get("event", "")))
@@ -187,43 +184,59 @@ class SipRealtimeGateway:
             except (ValueError, json.JSONDecodeError):
                 result = self._message_for(self.calls.get(call_id), "invalid_language")
             else:
-                await websocket.send(
-                    json.dumps(
-                        {
-                            "type": "session.update",
-                            "session": {"instructions": self._system_instructions(state)},
-                        }
-                    )
-                )
-            await websocket.send(
-                json.dumps(
+                await self._send_event(
+                    websocket,
                     {
-                        "type": "conversation.item.create",
-                        "item": {
-                            "type": "function_call_output",
-                            "call_id": output.get("call_id"),
-                            "output": json.dumps({"message": result}),
-                        },
-                    }
+                        "type": "session.update",
+                        "session": {"instructions": self._system_instructions(state)},
+                    },
                 )
+            await self._send_event(
+                websocket,
+                {
+                    "type": "conversation.item.create",
+                    "item": {
+                        "type": "function_call_output",
+                        "call_id": output.get("call_id"),
+                        "output": json.dumps({"message": result}),
+                    },
+                },
             )
             await self._speak(websocket, result)
 
     async def _speak(self, websocket: Any, message: str) -> None:
-        await websocket.send(
-            json.dumps(
-                {
-                    "type": "response.create",
-                    "response": {
-                        "output_modalities": ["audio"],
-                        "instructions": (
-                            "Say exactly the following message. Do not add or omit information: "
-                            f"{message}"
-                        ),
-                    },
-                }
-            )
+        await self._send_event(
+            websocket,
+            {
+                "type": "response.create",
+                "response": {
+                    "output_modalities": ["audio"],
+                    "instructions": (
+                        "Say exactly the following message. Do not add or omit information: "
+                        f"{message}"
+                    ),
+                },
+            },
         )
+
+    @staticmethod
+    async def _send_event(websocket: Any, event: dict[str, Any]) -> None:
+        """Send typed events through the SDK while retaining a lightweight test seam."""
+
+        if hasattr(websocket, "send_raw"):
+            await websocket.send_raw(json.dumps(event))
+        else:
+            await websocket.send(json.dumps(event))
+
+    @staticmethod
+    def _event_dict(event: Any) -> dict[str, Any]:
+        if isinstance(event, bytes | str):
+            return json.loads(event)
+        if hasattr(event, "model_dump"):
+            return event.model_dump(mode="json")
+        if isinstance(event, Mapping):
+            return dict(event)
+        raise TypeError(f"Unsupported Realtime event: {type(event).__name__}")
 
     @staticmethod
     def _language_tool() -> dict[str, Any]:
