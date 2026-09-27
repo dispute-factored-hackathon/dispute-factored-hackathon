@@ -8,9 +8,9 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from .agent_graph import LangGraphAuthenticationAgent
 from .authentication import AuthenticationAgent, AuthStatus
 from .country_context import normalize_country_code
-from .agent_graph import LangGraphAuthenticationAgent
 from .intent_classifier import (
     LocalAvoidanceClassifier,
     LocalConfirmationClassifier,
@@ -55,7 +55,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     load_dotenv(Path(__file__).resolve().parents[1] / ".env")
     if not os.getenv("OPENAI_API_KEY", "").strip():
-        print("OPENAI_API_KEY is missing. Add it to the project .env file before running the agent.")
+        print(
+            "OPENAI_API_KEY is missing. Add it to the project .env file before running the agent."
+        )
         return 2
     args = build_parser().parse_args()
     interpreter = OpenAITurnInterpreter()

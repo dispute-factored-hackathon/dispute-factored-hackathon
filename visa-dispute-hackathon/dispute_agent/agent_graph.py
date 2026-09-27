@@ -66,7 +66,14 @@ class LangGraphAuthenticationAgent:
     MAX_INPUT_CHARACTERS = 500
     MIN_ABUSE_CONFIDENCE = 0.75
     MIN_ABUSE_MARGIN = 0.20
-    FORBIDDEN_OUTPUT = ("system prompt", "api key", "developer message", "```", "http://", "https://")
+    FORBIDDEN_OUTPUT = (
+        "system prompt",
+        "api key",
+        "developer message",
+        "```",
+        "http://",
+        "https://",
+    )
 
     def __init__(
         self,
@@ -92,11 +99,37 @@ class LangGraphAuthenticationAgent:
         builder.add_node("validate_response", self._validate_response)
         builder.add_edge(START, "prepare_turn")
         builder.add_edge("prepare_turn", "guard_input")
-        builder.add_conditional_edges("guard_input", lambda s: "done" if "result" in s else "screen", {"done": "validate_response", "screen": "screen_abuse"})
-        builder.add_conditional_edges("screen_abuse", lambda s: "done" if "result" in s else "deterministic", {"done": "validate_response", "deterministic": "route_deterministic"})
-        builder.add_conditional_edges("route_deterministic", lambda s: "policy" if s.get("phase") == "deterministic_policy" else "interpret", {"policy": "apply_policy", "interpret": "interpret_turn"})
-        builder.add_conditional_edges("interpret_turn", self._route_analysis, {"done": "validate_response", "question": "answer_question", "out_of_scope": "refuse_out_of_scope", "classify": "classify_turn", "policy": "apply_policy"})
-        builder.add_conditional_edges("classify_turn", lambda s: "done" if "result" in s else "policy", {"done": "validate_response", "policy": "apply_policy"})
+        builder.add_conditional_edges(
+            "guard_input",
+            lambda s: "done" if "result" in s else "screen",
+            {"done": "validate_response", "screen": "screen_abuse"},
+        )
+        builder.add_conditional_edges(
+            "screen_abuse",
+            lambda s: "done" if "result" in s else "deterministic",
+            {"done": "validate_response", "deterministic": "route_deterministic"},
+        )
+        builder.add_conditional_edges(
+            "route_deterministic",
+            lambda s: "policy" if s.get("phase") == "deterministic_policy" else "interpret",
+            {"policy": "apply_policy", "interpret": "interpret_turn"},
+        )
+        builder.add_conditional_edges(
+            "interpret_turn",
+            self._route_analysis,
+            {
+                "done": "validate_response",
+                "question": "answer_question",
+                "out_of_scope": "refuse_out_of_scope",
+                "classify": "classify_turn",
+                "policy": "apply_policy",
+            },
+        )
+        builder.add_conditional_edges(
+            "classify_turn",
+            lambda s: "done" if "result" in s else "policy",
+            {"done": "validate_response", "policy": "apply_policy"},
+        )
         builder.add_edge("answer_question", "validate_response")
         builder.add_edge("refuse_out_of_scope", "validate_response")
         builder.add_edge("apply_policy", "validate_response")
@@ -168,8 +201,16 @@ class LangGraphAuthenticationAgent:
         except ClassificationError:
             self.llm_failures += 1
             if self.llm_failures == 1:
-                return {"result": AuthenticationResult(self._continuation_status(), self._text("temporary"))}
-            return {"result": self.policy._handoff("handoff_system", "llm_interpretation_unavailable_or_limit_reached")}
+                return {
+                    "result": AuthenticationResult(
+                        self._continuation_status(), self._text("temporary")
+                    )
+                }
+            return {
+                "result": self.policy._handoff(
+                    "handoff_system", "llm_interpretation_unavailable_or_limit_reached"
+                )
+            }
 
     def _route_deterministic(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
         """Keep simple menu, exact-name, and explicit control turns independent of the API."""
@@ -177,7 +218,11 @@ class LangGraphAuthenticationAgent:
         answer = state.get("answer") or ""
         if self.policy.language == "auto" or self.policy.directory.find_by_full_name(answer):
             return {"phase": "deterministic_policy"}
-        explicit = self.policy.intent_classifier._explicit_intent(answer) if hasattr(self.policy.intent_classifier, "_explicit_intent") else None
+        explicit = (
+            self.policy.intent_classifier._explicit_intent(answer)
+            if hasattr(self.policy.intent_classifier, "_explicit_intent")
+            else None
+        )
         if explicit in {AnswerIntent.REQUESTS_HUMAN, AnswerIntent.CANCELS, AnswerIntent.RESTARTS}:
             return {"phase": "deterministic_policy"}
         return {}
@@ -215,19 +260,32 @@ class LangGraphAuthenticationAgent:
                     return {"result": self.policy.apply_global_control(control_intent)}
                 classifier = self.policy.confirmation_classifier
                 if classifier is None:
-                    return {"result": self.policy._handoff("handoff_system", "confirmation_model_unavailable")}
+                    return {
+                        "result": self.policy._handoff(
+                            "handoff_system", "confirmation_model_unavailable"
+                        )
+                    }
                 decision = classifier.classify(answer)
                 accepted = (
                     decision.intent is not ConfirmationIntent.OTHER
                     and decision.confidence >= self.policy.min_confirmation_confidence
-                    and self._has_margin(decision.probabilities, self.policy.min_confirmation_margin)
+                    and self._has_margin(
+                        decision.probabilities, self.policy.min_confirmation_margin
+                    )
                 )
                 if not accepted:
-                    return {"result": AuthenticationResult(
-                        AuthStatus.NEEDS_CONFIRMATION,
-                        self.policy._message("confirmation_unclear", name=self.policy.pending_customer.full_name),
-                    )}
-                return {"confirmation_intent": decision.intent, "classification_confidence": decision.confidence}
+                    return {
+                        "result": AuthenticationResult(
+                            AuthStatus.NEEDS_CONFIRMATION,
+                            self.policy._message(
+                                "confirmation_unclear", name=self.policy.pending_customer.full_name
+                            ),
+                        )
+                    }
+                return {
+                    "confirmation_intent": decision.intent,
+                    "classification_confidence": decision.confidence,
+                }
             else:
                 decision = self.policy.intent_classifier.classify(answer)
                 accepted = (
@@ -236,17 +294,30 @@ class LangGraphAuthenticationAgent:
                 )
                 if not accepted:
                     return self._refuse_out_of_scope(state)
-                return {"answer_intent": decision.intent, "classification_confidence": decision.confidence}
+                return {
+                    "answer_intent": decision.intent,
+                    "classification_confidence": decision.confidence,
+                }
         except ClassificationError:
-            return {"result": self.policy._handoff("handoff_system", "zero_shot_classification_unavailable")}
+            return {
+                "result": self.policy._handoff(
+                    "handoff_system", "zero_shot_classification_unavailable"
+                )
+            }
 
     def _continuation_status(self) -> AuthStatus:
-        return AuthStatus.NEEDS_CONFIRMATION if self.policy.pending_customer else AuthStatus.NEEDS_NAME
+        return (
+            AuthStatus.NEEDS_CONFIRMATION if self.policy.pending_customer else AuthStatus.NEEDS_NAME
+        )
 
     def _answer_question(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
         answer = (state["analysis"].direct_answer or "").strip()
         normalized = answer.casefold()
-        if not answer or len(answer) > 800 or any(marker in normalized for marker in self.FORBIDDEN_OUTPUT):
+        if (
+            not answer
+            or len(answer) > 800
+            or any(marker in normalized for marker in self.FORBIDDEN_OUTPUT)
+        ):
             answer = self._text("unsafe_answer")
         if self.policy.pending_customer:
             answer = f"{answer} {self.policy._message('confirmation_unclear', name=self.policy.pending_customer.full_name)}"
@@ -265,7 +336,11 @@ class LangGraphAuthenticationAgent:
     def _apply_policy(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
         answer = state.get("answer") or ""
         if "confirmation_intent" in state:
-            return {"result": self.policy.apply_validated_confirmation(answer, state["confirmation_intent"])}
+            return {
+                "result": self.policy.apply_validated_confirmation(
+                    answer, state["confirmation_intent"]
+                )
+            }
         if "answer_intent" in state:
             return {"result": self.policy.apply_validated_intent(answer, state["answer_intent"])}
         return {"result": self.policy.handle_answer(state.get("answer"))}
@@ -294,9 +369,7 @@ class LangGraphAuthenticationAgent:
                 "synthetic_data": True,
             },
         }
-        result = self.graph.invoke(
-            {"answer": answer}, config=config
-        )["result"]
+        result = self.graph.invoke({"answer": answer}, config=config)["result"]
         self.policy.last_agent_message = result.message
         return result
 

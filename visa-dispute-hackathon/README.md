@@ -43,6 +43,17 @@ uv run --extra ml python -m unittest discover -s tests -v
 
 Tests use `tests/fixtures/customers.csv`, a fake structured model, and the complete synthetic database when available. They do not call the OpenAI API or consume credits.
 
+Before opening a pull request, run the same quality checks used by GitHub Actions:
+
+```bash
+uv sync --extra ml --dev
+uv run ruff check .
+uv run ruff format --check .
+uv run --extra ml python -m unittest discover -s tests -v
+```
+
+The pull-request workflow uses the committed lockfile, checks lint and formatting with Ruff, and then runs the complete test suite on Python 3.11.
+
 For a machine-readable local evaluation summary, run:
 
 ```bash

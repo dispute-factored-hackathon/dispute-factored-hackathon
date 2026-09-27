@@ -22,6 +22,8 @@ Run Python commands from `visa-dispute-hackathon/`:
 ```bash
 uv sync --extra ml
 uv run --extra ml dispute-auth-setup
+uv run ruff check .
+uv run ruff format --check .
 uv run --extra ml python -m unittest discover -s tests -v
 ```
 

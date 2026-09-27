@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+from .country_context import locale_for, opening_prompt
 from .intent_classifier import (
     AnswerIntent,
     AnswerIntentClassifier,
@@ -17,7 +18,6 @@ from .intent_classifier import (
 )
 from .language_classifier import LanguageClassificationError, LanguageClassifier
 from .name_extractor import NameExtractionError, NameExtractor
-from .country_context import locale_for, opening_prompt
 
 
 class AuthStatus(StrEnum):
@@ -151,13 +151,15 @@ _FORMAL_SPANISH = {
 MESSAGES["es-CO"].update(_FORMAL_SPANISH)
 MESSAGES["es-MX"].update(_FORMAL_SPANISH)
 
-MESSAGES["es-AR"].update({
-    "why": "Uso tu nombre solamente para encontrar un perfil sintético de demostración y sus transacciones de prueba. Identificar a alguien solo por su nombre no es seguro para un banco real. ¿Preferís dar tu nombre completo o hablar con una persona?",
-    "silence_1": "No escuché una respuesta. Cuando estés listo, decí o escribí tu nombre completo. También podés pedir hablar con una persona.",
-    "silence_2": "Tal vez haya un problema de audio o conexión. Podés repetir o escribir tu nombre completo, o pedir hablar con una persona. No voy a abrir transacciones hasta encontrar un perfil.",
-    "refusal": "Está bien. Sin el nombre completo no puedo encontrar el perfil de demostración ni mostrar transacciones. Podés darlo ahora o pedir hablar con una persona.",
-    "unclear": "No pude identificar un nombre completo en esa respuesta. Decí tu nombre y todos tus apellidos, por ejemplo: 'Mi nombre completo es Ana Silva.' También podés pedir hablar con una persona.",
-})
+MESSAGES["es-AR"].update(
+    {
+        "why": "Uso tu nombre solamente para encontrar un perfil sintético de demostración y sus transacciones de prueba. Identificar a alguien solo por su nombre no es seguro para un banco real. ¿Preferís dar tu nombre completo o hablar con una persona?",
+        "silence_1": "No escuché una respuesta. Cuando estés listo, decí o escribí tu nombre completo. También podés pedir hablar con una persona.",
+        "silence_2": "Tal vez haya un problema de audio o conexión. Podés repetir o escribir tu nombre completo, o pedir hablar con una persona. No voy a abrir transacciones hasta encontrar un perfil.",
+        "refusal": "Está bien. Sin el nombre completo no puedo encontrar el perfil de demostración ni mostrar transacciones. Podés darlo ahora o pedir hablar con una persona.",
+        "unclear": "No pude identificar un nombre completo en esa respuesta. Decí tu nombre y todos tus apellidos, por ejemplo: 'Mi nombre completo es Ana Silva.' También podés pedir hablar con una persona.",
+    }
+)
 
 AUTO_LANGUAGE_PROMPT = (
     "Choose a language: English, Portuguese, or Spanish. / "
@@ -197,7 +199,9 @@ def normalize_name(value: str) -> str:
     value = unicodedata.normalize("NFKD", value)
     value = "".join(character for character in value if not unicodedata.combining(character))
     value = value.casefold()
-    value = "".join(character if character.isalnum() or character in " '-_" else " " for character in value)
+    value = "".join(
+        character if character.isalnum() or character in " '-_" else " " for character in value
+    )
     return " ".join(value.split())
 
 
@@ -272,7 +276,9 @@ class AuthenticationAgent:
         self.min_language_confidence = min_language_confidence
         self.name_extractor = name_extractor
         self.country_code = country_code
-        self.locale = locale_for(self.language, country_code) if self.language != "auto" else "en-US"
+        self.locale = (
+            locale_for(self.language, country_code) if self.language != "auto" else "en-US"
+        )
         self.confirmation_classifier = confirmation_classifier
         self.min_confirmation_confidence = min_confirmation_confidence
         self.min_confirmation_margin = min_confirmation_margin
@@ -300,7 +306,9 @@ class AuthenticationAgent:
                 "unclear_attempts": self.unclear_attempts,
                 "recommended_next_step": "Human verifies identity with the mocked fallback process before showing transactions.",
                 "phase": "name_confirmation" if self.pending_customer else "name_collection",
-                "matched_candidate": self.pending_customer.full_name if self.pending_customer else None,
+                "matched_candidate": self.pending_customer.full_name
+                if self.pending_customer
+                else None,
                 "confirmation_status": "pending" if self.pending_customer else "not_started",
                 "last_customer_utterance": self.last_customer_utterance,
                 "previous_agent_message": self.last_agent_message,
@@ -332,7 +340,8 @@ class AuthenticationAgent:
 
         decision = self.intent_classifier.classify(answer)
         if (
-            decision.intent in {AnswerIntent.REQUESTS_HUMAN, AnswerIntent.CANCELS, AnswerIntent.RESTARTS}
+            decision.intent
+            in {AnswerIntent.REQUESTS_HUMAN, AnswerIntent.CANCELS, AnswerIntent.RESTARTS}
             and decision.confidence >= self.min_intent_confidence
         ):
             return decision.intent
@@ -361,7 +370,9 @@ class AuthenticationAgent:
             return self._handoff("handoff_ambiguous", "duplicate_name")
         return None
 
-    def _authenticate(self, customer: CustomerMatch, *, confirmed: bool = True) -> AuthenticationResult:
+    def _authenticate(
+        self, customer: CustomerMatch, *, confirmed: bool = True
+    ) -> AuthenticationResult:
         self.current_customer = customer
         self.pending_customer = None
         return AuthenticationResult(
@@ -382,10 +393,7 @@ class AuthenticationAgent:
         if control is not None:
             return control
         corrected_name = self._extract_name(answer)
-        if (
-            corrected_name
-            and normalize_name(corrected_name) != normalize_name(customer.full_name)
-        ):
+        if corrected_name and normalize_name(corrected_name) != normalize_name(customer.full_name):
             self.pending_customer = None
             corrected_result = self._match_claimed_name(corrected_name)
             if corrected_result is not None:
@@ -459,9 +467,34 @@ class AuthenticationAgent:
         if not 2 <= len(words) <= 6:
             return False
         conversational_words = {
-            "i", "my", "name", "is", "why", "what", "need", "want", "maybe", "later",
-            "meu", "minha", "nome", "e", "porque", "precisa", "quero", "talvez", "depois",
-            "mi", "nombre", "es", "por", "que", "necesita", "quiero", "quizas", "luego",
+            "i",
+            "my",
+            "name",
+            "is",
+            "why",
+            "what",
+            "need",
+            "want",
+            "maybe",
+            "later",
+            "meu",
+            "minha",
+            "nome",
+            "e",
+            "porque",
+            "precisa",
+            "quero",
+            "talvez",
+            "depois",
+            "mi",
+            "nombre",
+            "es",
+            "por",
+            "que",
+            "necesita",
+            "quiero",
+            "quizas",
+            "luego",
         }
         return not any(word in conversational_words for word in words)
 
@@ -477,7 +510,9 @@ class AuthenticationAgent:
 
     def start(self) -> AuthenticationResult:
         if self.language == "auto":
-            prompt = opening_prompt(self.country_code) if self.country_code else AUTO_LANGUAGE_PROMPT
+            prompt = (
+                opening_prompt(self.country_code) if self.country_code else AUTO_LANGUAGE_PROMPT
+            )
             return AuthenticationResult(AuthStatus.NEEDS_NAME, prompt)
         return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("start"))
 

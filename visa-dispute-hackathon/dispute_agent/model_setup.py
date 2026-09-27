@@ -25,7 +25,9 @@ def main() -> int:
     from transformers import AutoModelForSeq2SeqLM
 
     AutoModelForSeq2SeqLM.from_pretrained(name_model_id)
-    print("Intent, language and name extraction models ready. Customer interactions can now run without network access.")
+    print(
+        "Intent, language and name extraction models ready. Customer interactions can now run without network access."
+    )
     return 0
 
 

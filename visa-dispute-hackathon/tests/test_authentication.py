@@ -1,5 +1,5 @@
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 from dispute_agent.authentication import AuthenticationAgent, AuthStatus, normalize_name
 from dispute_agent.intent_classifier import (
@@ -19,7 +19,6 @@ from dispute_agent.language_classifier import (
     LocalLanguageClassifier,
 )
 from dispute_agent.name_extractor import LocalLLMNameExtractor, NameExtractionError
-
 
 FIXTURE = Path(__file__).parent / "fixtures" / "customers.csv"
 
@@ -157,9 +156,11 @@ class AuthenticationAgentTests(unittest.TestCase):
 
     def test_llm_extraction_overrides_other_intent_for_grounded_name(self):
         answer = "meu nome é josé maría pérez lópez"
-        classifier = FakeIntentClassifier({
-            answer: (AnswerIntent.OTHER, 0.98),
-        })
+        classifier = FakeIntentClassifier(
+            {
+                answer: (AnswerIntent.OTHER, 0.98),
+            }
+        )
         extractor = FakeNameExtractor({answer: "josé maría pérez lópez"})
         result = make_agent(
             classifier=classifier,
@@ -170,9 +171,11 @@ class AuthenticationAgentTests(unittest.TestCase):
 
     def test_llm_extraction_overrides_low_confidence_intent_for_grounded_name(self):
         answer = "meu nome é josé maría pérez lópez"
-        classifier = FakeIntentClassifier({
-            answer: (AnswerIntent.PROVIDES_NAME, 0.30),
-        })
+        classifier = FakeIntentClassifier(
+            {
+                answer: (AnswerIntent.PROVIDES_NAME, 0.30),
+            }
+        )
         extractor = FakeNameExtractor({answer: "josé maría pérez lópez"})
         result = make_agent(
             classifier=classifier,
@@ -195,9 +198,11 @@ class AuthenticationAgentTests(unittest.TestCase):
 
     def test_unknown_standalone_name_gets_database_feedback_even_with_low_confidence(self):
         answer = "lelia gonzales"
-        classifier = FakeIntentClassifier({
-            answer: (AnswerIntent.OTHER, 0.30),
-        })
+        classifier = FakeIntentClassifier(
+            {
+                answer: (AnswerIntent.OTHER, 0.30),
+            }
+        )
         result = make_agent(
             classifier=classifier,
             language="pt",
@@ -209,9 +214,11 @@ class AuthenticationAgentTests(unittest.TestCase):
 
     def test_unclear_feedback_explains_what_was_missing(self):
         answer = "talvez depois"
-        classifier = FakeIntentClassifier({
-            answer: (AnswerIntent.OTHER, 0.30),
-        })
+        classifier = FakeIntentClassifier(
+            {
+                answer: (AnswerIntent.OTHER, 0.30),
+            }
+        )
         result = make_agent(
             classifier=classifier,
             language="pt",
@@ -251,10 +258,12 @@ class AuthenticationAgentTests(unittest.TestCase):
         self.assertEqual(third.handoff_summary["reason"], "repeated_no_response")
 
     def test_avoidance_is_reprompted_then_handed_off(self):
-        classifier = FakeIntentClassifier({
-            "Why do you need that?": (AnswerIntent.ASKS_WHY, 0.96),
-            "I prefer not to say": (AnswerIntent.AVOIDS_ANSWER, 0.98),
-        })
+        classifier = FakeIntentClassifier(
+            {
+                "Why do you need that?": (AnswerIntent.ASKS_WHY, 0.96),
+                "I prefer not to say": (AnswerIntent.AVOIDS_ANSWER, 0.98),
+            }
+        )
         agent = make_agent(classifier=classifier)
         first = agent.handle_answer("Why do you need that?")
         second = agent.handle_answer("I prefer not to say")
@@ -264,9 +273,11 @@ class AuthenticationAgentTests(unittest.TestCase):
         self.assertEqual(third.status, AuthStatus.HUMAN_HANDOFF)
 
     def test_privacy_question_is_answered_without_consuming_avoidance_budget(self):
-        classifier = FakeIntentClassifier({
-            "Why do you need that?": (AnswerIntent.ASKS_WHY, 0.96),
-        })
+        classifier = FakeIntentClassifier(
+            {
+                "Why do you need that?": (AnswerIntent.ASKS_WHY, 0.96),
+            }
+        )
         agent = make_agent(classifier=classifier)
         result = agent.handle_answer("Why do you need that?")
         self.assertIn("only to locate", result.message)
@@ -296,12 +307,16 @@ class AuthenticationAgentTests(unittest.TestCase):
                 self.assertEqual(decision.confidence, 0.99)
 
     def test_portuguese_human_request_stays_in_portuguese(self):
-        classifier = FakeIntentClassifier({
-            "Quero falar com um atendente": (AnswerIntent.REQUESTS_HUMAN, 0.99),
-        })
-        language_classifier = FakeLanguageClassifier({
-            "Quero falar com um atendente": ("pt", 0.98),
-        })
+        classifier = FakeIntentClassifier(
+            {
+                "Quero falar com um atendente": (AnswerIntent.REQUESTS_HUMAN, 0.99),
+            }
+        )
+        language_classifier = FakeLanguageClassifier(
+            {
+                "Quero falar com um atendente": ("pt", 0.98),
+            }
+        )
         result = make_agent(
             classifier=classifier,
             language="auto",
@@ -359,12 +374,16 @@ class AuthenticationAgentTests(unittest.TestCase):
         self.assertEqual(agent.language, "auto")
 
     def test_spanish_privacy_question_stays_in_spanish(self):
-        classifier = FakeIntentClassifier({
-            "¿Por qué necesitan mi nombre?": (AnswerIntent.ASKS_WHY, 0.99),
-        })
-        language_classifier = FakeLanguageClassifier({
-            "¿Por qué necesitan mi nombre?": ("es", 0.98),
-        })
+        classifier = FakeIntentClassifier(
+            {
+                "¿Por qué necesitan mi nombre?": (AnswerIntent.ASKS_WHY, 0.99),
+            }
+        )
+        language_classifier = FakeLanguageClassifier(
+            {
+                "¿Por qué necesitan mi nombre?": ("es", 0.98),
+            }
+        )
         result = make_agent(
             classifier=classifier,
             language="auto",
@@ -377,23 +396,29 @@ class AuthenticationAgentTests(unittest.TestCase):
         self.assertEqual(normalize_name(" José  Muñoz "), "jose munoz")
 
     def test_request_for_human_hands_off_immediately(self):
-        classifier = FakeIntentClassifier({
-            "Give me a human": (AnswerIntent.REQUESTS_HUMAN, 0.99),
-        })
+        classifier = FakeIntentClassifier(
+            {
+                "Give me a human": (AnswerIntent.REQUESTS_HUMAN, 0.99),
+            }
+        )
         result = make_agent(classifier=classifier).handle_answer("Give me a human")
         self.assertEqual(result.status, AuthStatus.HUMAN_HANDOFF)
 
     def test_low_confidence_classifier_result_reprompts(self):
-        classifier = FakeIntentClassifier({
-            "Maybe Ana": (AnswerIntent.PROVIDES_NAME, 0.30),
-        })
+        classifier = FakeIntentClassifier(
+            {
+                "Maybe Ana": (AnswerIntent.PROVIDES_NAME, 0.30),
+            }
+        )
         result = make_agent(classifier=classifier).handle_answer("Maybe Ana")
         self.assertEqual(result.status, AuthStatus.NEEDS_NAME)
         self.assertIn("could not identify a full name", result.message)
         self.assertIn("My full name is Ana Silva", result.message)
 
     def test_classifier_failure_fails_closed_to_human(self):
-        result = make_agent(classifier=FakeIntentClassifier(error=True)).handle_answer("I will not answer")
+        result = make_agent(classifier=FakeIntentClassifier(error=True)).handle_answer(
+            "I will not answer"
+        )
         self.assertEqual(result.status, AuthStatus.HUMAN_HANDOFF)
 
     def test_exact_customer_match_does_not_depend_on_classifier(self):

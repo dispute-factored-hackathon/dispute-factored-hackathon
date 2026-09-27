@@ -1,11 +1,11 @@
 """Integration checks against the hackathon's complete synthetic customer database."""
 
-from pathlib import Path
 import unittest
+from pathlib import Path
 
-from dispute_agent.authentication import AuthenticationAgent
 from test_authentication import FakeIntentClassifier, FakeNameExtractor
 
+from dispute_agent.authentication import AuthenticationAgent
 
 REAL_CUSTOMERS = Path(__file__).parents[2] / "data" / "raw" / "customers.csv"
 

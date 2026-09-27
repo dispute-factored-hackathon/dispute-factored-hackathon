@@ -1,7 +1,11 @@
 import unittest
 
-from dispute_agent.country_context import locale_for, normalize_country_code, opening_prompt
 from dispute_agent.cli import build_parser
+from dispute_agent.country_context import (
+    locale_for,
+    normalize_country_code,
+    opening_prompt,
+)
 
 
 class CountryContextTests(unittest.TestCase):

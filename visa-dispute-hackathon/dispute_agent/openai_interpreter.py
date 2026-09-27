@@ -142,8 +142,10 @@ knowledge is insufficient, use out_of_scope and direct_answer null."""
                     ("system", self.SYSTEM_PROMPT),
                     (
                         "user",
-                        f"Conversation phase: {self.phase}\nResponse locale: {self.locale}\n"
-                        f"Customer utterance: {text}",
+                        (
+                            f"Conversation phase: {self.phase}\nResponse locale: {self.locale}\n"
+                            f"Customer utterance: {text}"
+                        ),
                     ),
                 ]
             )

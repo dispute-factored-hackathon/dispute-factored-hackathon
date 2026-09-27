@@ -20,7 +20,9 @@ def _normalize(value: str) -> str:
     value = unicodedata.normalize("NFKD", value)
     value = "".join(character for character in value if not unicodedata.combining(character))
     value = value.casefold()
-    value = "".join(character if character.isalnum() or character in " '-" else " " for character in value)
+    value = "".join(
+        character if character.isalnum() or character in " '-" else " " for character in value
+    )
     return " ".join(value.split())
 
 
@@ -58,8 +60,10 @@ Name:"""
                 from transformers import (
                     AutoModelForSeq2SeqLM,
                     AutoTokenizer,
-                    logging as transformers_logging,
                     pipeline,
+                )
+                from transformers import (
+                    logging as transformers_logging,
                 )
             except ImportError as exc:
                 raise NameExtractionError(
@@ -123,7 +127,9 @@ Name:"""
             normalized_words = [_normalize(word) for word in original_words]
             for index in range(len(original_words) - len(target_words) + 1):
                 if normalized_words[index : index + len(target_words)] == target_words:
-                    return " ".join(original_words[index : index + len(target_words)]).strip(" ,.!?;:\"")
+                    return " ".join(original_words[index : index + len(target_words)]).strip(
+                        ' ,.!?;:"'
+                    )
 
         candidate_words = normalized_candidate.split()
         if len(candidate_words) < 2:
@@ -133,7 +139,7 @@ Name:"""
         best_score = 0.0
         for size in range(max(2, len(candidate_words) - 1), len(candidate_words) + 2):
             for index in range(len(original_words) - size + 1):
-                span = " ".join(original_words[index : index + size]).strip(" ,.!?;:\"")
+                span = " ".join(original_words[index : index + size]).strip(' ,.!?;:"')
                 score = SequenceMatcher(None, normalized_candidate, _normalize(span)).ratio()
                 if score > best_score:
                     best_score = score
