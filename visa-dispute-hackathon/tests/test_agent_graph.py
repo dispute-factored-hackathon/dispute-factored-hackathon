@@ -61,6 +61,10 @@ class LLMClassificationGraphTests(unittest.TestCase):
     def test_schema_exposes_closed_intent_and_abuse_enums(self):
         schema = TurnAnalysis.model_json_schema()
         definitions = schema["$defs"]
+        self.assertTrue(
+            {"language", "intent", "confidence", "abuse", "abuse_confidence"}
+            <= set(schema["required"])
+        )
         self.assertIn("provides_name", definitions["TurnIntent"]["enum"])
         self.assertIn("requests_human", definitions["TurnIntent"]["enum"])
         self.assertEqual(set(definitions["AbuseClass"]["enum"]), {"benign", "prompt_abuse"})

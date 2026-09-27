@@ -39,9 +39,9 @@ class TurnAnalysis(BaseModel):
 
     language: Literal["en", "pt", "es", "unknown"]
     intent: TurnIntent
-    confidence: float = Field(default=0.99, ge=0, le=1)
-    abuse: AbuseClass = AbuseClass.BENIGN
-    abuse_confidence: float = Field(default=0.99, ge=0, le=1)
+    confidence: float = Field(ge=0, le=1)
+    abuse: AbuseClass
+    abuse_confidence: float = Field(ge=0, le=1)
     extracted_name: str | None = Field(
         description="Exact full-name span from the customer utterance, or null."
     )
