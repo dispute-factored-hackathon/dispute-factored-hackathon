@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .intent_classifier import LocalAvoidanceClassifier
 from .language_classifier import LocalLanguageClassifier
+from .name_extractor import LocalLLMNameExtractor
 
 
 def main() -> int:
@@ -18,7 +19,13 @@ def main() -> int:
     AutoTokenizer.from_pretrained(model_id)
     AutoModelForSequenceClassification.from_pretrained(model_id)
     LocalLanguageClassifier()._get_identifier()
-    print("Intent and language models ready. Customer interactions can now run without network access.")
+    name_model_id = LocalLLMNameExtractor.DEFAULT_MODEL
+    print(f"Preparing the local name extraction LLM: {name_model_id}")
+    AutoTokenizer.from_pretrained(name_model_id)
+    from transformers import AutoModelForSeq2SeqLM
+
+    AutoModelForSeq2SeqLM.from_pretrained(name_model_id)
+    print("Intent, language and name extraction models ready. Customer interactions can now run without network access.")
     return 0
 
 

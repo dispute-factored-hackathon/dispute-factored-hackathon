@@ -13,6 +13,7 @@ from dispute_agent.language_classifier import (
     LanguageDecision,
     LocalLanguageClassifier,
 )
+from dispute_agent.name_extractor import LocalLLMNameExtractor, NameExtractionError
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "customers.csv"
@@ -42,6 +43,17 @@ class FakeLanguageClassifier:
         return LanguageDecision(language, confidence)
 
 
+class FakeNameExtractor:
+    def __init__(self, values=None, error=False):
+        self.values = values or {}
+        self.error = error
+
+    def extract(self, text):
+        if self.error:
+            raise NameExtractionError("offline")
+        return self.values.get(text)
+
+
 def make_agent(**kwargs):
     classifier = kwargs.pop("classifier", FakeIntentClassifier())
     return AuthenticationAgent(FIXTURE, classifier, **kwargs)
@@ -64,6 +76,45 @@ class AuthenticationAgentTests(unittest.TestCase):
         result = make_agent().handle_answer("  JOSE   MARIA PEREZ LOPEZ ")
         self.assertTrue(result.authenticated)
         self.assertEqual(result.customer.customer_id, "CLI-001")
+
+    def test_llm_extracts_name_from_natural_portuguese_response(self):
+        answer = "meu nome é lélia gonzales"
+        extractor = FakeNameExtractor({answer: "lélia gonzales"})
+        result = make_agent(name_extractor=extractor).handle_answer(answer)
+        self.assertTrue(result.authenticated)
+        self.assertEqual(result.customer.customer_id, "CLI-005")
+
+    def test_llm_extraction_overrides_other_intent_for_grounded_name(self):
+        answer = "meu nome é lélia gonzales"
+        classifier = FakeIntentClassifier({
+            answer: (AnswerIntent.OTHER, 0.98),
+        })
+        extractor = FakeNameExtractor({answer: "lélia gonzales"})
+        result = make_agent(
+            classifier=classifier,
+            name_extractor=extractor,
+        ).handle_answer(answer)
+        self.assertTrue(result.authenticated)
+        self.assertEqual(result.customer.customer_id, "CLI-005")
+
+    def test_llm_extraction_overrides_low_confidence_intent_for_grounded_name(self):
+        answer = "meu nome é lélia gonzales"
+        classifier = FakeIntentClassifier({
+            answer: (AnswerIntent.PROVIDES_NAME, 0.30),
+        })
+        extractor = FakeNameExtractor({answer: "lélia gonzales"})
+        result = make_agent(
+            classifier=classifier,
+            name_extractor=extractor,
+        ).handle_answer(answer)
+        self.assertTrue(result.authenticated)
+        self.assertEqual(result.customer.customer_id, "CLI-005")
+
+    def test_name_extraction_failure_falls_back_without_authenticating(self):
+        result = make_agent(name_extractor=FakeNameExtractor(error=True)).handle_answer(
+            "meu nome é uma pessoa inexistente"
+        )
+        self.assertEqual(result.status, AuthStatus.NOT_FOUND)
 
     def test_unknown_name_is_not_authenticated(self):
         result = make_agent().handle_answer("Person Who Does Not Exist")
@@ -226,6 +277,25 @@ class AuthenticationAgentTests(unittest.TestCase):
         result = classifier.classify("Quero contestar uma compra")
         self.assertEqual(result.language, "pt")
         self.assertEqual(result.confidence, 0.93)
+
+    def test_llm_name_extractor_accepts_only_grounded_multiword_name(self):
+        class FakePipeline:
+            def __call__(self, prompt, **kwargs):
+                return [{"generated_text": "Lélia Gonzales"}]
+
+        extractor = LocalLLMNameExtractor(pipeline_instance=FakePipeline())
+        self.assertEqual(
+            extractor.extract("meu nome é Lélia Gonzales"),
+            "Lélia Gonzales",
+        )
+
+    def test_llm_name_extractor_rejects_hallucinated_name(self):
+        class FakePipeline:
+            def __call__(self, prompt, **kwargs):
+                return [{"generated_text": "Maria Inventada"}]
+
+        extractor = LocalLLMNameExtractor(pipeline_instance=FakePipeline())
+        self.assertIsNone(extractor.extract("meu nome é Lélia Gonzales"))
 
     def test_low_confidence_language_detection_repeats_menu(self):
         agent = make_agent(

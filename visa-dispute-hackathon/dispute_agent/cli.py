@@ -8,6 +8,7 @@ import os
 from .authentication import AuthenticationAgent, AuthStatus
 from .intent_classifier import LocalAvoidanceClassifier
 from .language_classifier import LocalLanguageClassifier
+from .name_extractor import LocalLLMNameExtractor
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,6 +35,7 @@ def main() -> int:
         LocalAvoidanceClassifier(),
         language=args.language,
         language_classifier=LocalLanguageClassifier(),
+        name_extractor=LocalLLMNameExtractor(),
     )
     result = agent.start()
     while result.status in {AuthStatus.NEEDS_NAME, AuthStatus.NOT_FOUND}:

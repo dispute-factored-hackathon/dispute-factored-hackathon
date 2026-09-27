@@ -6,11 +6,13 @@ Project documentation is maintained in the repository's [`docs`](../docs/README.
 
 ## Mock customer identification
 
-The first implemented layer asks for the caller's language and full name. A local language-identification model detects English, Portuguese or Spanish from natural caller speech. A separate local multilingual intent classifier categorizes the response as `provides_name`, `avoids_answer`, `asks_why`, `requests_human` or `other`. A high-confidence name response is normalized and looked up in the synthetic `customers.csv` file.
+The first implemented layer asks for the caller's language and full name. A local language-identification model detects English, Portuguese or Spanish from natural caller speech. A separate local multilingual intent classifier categorizes the response as `provides_name`, `avoids_answer`, `asks_why`, `requests_human` or `other`. When a name is embedded in a sentence—such as `meu nome é Lélia Gonzales`—a local LLM extracts the name before the normalized database lookup.
 
 The default classifier is [`MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli`](https://huggingface.co/MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli), an MIT-licensed multilingual zero-shot model. It runs locally after the model files are downloaded.
 
 Language identification uses [`langid.py`](https://github.com/saffsd/langid.py), a pretrained statistical model supporting 97 languages. It is restricted here to English (`en`), Portuguese (`pt`) and Spanish (`es`), returns normalized confidence scores and runs fully offline. Explicit menu choices remain deterministic; free-form utterances use this model with a minimum-confidence threshold.
+
+Name extraction uses [`google/flan-t5-small`](https://huggingface.co/google/flan-t5-small), a locally executed instruction-tuned language model. Its output is constrained: the extracted name must contain at least two words and must appear in the caller's original response after case and accent normalization. Ungrounded output is discarded rather than queried against customer data.
 
 Outcomes:
 
@@ -51,7 +53,7 @@ Prepare the model once, before starting a customer interaction:
 uv run --extra ml python -m dispute_agent.model_setup
 ```
 
-The setup downloads the intent model from Hugging Face and validates the bundled language model. Customer interactions then load both locally and do not make network requests. No API key or remote classification service is required.
+The setup downloads the intent and name-extraction models from Hugging Face and validates the bundled language model. Customer interactions then load all models locally and do not make network requests. No API key or remote classification service is required.
 
 ```bash
 uv run --extra ml python -m dispute_agent.cli \
@@ -78,6 +80,7 @@ Use `--language pt`, `--language es` or `--language en` when the IVR already kno
 Use:
 
 - `Ana Silva` for successful identification.
+- `meu nome é Lélia Gonzales` for LLM-based name extraction and successful identification.
 - `Nobody Here` for no match.
 - `Alex Santos` for the duplicate-name path.
 - An empty answer or `Why do you need that?` for avoidance.

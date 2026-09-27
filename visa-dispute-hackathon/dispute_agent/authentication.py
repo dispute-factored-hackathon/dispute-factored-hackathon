@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .intent_classifier import AnswerIntent, AnswerIntentClassifier, ClassificationError
 from .language_classifier import LanguageClassificationError, LanguageClassifier
+from .name_extractor import NameExtractionError, NameExtractor
 
 
 class AuthStatus(StrEnum):
@@ -173,6 +174,7 @@ class AuthenticationAgent:
         language: str = "en",
         language_classifier: LanguageClassifier | None = None,
         min_language_confidence: float = 0.65,
+        name_extractor: NameExtractor | None = None,
     ):
         self.directory = CustomerDirectory(customers_csv)
         self.intent_classifier = intent_classifier
@@ -189,6 +191,7 @@ class AuthenticationAgent:
         self.language = language if language in {"en", "pt", "es", "auto"} else "en"
         self.language_classifier = language_classifier
         self.min_language_confidence = min_language_confidence
+        self.name_extractor = name_extractor
         self.last_claimed_name: str | None = None
 
     def _message(self, key: str, **values: str) -> str:
@@ -210,6 +213,29 @@ class AuthenticationAgent:
                 "recommended_next_step": "Human verifies identity with the mocked fallback process before showing transactions.",
             },
         )
+
+    def _extract_name(self, answer: str) -> str | None:
+        if self.name_extractor is None:
+            return None
+        try:
+            return self.name_extractor.extract(answer)
+        except NameExtractionError:
+            return None
+
+    def _match_claimed_name(self, claimed_name: str) -> AuthenticationResult | None:
+        matches = self.directory.find_by_full_name(claimed_name)
+        if len(matches) == 1:
+            self.current_customer = matches[0]
+            return AuthenticationResult(
+                AuthStatus.AUTHENTICATED,
+                self._message("success", name=matches[0].full_name),
+                matches[0],
+                "DEMO_ONLY_NAME_MATCH",
+            )
+        if len(matches) > 1:
+            self.last_claimed_name = claimed_name
+            return self._handoff("handoff_ambiguous", "duplicate_name")
+        return None
 
     def start(self) -> AuthenticationResult:
         if self.language == "auto":
@@ -278,6 +304,11 @@ class AuthenticationAgent:
             except ClassificationError:
                 return self._handoff("handoff_system", "intent_service_unavailable")
             if decision.confidence < self.min_intent_confidence:
+                extracted_name = self._extract_name(answer)
+                if extracted_name:
+                    matched_result = self._match_claimed_name(extracted_name)
+                    if matched_result is not None:
+                        return matched_result
                 self.unclear_attempts += 1
                 if self.unclear_attempts >= self.max_unclear_attempts:
                     return self._handoff("handoff_unclear", "repeated_unclear_response")
@@ -297,12 +328,26 @@ class AuthenticationAgent:
             return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("refusal"))
 
         if intent is AnswerIntent.OTHER:
+            extracted_name = self._extract_name(answer)
+            if extracted_name:
+                matched_result = self._match_claimed_name(extracted_name)
+                if matched_result is not None:
+                    return matched_result
             self.unclear_attempts += 1
             if self.unclear_attempts >= self.max_unclear_attempts:
                 return self._handoff("handoff_unclear", "repeated_unclear_response")
             return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("unclear"))
 
-        self.last_claimed_name = answer
+        claimed_name = answer
+        extracted_name = self._extract_name(answer)
+        if extracted_name:
+            claimed_name = extracted_name
+
+        matched_result = self._match_claimed_name(claimed_name)
+        if matched_result is not None:
+            return matched_result
+
+        self.last_claimed_name = claimed_name
         self.failed_attempts += 1
         if self.failed_attempts >= self.max_failed_attempts:
             return self._handoff("handoff_not_found", "name_not_found_after_retries")
