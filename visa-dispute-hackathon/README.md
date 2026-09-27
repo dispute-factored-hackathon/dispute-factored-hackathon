@@ -24,6 +24,25 @@ Then open `http://127.0.0.1:8000`. The current page ends after creating the demo
 
 The service returns country and detected-accent data only from the matched synthetic customer record. It does not expose documents or phone numbers to the conversational model. The language branch consumes this deterministic result and owns the conversation state needed to keep or explicitly change language and accent.
 
+## OpenAI Realtime SIP on AWS
+
+The SIP adapter verifies OpenAI webhook signatures, accepts inbound calls, and runs a private Realtime sideband connection. Caller-number matching and keypad document fallback remain explicitly synthetic demo identification, not production authentication.
+
+The cost-conscious AWS deployment uses a Lambda Function URL, one Lambda container, ECR, one Secrets Manager secret, and three-day CloudWatch log retention. It deliberately avoids always-on compute, API Gateway, load balancers, NAT gateways, and a VPC. Deploy persistent bootstrap resources once, then deploy the application:
+
+```bash
+AWS_REGION=sa-east-1 ./infra/aws/deploy.sh bootstrap
+AWS_REGION=sa-east-1 ./infra/aws/deploy.sh application
+```
+
+Set `OPENAI_API_KEY` and `OPENAI_WEBHOOK_SECRET` in the retained `dispute-factored/openai-realtime` secret. Never commit those values. The application command prints the `/webhooks/openai` URL to register for the OpenAI `realtime.call.incoming` event.
+
+### Automated deployment
+
+`.github/workflows/deploy-aws.yml` runs Ruff, formatting checks, and all tests before deploying on a merged PR to `main`, a published release, or a manual run from `main`. It authenticates through short-lived GitHub OIDC credentials stored behind the `AWS_DEPLOY_ROLE_ARN` repository secret. The trust role is defined in `infra/aws/github-actions-role.yaml` and accepts only this repository's PR context, `main`, and release tags.
+
+The synthetic customer table is not committed. GitHub-hosted runners recover it from the newest immutable image already stored in ECR, so the first deployment must be performed locally with `CUSTOMERS_BUILD_CONTEXT` pointing to a directory containing `customers.csv`.
+
 ## Mock customer identification
 
 The default agent is orchestrated with LangGraph. A single OpenAI Structured Output call receives the raw customer turn and returns a Pydantic-generated JSON Schema containing language, one closed intent class, confidence, prompt-abuse class, abuse confidence, grounded name extraction, and an optional scoped answer. No tokenization, label-vector mapping, regex intent preprocessing, or local zero-shot inference is required.
