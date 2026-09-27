@@ -7,17 +7,12 @@ import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .country_context import locale_for, opening_prompt
-from .intent_classifier import (
-    AnswerIntent,
-    AnswerIntentClassifier,
-    ClassificationError,
-    ConfirmationClassifier,
-    ConfirmationIntent,
-)
-from .language_classifier import LanguageClassificationError, LanguageClassifier
-from .name_extractor import NameExtractionError, NameExtractor
+
+if TYPE_CHECKING:
+    from .openai_interpreter import TurnAnalysis
 
 
 class AuthStatus(StrEnum):
@@ -236,32 +231,20 @@ class CustomerDirectory:
 
 
 class AuthenticationAgent:
-    """Stateful demo-only name-identification conversation for one caller."""
-
-    QUESTION = "What is your full name?"
+    """Deterministic authentication policy for one synthetic caller session."""
 
     def __init__(
         self,
         customers_csv: str | Path,
-        intent_classifier: AnswerIntentClassifier | None = None,
         *,
-        min_intent_confidence: float = 0.55,
         max_failed_attempts: int = 3,
         max_avoidance_attempts: int = 2,
         max_no_response_attempts: int = 3,
         max_unclear_attempts: int = 2,
         language: str = "en",
-        language_classifier: LanguageClassifier | None = None,
-        min_language_confidence: float = 0.65,
-        name_extractor: NameExtractor | None = None,
         country_code: str | None = None,
-        confirmation_classifier: ConfirmationClassifier | None = None,
-        min_confirmation_confidence: float = 0.35,
-        min_confirmation_margin: float = 0.05,
     ):
         self.directory = CustomerDirectory(customers_csv)
-        self.intent_classifier = intent_classifier
-        self.min_intent_confidence = min_intent_confidence
         self.max_failed_attempts = max_failed_attempts
         self.max_avoidance_attempts = max_avoidance_attempts
         self.max_no_response_attempts = max_no_response_attempts
@@ -271,22 +254,16 @@ class AuthenticationAgent:
         self.no_response_attempts = 0
         self.unclear_attempts = 0
         self.current_customer: CustomerMatch | None = None
-        self.language = language if language in {"en", "pt", "es", "auto"} else "en"
-        self.language_classifier = language_classifier
-        self.min_language_confidence = min_language_confidence
-        self.name_extractor = name_extractor
-        self.country_code = country_code
-        self.locale = (
-            locale_for(self.language, country_code) if self.language != "auto" else "en-US"
-        )
-        self.confirmation_classifier = confirmation_classifier
-        self.min_confirmation_confidence = min_confirmation_confidence
-        self.min_confirmation_margin = min_confirmation_margin
         self.pending_customer: CustomerMatch | None = None
         self.last_claimed_name: str | None = None
         self.last_customer_utterance: str | None = None
         self.last_agent_message: str | None = None
         self.questions_answered = 0
+        self.language = language if language in {"en", "pt", "es", "auto"} else "en"
+        self.country_code = country_code
+        self.locale = (
+            locale_for(self.language, country_code) if self.language != "auto" else "en-US"
+        )
 
     def _message(self, key: str, **values: str) -> str:
         return MESSAGES[self.locale][key].format(**values)
@@ -304,11 +281,14 @@ class AuthenticationAgent:
                 "no_response_attempts": self.no_response_attempts,
                 "avoidance_attempts": self.avoidance_attempts,
                 "unclear_attempts": self.unclear_attempts,
-                "recommended_next_step": "Human verifies identity with the mocked fallback process before showing transactions.",
+                "recommended_next_step": (
+                    "Human verifies identity with the mocked fallback process "
+                    "before showing transactions."
+                ),
                 "phase": "name_confirmation" if self.pending_customer else "name_collection",
-                "matched_candidate": self.pending_customer.full_name
-                if self.pending_customer
-                else None,
+                "matched_candidate": (
+                    self.pending_customer.full_name if self.pending_customer else None
+                ),
                 "confirmation_status": "pending" if self.pending_customer else "not_started",
                 "last_customer_utterance": self.last_customer_utterance,
                 "previous_agent_message": self.last_agent_message,
@@ -325,36 +305,6 @@ class AuthenticationAgent:
         self.unclear_attempts = 0
         return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("restarted"))
 
-    def apply_global_control(self, intent: AnswerIntent) -> AuthenticationResult | None:
-        if intent is AnswerIntent.REQUESTS_HUMAN:
-            return self._handoff("handoff_requested", "customer_requested_human")
-        if intent is AnswerIntent.CANCELS:
-            self.pending_customer = None
-            return AuthenticationResult(AuthStatus.CANCELLED, self._message("cancelled"))
-        if intent is AnswerIntent.RESTARTS:
-            return self._reset_identification()
-        return None
-
-    def classify_global_control(self, answer: str) -> AnswerIntent | None:
-        """Return only a control decision that passes the normal confidence gate."""
-
-        decision = self.intent_classifier.classify(answer)
-        if (
-            decision.intent
-            in {AnswerIntent.REQUESTS_HUMAN, AnswerIntent.CANCELS, AnswerIntent.RESTARTS}
-            and decision.confidence >= self.min_intent_confidence
-        ):
-            return decision.intent
-        return None
-
-    def _extract_name(self, answer: str) -> str | None:
-        if self.name_extractor is None:
-            return None
-        try:
-            return self.name_extractor.extract(answer)
-        except NameExtractionError:
-            return None
-
     def _match_claimed_name(self, claimed_name: str) -> AuthenticationResult | None:
         matches = self.directory.find_by_full_name(claimed_name)
         if len(matches) == 1:
@@ -368,133 +318,15 @@ class AuthenticationAgent:
             return self._handoff("handoff_ambiguous", "duplicate_name")
         return None
 
-    def _authenticate(
-        self, customer: CustomerMatch, *, confirmed: bool = True
-    ) -> AuthenticationResult:
+    def _authenticate(self, customer: CustomerMatch) -> AuthenticationResult:
         self.current_customer = customer
         self.pending_customer = None
         return AuthenticationResult(
             AuthStatus.AUTHENTICATED,
             self._message("success", name=customer.full_name),
             customer,
-            "DEMO_ONLY_NAME_MATCH_CONFIRMED" if confirmed else "DEMO_ONLY_NAME_MATCH",
+            "DEMO_ONLY_NAME_MATCH_CONFIRMED",
         )
-
-    def _handle_confirmation(self, answer: str) -> AuthenticationResult:
-        assert self.pending_customer is not None
-        customer = self.pending_customer
-        try:
-            control_intent = self.classify_global_control(answer)
-        except ClassificationError:
-            control_intent = None
-        control = self.apply_global_control(control_intent) if control_intent is not None else None
-        if control is not None:
-            return control
-        corrected_name = self._extract_name(answer)
-        if corrected_name and normalize_name(corrected_name) != normalize_name(customer.full_name):
-            self.pending_customer = None
-            corrected_result = self._match_claimed_name(corrected_name)
-            if corrected_result is not None:
-                return corrected_result
-            return self._name_not_found(corrected_name)
-        try:
-            decision = self.confirmation_classifier.classify(answer)
-        except ClassificationError:
-            return self._handoff("handoff_system", "confirmation_model_unavailable")
-        if (
-            decision.confidence < self.min_confirmation_confidence
-            or decision.confidence - sorted(decision.probabilities.values(), reverse=True)[1]
-            < self.min_confirmation_margin
-            or decision.intent is ConfirmationIntent.OTHER
-        ):
-            return AuthenticationResult(
-                AuthStatus.NEEDS_CONFIRMATION,
-                self._message("confirmation_unclear", name=customer.full_name),
-            )
-        return self.apply_validated_confirmation(answer, decision.intent)
-
-    def apply_validated_confirmation(
-        self, answer: str, intent: ConfirmationIntent
-    ) -> AuthenticationResult:
-        """Apply one confirmation decision already accepted by the graph gate."""
-
-        assert self.pending_customer is not None
-        customer = self.pending_customer
-        corrected_name = self._extract_name(answer)
-        if corrected_name and normalize_name(corrected_name) != normalize_name(customer.full_name):
-            self.pending_customer = None
-            corrected_result = self._match_claimed_name(corrected_name)
-            if corrected_result is not None:
-                return corrected_result
-            return self._name_not_found(corrected_name)
-        if intent is ConfirmationIntent.CONFIRMS:
-            return self._authenticate(customer)
-
-        self.pending_customer = None
-        corrected_name = corrected_name or self._extract_name(answer)
-        if corrected_name:
-            corrected_result = self._match_claimed_name(corrected_name)
-            if corrected_result is not None:
-                return corrected_result
-            return self._name_not_found(corrected_name)
-        return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("name_denied"))
-
-    def apply_validated_intent(self, answer: str, intent: AnswerIntent) -> AuthenticationResult:
-        """Apply one non-OTHER intent already accepted by the graph gate."""
-
-        control = self.apply_global_control(intent)
-        if control is not None:
-            return control
-        if intent is AnswerIntent.ASKS_WHY:
-            return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("why"))
-        if intent is AnswerIntent.AVOIDS_ANSWER:
-            self.avoidance_attempts += 1
-            if self.avoidance_attempts >= self.max_avoidance_attempts:
-                return self._handoff("handoff_refusal", "name_not_provided")
-            return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("refusal"))
-
-        claimed_name = self._extract_name(answer) or answer
-        matched_result = self._match_claimed_name(claimed_name)
-        if matched_result is not None:
-            return matched_result
-        return self._name_not_found(claimed_name)
-
-    @staticmethod
-    def _looks_like_standalone_name(answer: str) -> bool:
-        words = normalize_name(answer).split()
-        if not 2 <= len(words) <= 6:
-            return False
-        conversational_words = {
-            "i",
-            "my",
-            "name",
-            "is",
-            "why",
-            "what",
-            "need",
-            "want",
-            "maybe",
-            "later",
-            "meu",
-            "minha",
-            "nome",
-            "e",
-            "porque",
-            "precisa",
-            "quero",
-            "talvez",
-            "depois",
-            "mi",
-            "nombre",
-            "es",
-            "por",
-            "que",
-            "necesita",
-            "quiero",
-            "quizas",
-            "luego",
-        }
-        return not any(word in conversational_words for word in words)
 
     def _name_not_found(self, claimed_name: str) -> AuthenticationResult:
         self.last_claimed_name = claimed_name
@@ -517,7 +349,7 @@ class AuthenticationAgent:
         return AuthenticationResult(status, self._message(key))
 
     def handle_unclear_classification(self) -> AuthenticationResult:
-        """Keep consequential state unchanged when the LLM is uncertain."""
+        """Preserve consequential state when the LLM is uncertain."""
 
         if self.pending_customer:
             return AuthenticationResult(
@@ -529,8 +361,8 @@ class AuthenticationAgent:
             return self._handoff("handoff_unclear", "repeated_unclear_response")
         return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("unclear"))
 
-    def apply_llm_classification(self, answer: str, analysis) -> AuthenticationResult:
-        """Apply one validated schema decision without reclassifying or preprocessing text."""
+    def apply_llm_classification(self, analysis: TurnAnalysis) -> AuthenticationResult:
+        """Apply a validated schema decision without reclassification."""
 
         from .openai_interpreter import TurnIntent
 
@@ -549,13 +381,8 @@ class AuthenticationAgent:
             self.locale = locale_for(self.language, self.country_code)
             return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("start"))
 
-        controls = {
-            TurnIntent.REQUESTS_HUMAN: ("handoff_requested", "customer_requested_human"),
-            TurnIntent.CANCELS: None,
-            TurnIntent.RESTARTS: None,
-        }
         if analysis.intent is TurnIntent.REQUESTS_HUMAN:
-            return self._handoff(*controls[analysis.intent])
+            return self._handoff("handoff_requested", "customer_requested_human")
         if analysis.intent is TurnIntent.CANCELS:
             self.pending_customer = None
             return AuthenticationResult(AuthStatus.CANCELLED, self._message("cancelled"))
@@ -596,94 +423,3 @@ class AuthenticationAgent:
             )
             return AuthenticationResult(AuthStatus.NEEDS_NAME, prompt)
         return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("start"))
-
-    def handle_answer(self, answer: str | None) -> AuthenticationResult:
-        self.last_customer_utterance = (answer or "").strip() or None
-        if self.current_customer is not None:
-            return AuthenticationResult(
-                AuthStatus.AUTHENTICATED,
-                self._message("already", name=self.current_customer.full_name),
-                self.current_customer,
-                "DEMO_ONLY_NAME_MATCH",
-            )
-
-        answer = (answer or "").strip()
-        if not answer:
-            self.no_response_attempts += 1
-            if self.no_response_attempts >= self.max_no_response_attempts:
-                return self._handoff("handoff_no_response", "repeated_no_response")
-            key = "silence_1" if self.no_response_attempts == 1 else "silence_2"
-            return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message(key))
-        else:
-            if self.pending_customer is not None:
-                return self._handle_confirmation(answer)
-            if self.language == "auto":
-                selected_language = normalize_name(answer)
-                language_markers = {
-                    "en": {"english", "ingles", "en"},
-                    "pt": {"portugues", "portuguese", "brasileiro", "brasileira", "pt"},
-                    "es": {"espanol", "spanish", "castellano", "es"},
-                }
-                words = set(selected_language.split())
-                selected = next(
-                    (locale for locale, markers in language_markers.items() if words & markers),
-                    None,
-                )
-                if selected is not None:
-                    self.language = selected
-                    self.locale = locale_for(selected, self.country_code)
-                    return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("start"))
-                if self.language_classifier is None:
-                    return AuthenticationResult(AuthStatus.NEEDS_NAME, AUTO_LANGUAGE_RETRY)
-                try:
-                    language_decision = self.language_classifier.classify(answer)
-                except LanguageClassificationError:
-                    return AuthenticationResult(AuthStatus.NEEDS_NAME, AUTO_LANGUAGE_RETRY)
-                if (
-                    language_decision.language not in {"en", "pt", "es"}
-                    or language_decision.confidence < self.min_language_confidence
-                ):
-                    return AuthenticationResult(AuthStatus.NEEDS_NAME, AUTO_LANGUAGE_RETRY)
-                self.language = language_decision.language
-                self.locale = locale_for(self.language, self.country_code)
-            matches = self.directory.find_by_full_name(answer)
-            if len(matches) == 1:
-                return self._match_claimed_name(answer)
-            if len(matches) > 1:
-                self.last_claimed_name = answer
-                return self._handoff("handoff_ambiguous", "duplicate_name")
-
-            try:
-                decision = self.intent_classifier.classify(answer)
-            except ClassificationError:
-                return self._handoff("handoff_system", "intent_service_unavailable")
-            if decision.confidence < self.min_intent_confidence:
-                extracted_name = self._extract_name(answer)
-                if extracted_name:
-                    matched_result = self._match_claimed_name(extracted_name)
-                    if matched_result is not None:
-                        return matched_result
-                    return self._name_not_found(extracted_name)
-                if self._looks_like_standalone_name(answer):
-                    return self._name_not_found(answer)
-                self.unclear_attempts += 1
-                if self.unclear_attempts >= self.max_unclear_attempts:
-                    return self._handoff("handoff_unclear", "repeated_unclear_response")
-                return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("unclear"))
-            intent = decision.intent
-
-        if intent is AnswerIntent.OTHER:
-            extracted_name = self._extract_name(answer)
-            if extracted_name:
-                matched_result = self._match_claimed_name(extracted_name)
-                if matched_result is not None:
-                    return matched_result
-                return self._name_not_found(extracted_name)
-            if self._looks_like_standalone_name(answer):
-                return self._name_not_found(answer)
-            self.unclear_attempts += 1
-            if self.unclear_attempts >= self.max_unclear_attempts:
-                return self._handoff("handoff_unclear", "repeated_unclear_response")
-            return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("unclear"))
-
-        return self.apply_validated_intent(answer, intent)

@@ -204,7 +204,7 @@ class LangGraphAuthenticationAgent:
         analysis = state["analysis"]
         if analysis.confidence < self.MIN_CLASSIFICATION_CONFIDENCE and not analysis.extracted_name:
             return {"result": self.policy.handle_unclear_classification()}
-        return {"result": self.policy.apply_llm_classification(state.get("answer") or "", analysis)}
+        return {"result": self.policy.apply_llm_classification(analysis)}
 
     def _continuation_status(self) -> AuthStatus:
         return (

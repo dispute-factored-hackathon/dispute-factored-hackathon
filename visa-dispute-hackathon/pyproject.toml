@@ -13,10 +13,6 @@ dependencies = [
   "python-dotenv>=1,<2",
 ]
 
-[project.scripts]
-dispute-auth-demo = "dispute_agent.cli:main"
-dispute-agent-eval = "dispute_agent.evaluation:main"
-
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["dispute_agent*"]

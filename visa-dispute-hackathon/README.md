@@ -56,7 +56,7 @@ The pull-request workflow uses the committed lockfile, checks lint and formattin
 For a machine-readable local evaluation summary, run:
 
 ```bash
-uv run dispute-agent-eval
+uv run python -m dispute_agent.evaluation
 ```
 
 This credential-free offline evaluation runs the same scenario suite and exits nonzero on any regression. Its JSON summary reports test count, failures, errors, skipped scenarios, and pass rate.
@@ -111,7 +111,7 @@ The current CLI creates one agent object for one caller. Cross-turn counters, th
 
 ```bash
 uv sync --dev
-uv run dispute-auth-demo \
+uv run python -m dispute_agent.cli \
   --customers /Users/silvs/Documents/projetos/visa-dispute-hackathon/data/raw/customers.csv \
   --country-code +55 \
   --language auto
@@ -122,7 +122,7 @@ When `--language auto` is used, `--country-code` localizes the opening without f
 The selected language is also regionalized for the rest of the interaction: Brazil uses Brazilian Portuguese (`pt-BR`), Colombia uses Colombian Spanish (`es-CO`), Mexico uses Mexican Spanish (`es-MX`), Argentina uses Argentine Spanish with voseo (`es-AR`), and English uses American English (`en-US`). When the caller chooses a language different from the country's main language, the agent uses American English, Brazilian Portuguese, or neutral Latin American Spanish (`es-419`) as the corresponding fallback.
 
 ```bash
-uv run dispute-auth-demo \
+uv run python -m dispute_agent.cli \
   --customers ../data/raw/customers.csv \
   --country-code +55 \
   --language auto
@@ -139,7 +139,7 @@ For a negative case, enter a name absent from the dataset. To test avoidance cla
 ## Run with the small test fixture
 
 ```bash
-uv run dispute-auth-demo --customers tests/fixtures/customers.csv
+uv run python -m dispute_agent.cli --customers tests/fixtures/customers.csv
 ```
 
 Use `--language pt`, `--language es` or `--language en` when the IVR already knows the caller's preference. The default `--language auto` accepts explicit menu choices and uses the structured LLM when language must be inferred from free-form text. Add `--debug` only for development; customer-facing output hides internal IDs and assurance labels.

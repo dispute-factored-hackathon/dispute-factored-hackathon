@@ -66,7 +66,7 @@ Never commit `.env` or a real API key.
 From `visa-dispute-hackathon/`:
 
 ```bash
-uv run dispute-auth-demo \
+uv run python -m dispute_agent.cli \
   --customers ../data/raw/customers.csv \
   --country-code +55 \
   --language auto
@@ -75,7 +75,7 @@ uv run dispute-auth-demo \
 Use the small fixture when the complete synthetic dataset is unavailable:
 
 ```bash
-uv run dispute-auth-demo \
+uv run python -m dispute_agent.cli \
   --customers tests/fixtures/customers.csv \
   --country-code +55 \
   --language pt
