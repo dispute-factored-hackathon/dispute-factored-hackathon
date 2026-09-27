@@ -14,6 +14,14 @@ The GUI also reads country, preferred language, and locale from the selected syn
 
 `GuiDemoLoginService.language_metrics()` reports aggregate database-preference, country-fallback, product-fallback, and fallback-rate counters. It intentionally contains no customer values and reports `language_detection_model_calls: 0` as an architectural invariant of the GUI channel.
 
+Run the local GUI login with the full synthetic customer table:
+
+```bash
+CUSTOMERS_CSV=../data/raw/customers.csv uv run python -m dispute_agent.gui_app
+```
+
+Then open `http://127.0.0.1:8000`. The current page ends after creating the demo session; the transaction page and dispute chat belong to the transaction-search workstream.
+
 ## Mock customer identification
 
 The default agent is orchestrated with LangGraph. A single OpenAI Structured Output call receives the raw customer turn and returns a Pydantic-generated JSON Schema containing language, one closed intent class, confidence, prompt-abuse class, abuse confidence, grounded name extraction, and an optional scoped answer. No tokenization, label-vector mapping, regex intent preprocessing, or local zero-shot inference is required.
