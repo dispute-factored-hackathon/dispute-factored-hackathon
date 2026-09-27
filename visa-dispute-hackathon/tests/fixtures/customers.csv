@@ -1,6 +1,6 @@
-customer_id,first_name,last_name,customer_status,country,city,preferred_language,locale
-CLI-001,José María,Pérez López,Active,Colombia,Bogotá,es,es-CO
-CLI-002,Ana,Silva,Active,Brazil,São Paulo,pt,pt-BR
-CLI-003,Alex,Santos,Active,Brazil,Recife,pt,pt-BR
-CLI-004,Alex,Santos,Active,Portugal,Porto,pt,pt-PT
-CLI-005,Inactive,Person,Inactive,Mexico,Mexico City,es,es-MX
+customer_id,first_name,last_name,customer_status,country,city,preferred_language,locale,email,mobile_phone,document_number,detected_accent
+CLI-001,José María,Pérez López,Active,Colombia,Bogotá,es,es-CO,jose.perez@example.com,+57 300 111 2233,CC123,colombian
+CLI-002,Ana,Silva,Active,Brazil,São Paulo,pt,pt-BR,ana.silva@example.com,+55 11 99999 0001,CPF456,brazilian
+CLI-003,Alex,Santos,Active,Brazil,Recife,pt,pt-BR,alex.br@example.com,+55 81 99999 0002,CPF789,brazilian
+CLI-004,Alex,Santos,Active,Portugal,Porto,pt,pt-PT,alex.pt@example.com,+351 91 111 2222,PT321,portuguese
+CLI-005,Inactive,Person,Inactive,Mexico,Mexico City,es,es-MX,inactive@example.com,+52 55 1111 2222,MX999,mexican

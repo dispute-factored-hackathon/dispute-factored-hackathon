@@ -39,7 +39,7 @@ def create_app(customers_csv: str | Path | None = None) -> FastAPI:
             "options": [
                 {
                     "selection_token": option.selection_token,
-                    "display_name": option.display_name,
+                    "email": option.email,
                     "disambiguation": option.disambiguation,
                 }
                 for option in login.search(query, limit=limit)

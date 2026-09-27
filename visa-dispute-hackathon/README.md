@@ -6,7 +6,7 @@ Project documentation is maintained in the repository's [`docs`](../docs/README.
 
 ## Synthetic GUI login contract
 
-The GUI demo uses `GuiDemoLoginService` to populate a searchable customer dropdown. Search is partial, case-insensitive, and accent-insensitive. Dropdown options expose only a display name, safe location context when needed to distinguish duplicates, and a short-lived opaque selection token. Typing a name is not enough to log in: the browser must submit a server-issued option token.
+The GUI demo uses `GuiDemoLoginService` to populate a searchable e-mail dropdown. Search is partial and case-insensitive. Dropdown options expose only the normalized e-mail, safe location context, and a short-lived opaque selection token. Typing an e-mail is not enough to log in: the browser must submit a server-issued option token.
 
 Selecting an option creates a short-lived server-side `AuthenticatedCustomerContext`. The customer ID is derived from that selection and is never accepted from chat text, a URL, or model output. Tokens are single-use, sessions expire, and logout revokes the session. This remains a deliberately insecure synthetic demo login and must not protect real banking data.
 
@@ -17,6 +17,12 @@ CUSTOMERS_CSV=../data/raw/customers.csv uv run python -m dispute_agent.gui_app
 ```
 
 Then open `http://127.0.0.1:8000`. The current page ends after creating the demo session; the transaction page and dispute chat belong to the transaction-search workstream.
+
+## Synthetic voice identity contract
+
+`VoiceCallerIdentityService` first performs an exact normalized lookup of the supplied mobile phone. A unique match creates `DEMO_ONLY_PHONE_MATCH`. An unknown phone preserves only its calling-code hint and requires a `document_number`; a unique exact normalized document match creates `DEMO_ONLY_DOCUMENT_MATCH`. Neither mechanism is secure enough for real banking.
+
+The service returns country and detected-accent data only from the matched synthetic customer record. It does not expose documents or phone numbers to the conversational model. The language branch consumes this deterministic result and owns the conversation state needed to keep or explicitly change language and accent.
 
 ## Mock customer identification
 
