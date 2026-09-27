@@ -257,6 +257,62 @@ class LangGraphAgentTests(unittest.TestCase):
         self.assertIn("Para continuar", result.message)
         self.assertEqual(len(model.calls), 1)
 
+    def test_agent_identity_question_is_answered_without_zero_shot_classification(self):
+        question = "quem é você?"
+        answer = "Sou a assistente virtual do Bank Factored para esta demonstração de contestação de cartão."
+        graph, model = make_graph({
+            question: TurnAnalysis(
+                language="pt",
+                intent=TurnIntent.IN_SCOPE_QUESTION,
+                extracted_name=None,
+                direct_answer=answer,
+            ),
+        })
+        classifier = StaticIntentClassifier(AnswerIntent.OTHER, 0.10)
+        graph.policy.intent_classifier = classifier
+
+        result = graph.handle_answer(question)
+
+        self.assertEqual(result.status, AuthStatus.NEEDS_NAME)
+        self.assertTrue(result.message.startswith(answer))
+        self.assertIn("Para continuar", result.message)
+        self.assertEqual(classifier.calls, 0)
+        self.assertEqual(len(model.calls), 1)
+
+    def test_name_extraction_takes_priority_over_a_question_in_same_turn(self):
+        utterance = "meu nome é Ana Silva; quem é você?"
+        graph, _ = make_graph({
+            utterance: TurnAnalysis(
+                language="pt",
+                intent=TurnIntent.IN_SCOPE_QUESTION,
+                extracted_name="Ana Silva",
+                direct_answer="Sou a assistente virtual do Bank Factored.",
+            ),
+        })
+
+        result = graph.handle_answer(utterance)
+
+        self.assertEqual(result.status, AuthStatus.NEEDS_CONFIRMATION)
+        self.assertIn("Ana Silva", result.message)
+
+    def test_out_of_scope_understanding_does_not_call_zero_shot_classifier(self):
+        request = "escreva um poema sobre futebol"
+        graph, _ = make_graph({
+            request: TurnAnalysis(
+                language="pt",
+                intent=TurnIntent.OUT_OF_SCOPE,
+                extracted_name=None,
+                direct_answer=None,
+            ),
+        })
+        classifier = StaticIntentClassifier(AnswerIntent.OTHER, 0.10)
+        graph.policy.intent_classifier = classifier
+
+        result = graph.handle_answer(request)
+
+        self.assertEqual(result.status, AuthStatus.NEEDS_NAME)
+        self.assertEqual(classifier.calls, 0)
+
     def test_out_of_scope_request_is_refused(self):
         request = "escreva um poema sobre futebol"
         graph, model = make_graph({

@@ -61,7 +61,7 @@ Customer utterances are sent to OpenAI for structured interpretation. Do not use
 
 ## Direct answers and abuse controls
 
-The graph can answer short, general questions about disputes, fraud, refunds, chargebacks, evidence, identity collection, and next steps. This route has no database or tool access and may answer only from a small approved knowledge block.
+The graph can directly answer short questions about the agent's identity, role, capabilities, limitations, disputes, fraud, refunds, chargebacks, evidence, identity collection, and next steps. These conversational questions do not pass through workflow intent classification. This route has no database or tool access and may answer only from a small approved knowledge block. If the same utterance contains a grounded full name, name extraction takes priority and the identification flow continues.
 
 Controls are layered rather than delegated entirely to the model:
 

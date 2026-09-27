@@ -8,7 +8,7 @@ from langgraph.graph import END, START, StateGraph
 
 from .authentication import AuthenticationAgent, AuthenticationResult, AuthStatus
 from .intent_classifier import AnswerIntent, ClassificationError, ConfirmationIntent
-from .openai_interpreter import OpenAITurnInterpreter, TurnAnalysis
+from .openai_interpreter import OpenAITurnInterpreter, TurnAnalysis, TurnIntent
 
 
 class AuthenticationGraphState(TypedDict, total=False):
@@ -77,7 +77,7 @@ class LangGraphAuthenticationAgent:
         builder.add_edge("prepare_turn", "guard_input")
         builder.add_conditional_edges("guard_input", lambda s: "done" if "result" in s else "deterministic", {"done": "validate_response", "deterministic": "route_deterministic"})
         builder.add_conditional_edges("route_deterministic", lambda s: "policy" if s.get("phase") == "deterministic_policy" else "interpret", {"policy": "apply_policy", "interpret": "interpret_turn"})
-        builder.add_conditional_edges("interpret_turn", self._route_analysis, {"done": "validate_response", "question": "answer_question", "classify": "classify_turn", "policy": "apply_policy"})
+        builder.add_conditional_edges("interpret_turn", self._route_analysis, {"done": "validate_response", "question": "answer_question", "out_of_scope": "refuse_out_of_scope", "classify": "classify_turn", "policy": "apply_policy"})
         builder.add_conditional_edges("classify_turn", lambda s: "done" if "result" in s else "policy", {"done": "validate_response", "policy": "apply_policy"})
         builder.add_edge("answer_question", "validate_response")
         builder.add_edge("refuse_out_of_scope", "validate_response")
@@ -133,10 +133,15 @@ class LangGraphAuthenticationAgent:
         # Language selection is its own deterministic gate before authentication.
         if self.policy.language == "auto":
             return "policy"
-        if (state["analysis"].direct_answer or "").strip():
-            return "question"
+        # A grounded name always takes priority, even if the same utterance also asks a question.
         if (state["analysis"].extracted_name or "").strip():
             return "policy"
+        if (state["analysis"].direct_answer or "").strip():
+            return "question"
+        # Understanding that a request is outside this agent's work does not require a
+        # state-changing classifier. Return a scoped answer and preserve the current phase.
+        if state["analysis"].intent is TurnIntent.OUT_OF_SCOPE:
+            return "out_of_scope"
         return "classify"
 
     @staticmethod

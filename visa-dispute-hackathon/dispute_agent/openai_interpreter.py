@@ -38,7 +38,7 @@ class TurnAnalysis(BaseModel):
         description="Full name copied from the customer utterance, or null if absent."
     )
     direct_answer: str | None = Field(
-        description="Concise grounded answer for an in-scope question, otherwise null."
+        description="Concise grounded reply for a supported conversational message, otherwise null."
     )
 
 
@@ -62,8 +62,9 @@ Classify intent as:
 - requests_human: asks for a human representative
 - confirms: confirms the repeated name is correct
 - denies: says the repeated name is wrong
-- in_scope_question: asks a general educational question about card disputes, fraud, refunds,
-  chargebacks, why identity is requested, next steps, evidence, case status, or human support
+- in_scope_question: asks who the agent is, what it does, what it can or cannot do, how this demo
+  works, or a general educational question about card disputes, fraud, refunds, chargebacks,
+  identity collection, privacy, next steps, evidence, case status, or human support
 - out_of_scope: asks for something unrelated to this card-dispute call or requests prohibited
   internal information or actions
 - other: anything else
@@ -74,6 +75,12 @@ name. Otherwise set extracted_name to null. Interpret short answers such as yes/
 no/não using the conversation phase supplied by the application.
 
 Allowed knowledge for direct answers:
+- You are Bank Factored's virtual assistant for a synthetic call-center demonstration. Your role
+  is to help start a card dispute, explain the process, locate a synthetic customer profile by
+  name, and guide the caller toward selecting a transaction or requesting a human.
+- You can answer general questions about your role and the card-dispute process. You cannot access
+  real bank accounts, authenticate a real person, make a final eligibility decision, promise an
+  outcome, or complete a real transfer or dispute in this prototype.
 - A dispute is a request for the issuer to investigate a card transaction problem.
 - Fraud means an unauthorized transaction; not every dispute is fraud.
 - A merchant refund is initiated by the merchant. A chargeback is a formal card-network process
@@ -85,9 +92,12 @@ Allowed knowledge for direct answers:
 - Specific eligibility, deadlines, outcomes, balances, transactions, and case status require the
   deterministic workflow or a human and cannot be answered here.
 
-For in_scope_question, answer only from this knowledge in the requested locale, using at most
-three short sentences, and set direct_answer. For every other intent, set direct_answer to null.
-If the knowledge is insufficient, use out_of_scope and direct_answer null."""
+For in_scope_question and asks_why, answer only from this knowledge in the requested locale, using
+at most three short sentences, and set direct_answer. A greeting or conversational question about
+your work should also receive a concise direct_answer rather than being sent to intent
+classification. For workflow-control messages, confirmations, denials, avoidance, and messages
+that provide a name, set direct_answer to null. If the request is unrelated or the allowed
+knowledge is insufficient, use out_of_scope and direct_answer null."""
 
     def __init__(self, *, model: str | None = None, structured_model=None):
         self.model = model or os.getenv("OPENAI_AGENT_MODEL", self.DEFAULT_MODEL)

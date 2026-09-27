@@ -10,7 +10,7 @@ The implementation focuses on identifying a synthetic customer, understanding na
 ## What the prototype demonstrates
 
 - LangGraph-based conversation orchestration
-- Grounded full-name extraction with an OpenAI model
+- Grounded full-name extraction and scoped conversational answers with an OpenAI model
 - Local multilingual zero-shot classification for state-changing decisions
 - Accent-insensitive customer lookup against synthetic data
 - Brazilian Portuguese, American English, and regional Spanish experiences
