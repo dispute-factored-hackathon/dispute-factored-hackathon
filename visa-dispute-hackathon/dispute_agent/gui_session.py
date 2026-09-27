@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from .authentication import normalize_name
 from .language_context import ConversationLocaleContext
 
 
@@ -22,7 +21,7 @@ class CustomerOption:
     """Safe customer information that a searchable dropdown may display."""
 
     selection_token: str
-    display_name: str
+    email: str
     disambiguation: str | None = None
 
 
@@ -44,6 +43,7 @@ class _CustomerRecord:
     customer_id: str
     display_name: str
     search_text: str
+    email: str
     country: str | None
     city: str | None
     preferred_language: str | None
@@ -89,7 +89,7 @@ class GuiDemoLoginService:
         records: list[_CustomerRecord] = []
         with self.customers_csv.open(encoding="utf-8-sig", newline="") as stream:
             reader = csv.DictReader(stream)
-            required = {"customer_id", "first_name", "last_name"}
+            required = {"customer_id", "first_name", "last_name", "email"}
             missing = required.difference(reader.fieldnames or [])
             if missing:
                 raise ValueError(f"Customers CSV is missing columns: {sorted(missing)}")
@@ -97,11 +97,15 @@ class GuiDemoLoginService:
                 if row.get("customer_status", "Active").strip().casefold() != "active":
                     continue
                 display_name = " ".join((row["first_name"].strip(), row["last_name"].strip()))
+                email = row["email"].strip().casefold()
+                if not email:
+                    continue
                 records.append(
                     _CustomerRecord(
                         customer_id=row["customer_id"].strip(),
                         display_name=display_name,
-                        search_text=normalize_name(display_name),
+                        search_text=email,
+                        email=email,
                         country=(row.get("country") or "").strip() or None,
                         city=(row.get("city") or "").strip() or None,
                         preferred_language=(row.get("preferred_language") or "").strip() or None,
@@ -117,7 +121,7 @@ class GuiDemoLoginService:
             raise ValueError("limit must be between 1 and 50")
         if len(query) > self.MAX_QUERY_CHARACTERS:
             raise ValueError("query is too long")
-        normalized_query = normalize_name(query)
+        normalized_query = query.strip().casefold()
         matches = [
             record
             for record in self._records
@@ -125,7 +129,7 @@ class GuiDemoLoginService:
         ][:limit]
         counts: dict[str, int] = {}
         for record in matches:
-            counts[record.search_text] = counts.get(record.search_text, 0) + 1
+            counts[record.email] = counts.get(record.email, 0) + 1
 
         now = self._now()
         self._discard_expired(now)
@@ -138,12 +142,12 @@ class GuiDemoLoginService:
             )
             location = " · ".join(value for value in (record.country, record.city) if value)
             disambiguation = location or "Synthetic customer"
-            if counts[record.search_text] == 1:
+            if counts[record.email] == 1:
                 disambiguation = record.country
             options.append(
                 CustomerOption(
                     selection_token=token,
-                    display_name=record.display_name,
+                    email=record.email,
                     disambiguation=disambiguation,
                 )
             )

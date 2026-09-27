@@ -20,16 +20,16 @@ class GuiAppTests(unittest.TestCase):
         self.assertIn("not real bank authentication", response.text)
 
     def test_search_response_contains_no_customer_id(self):
-        response = self.client.get("/api/customers", params={"query": "jose maria"})
+        response = self.client.get("/api/customers", params={"query": "JOSE.PEREZ@"})
         self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertEqual(body["options"][0]["display_name"], "José María Pérez López")
+        self.assertEqual(body["options"][0]["email"], "jose.perez@example.com")
         self.assertNotIn("customer_id", response.text)
 
     def test_explicit_option_creates_cookie_session_without_exposing_customer_id(self):
-        option = self.client.get("/api/customers", params={"query": "Ana Silva"}).json()["options"][
-            0
-        ]
+        option = self.client.get(
+            "/api/customers", params={"query": "ana.silva@example.com"}
+        ).json()["options"][0]
         response = self.client.post(
             "/api/session", json={"selection_token": option["selection_token"]}
         )
@@ -43,16 +43,16 @@ class GuiAppTests(unittest.TestCase):
         self.assertEqual(current.status_code, 200)
         self.assertEqual(current.json()["display_name"], "Ana Silva")
 
-    def test_typed_name_or_tampered_token_cannot_create_session(self):
-        for token in ("Ana Silva", "tampered"):
+    def test_typed_email_or_tampered_token_cannot_create_session(self):
+        for token in ("ana.silva@example.com", "tampered"):
             with self.subTest(token=token):
                 response = self.client.post("/api/session", json={"selection_token": token})
                 self.assertEqual(response.status_code, 401)
 
     def test_logout_revokes_cookie_session(self):
-        option = self.client.get("/api/customers", params={"query": "Ana Silva"}).json()["options"][
-            0
-        ]
+        option = self.client.get(
+            "/api/customers", params={"query": "ana.silva@example.com"}
+        ).json()["options"][0]
         self.client.post("/api/session", json={"selection_token": option["selection_token"]})
         self.assertEqual(self.client.delete("/api/session").status_code, 204)
         self.assertEqual(self.client.get("/api/session").status_code, 401)

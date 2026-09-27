@@ -29,11 +29,11 @@
   <body>
     <main>
       <div class="eyebrow">Bank Factored</div>
-      <h1>Choose a demo customer</h1>
+      <h1>Sign in to the demo</h1>
       <p>This searchable login uses synthetic hackathon data. It is not real bank authentication.</p>
       <div class="notice">Select a result from the list. Typing a name alone will not sign you in.</div>
-      <label for="customer-search">Customer name</label>
-      <input id="customer-search" role="combobox" aria-autocomplete="list" aria-controls="customer-options" aria-expanded="false" autocomplete="off" placeholder="Start typing a name">
+      <label for="customer-search">E-mail address</label>
+      <input id="customer-search" type="email" role="combobox" aria-autocomplete="list" aria-controls="customer-options" aria-expanded="false" autocomplete="email" placeholder="Start typing an e-mail">
       <ul id="customer-options" role="listbox" hidden></ul>
       <button id="continue" disabled>Continue</button>
       <p id="status" role="status" aria-live="polite"></p>
@@ -52,7 +52,7 @@
           item.role = 'option';
           item.ariaSelected = String(index === active);
           item.innerHTML = `<strong></strong><small></small>`;
-          item.querySelector('strong').textContent = option.display_name;
+          item.querySelector('strong').textContent = option.email;
           item.querySelector('small').textContent = option.disambiguation || '';
           item.addEventListener('mousedown', event => { event.preventDefault(); choose(index); });
           return item;
@@ -64,7 +64,7 @@
 
       function choose(index) {
         selected = options[index]; active = index;
-        input.value = selected.display_name;
+        input.value = selected.email;
         button.disabled = false;
         list.hidden = true; input.ariaExpanded = 'false';
       }
@@ -74,7 +74,7 @@
         const response = await fetch(`/api/customers?query=${encodeURIComponent(input.value)}`);
         if (current !== request) return;
         options = (await response.json()).options; active = options.length ? 0 : -1;
-        status.textContent = options.length ? '' : 'No customers found. Try another name.';
+        status.textContent = options.length ? '' : 'No customer found. Check the e-mail address.';
         render();
       }
 

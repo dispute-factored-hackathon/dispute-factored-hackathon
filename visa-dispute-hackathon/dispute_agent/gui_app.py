@@ -10,6 +10,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from .gui_session import DemoLoginError, GuiDemoLoginService
+from .voice_call import VoiceCallService
 
 DEFAULT_CUSTOMERS = Path(__file__).parents[2] / "data" / "raw" / "customers.csv"
 LOGIN_PAGE = Path(__file__).with_name("static") / "login.html"
@@ -19,11 +20,25 @@ class SelectionRequest(BaseModel):
     selection_token: str
 
 
+class VoiceCallRequest(BaseModel):
+    mobile_phone: str
+
+
+class VoicePreferenceRequest(BaseModel):
+    language: str
+    accent: str | None = None
+
+
+class DocumentRequest(BaseModel):
+    document_number: str
+
+
 def create_app(customers_csv: str | Path | None = None) -> FastAPI:
     """Create the GUI app with one server-owned synthetic login service."""
 
     selected_csv = customers_csv or os.getenv("CUSTOMERS_CSV", str(DEFAULT_CUSTOMERS))
     login = GuiDemoLoginService(selected_csv)
+    calls = VoiceCallService(selected_csv)
     app = FastAPI(title="Bank Factored dispute demo")
 
     @app.get("/", response_class=HTMLResponse)
@@ -39,7 +54,7 @@ def create_app(customers_csv: str | Path | None = None) -> FastAPI:
             "options": [
                 {
                     "selection_token": option.selection_token,
-                    "display_name": option.display_name,
+                    "email": option.email,
                     "disambiguation": option.disambiguation,
                 }
                 for option in login.search(query, limit=limit)
@@ -93,7 +108,44 @@ def create_app(customers_csv: str | Path | None = None) -> FastAPI:
             login.logout(demo_session)
         response.delete_cookie("demo_session")
 
+    def voice_response(state) -> dict[str, object]:
+        return {
+            "call_id": state.call_id,
+            "stage": state.stage,
+            "authenticated": state.identity is not None,
+            "language": state.locale.language,
+            "locale": state.locale.locale,
+            "accent": state.locale.accent,
+            "preference_source": state.locale.source,
+            "assurance_level": state.identity.assurance_level if state.identity else None,
+            "demo_only": True,
+        }
+
+    @app.post("/api/voice/calls", status_code=201)
+    def start_voice_call(payload: VoiceCallRequest) -> dict[str, object]:
+        try:
+            return voice_response(calls.start(payload.mobile_phone))
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.patch("/api/voice/calls/{call_id}/preferences")
+    def set_voice_preferences(call_id: str, payload: VoicePreferenceRequest) -> dict[str, object]:
+        try:
+            state = calls.choose_language(call_id, language=payload.language, accent=payload.accent)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        return voice_response(state)
+
+    @app.post("/api/voice/calls/{call_id}/document")
+    def authenticate_voice_document(call_id: str, payload: DocumentRequest) -> dict[str, object]:
+        try:
+            state = calls.authenticate_document(call_id, payload.document_number)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        return voice_response(state)
+
     app.state.demo_login = login
+    app.state.voice_calls = calls
     return app
 
 

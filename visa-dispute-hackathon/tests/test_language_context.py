@@ -13,7 +13,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "customers.csv"
 class LanguageContextTests(unittest.TestCase):
     def test_gui_session_uses_database_preferences_without_a_model(self):
         service = GuiDemoLoginService(FIXTURE)
-        option = service.search("Ana Silva")[0]
+        option = service.search("ana.silva@example.com")[0]
         context = service.select(option.selection_token)
         self.assertEqual(context.country, "Brazil")
         self.assertEqual(context.language.language, "pt")
@@ -101,6 +101,7 @@ class LanguageContextTests(unittest.TestCase):
                         "country",
                         "preferred_language",
                         "locale",
+                        "email",
                     ],
                 )
                 writer.writeheader()
@@ -113,10 +114,11 @@ class LanguageContextTests(unittest.TestCase):
                         "country": "Colombia",
                         "preferred_language": "es",
                         "locale": "es-CO",
+                        "email": "gui.customer@example.com",
                     }
                 )
             service = GuiDemoLoginService(path)
-            option = service.search("Gui Customer")[0]
+            option = service.search("gui.customer@example.com")[0]
             context = service.select(option.selection_token)
             self.assertEqual(context.language.locale, "es-CO")
 
@@ -124,13 +126,13 @@ class LanguageContextTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "customers.csv"
             path.write_text(
-                "customer_id,first_name,last_name,customer_status,country\n"
-                "1,Country,Default,Active,Argentina\n"
-                "2,Product,Default,Active,Atlantis\n",
+                "customer_id,first_name,last_name,customer_status,country,email\n"
+                "1,Country,Default,Active,Argentina,country@example.com\n"
+                "2,Product,Default,Active,Atlantis,product@example.com\n",
                 encoding="utf-8",
             )
             service = GuiDemoLoginService(path)
-            for query in ("Country Default", "Product Default"):
+            for query in ("country@example.com", "product@example.com"):
                 option = service.search(query)[0]
                 service.select(option.selection_token)
             metrics = service.language_metrics()
