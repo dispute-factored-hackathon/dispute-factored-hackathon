@@ -120,6 +120,35 @@ class AuthenticationAgentTests(unittest.TestCase):
         result = make_agent().handle_answer("Person Who Does Not Exist")
         self.assertEqual(result.status, AuthStatus.NOT_FOUND)
         self.assertFalse(result.authenticated)
+        self.assertIn("Person Who Does Not Exist", result.message)
+
+    def test_unknown_standalone_name_gets_database_feedback_even_with_low_confidence(self):
+        answer = "lelia gonzales"
+        classifier = FakeIntentClassifier({
+            answer: (AnswerIntent.OTHER, 0.30),
+        })
+        result = make_agent(
+            classifier=classifier,
+            language="pt",
+            name_extractor=FakeNameExtractor(),
+        ).handle_answer(answer)
+        self.assertEqual(result.status, AuthStatus.NOT_FOUND)
+        self.assertIn("Entendi o nome como lelia gonzales", result.message)
+        self.assertIn("não o encontrei na base de clientes", result.message)
+
+    def test_unclear_feedback_explains_what_was_missing(self):
+        answer = "talvez depois"
+        classifier = FakeIntentClassifier({
+            answer: (AnswerIntent.OTHER, 0.30),
+        })
+        result = make_agent(
+            classifier=classifier,
+            language="pt",
+            name_extractor=FakeNameExtractor(),
+        ).handle_answer(answer)
+        self.assertEqual(result.status, AuthStatus.NEEDS_NAME)
+        self.assertIn("identificar um nome completo", result.message)
+        self.assertIn("Meu nome completo é Ana Silva", result.message)
 
     def test_third_unknown_name_routes_to_human_with_summary(self):
         agent = make_agent()
@@ -244,7 +273,8 @@ class AuthenticationAgentTests(unittest.TestCase):
         })
         result = make_agent(classifier=classifier).handle_answer("Maybe Ana")
         self.assertEqual(result.status, AuthStatus.NEEDS_NAME)
-        self.assertIn("did not understand", result.message)
+        self.assertIn("could not identify a full name", result.message)
+        self.assertIn("My full name is Ana Silva", result.message)
 
     def test_classifier_failure_fails_closed_to_human(self):
         result = make_agent(classifier=FakeIntentClassifier(error=True)).handle_answer("I will not answer")

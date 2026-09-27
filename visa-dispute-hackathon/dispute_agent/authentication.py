@@ -37,8 +37,8 @@ MESSAGES = {
         "silence_1": "I did not hear a response. When you are ready, please say or type your full name. You can also ask for a person.",
         "silence_2": "We may be having an audio or connection problem. You can repeat or type your full name, or ask for a person. I will not open any transactions until a profile is located.",
         "refusal": "That is okay. Without a full name I cannot locate the demo profile or show transactions. You can provide it now or ask for a person.",
-        "unclear": "I did not understand that response. Please say or type your full name, or ask for a person.",
-        "not_found": "I could not locate that name. Please try again using your first name and all surnames, or spell it slowly. You can also ask for a person.",
+        "unclear": "I could not identify a full name in that response. Please say your first name and all surnames, for example: 'My full name is Ana Silva.' You can also ask for a person.",
+        "not_found": "I understood the name as {name}, but I could not find it in the customer database. Please check the name and try again with your first name and all surnames. You can also ask for a person.",
         "handoff_requested": "Of course. I am connecting you with a person now. This demo simulates the transfer, and I will pass along a short summary so you do not need to repeat the interaction.",
         "handoff_ambiguous": "I found more than one demo profile with that name. To protect the transaction list, I will connect you with a person to resolve it. The transfer is simulated in this demo.",
         "handoff_no_response": "We may have an audio or connection problem. I will connect you with a person. The transfer is simulated in this demo.",
@@ -55,8 +55,8 @@ MESSAGES = {
         "silence_1": "Não ouvi uma resposta. Quando estiver pronto, diga ou digite seu nome completo. Você também pode pedir um atendente.",
         "silence_2": "Talvez haja um problema de áudio ou conexão. Você pode repetir ou digitar seu nome completo, ou pedir um atendente. Nenhuma transação será aberta antes de localizarmos um perfil.",
         "refusal": "Tudo bem. Sem o nome completo não consigo localizar o perfil de demonstração nem mostrar transações. Você pode informá-lo agora ou pedir um atendente.",
-        "unclear": "Não entendi essa resposta. Diga ou digite seu nome completo, ou peça um atendente.",
-        "not_found": "Não localizei esse nome. Tente novamente usando o primeiro nome e todos os sobrenomes, ou soletrando devagar. Você também pode pedir um atendente.",
+        "unclear": "Não consegui identificar um nome completo nessa resposta. Diga seu primeiro nome e todos os sobrenomes, por exemplo: 'Meu nome completo é Ana Silva.' Você também pode pedir um atendente.",
+        "not_found": "Entendi o nome como {name}, mas não o encontrei na base de clientes. Confira o nome e tente novamente com seu primeiro nome e todos os sobrenomes. Você também pode pedir um atendente.",
         "handoff_requested": "Claro. Vou conectar você a um atendente. Nesta demonstração, a transferência é simulada e enviarei um resumo para que você não precise repetir a interação.",
         "handoff_ambiguous": "Encontrei mais de um perfil de demonstração com esse nome. Para proteger a lista de transações, vou encaminhar o caso a um atendente. A transferência é simulada nesta demonstração.",
         "handoff_no_response": "Talvez haja um problema de áudio ou conexão. Vou encaminhar você a um atendente. A transferência é simulada nesta demonstração.",
@@ -73,8 +73,8 @@ MESSAGES = {
         "silence_1": "No escuché una respuesta. Cuando estés listo, di o escribe tu nombre completo. También puedes pedir un asesor.",
         "silence_2": "Tal vez haya un problema de audio o conexión. Puedes repetir o escribir tu nombre completo, o pedir un asesor. No abriré transacciones hasta localizar un perfil.",
         "refusal": "Está bien. Sin el nombre completo no puedo localizar el perfil de demostración ni mostrar transacciones. Puedes darlo ahora o pedir un asesor.",
-        "unclear": "No entendí esa respuesta. Di o escribe tu nombre completo, o pide un asesor.",
-        "not_found": "No pude localizar ese nombre. Inténtalo otra vez con tu nombre y todos tus apellidos, o deletreándolo lentamente. También puedes pedir un asesor.",
+        "unclear": "No pude identificar un nombre completo en esa respuesta. Di tu nombre y todos tus apellidos, por ejemplo: 'Mi nombre completo es Ana Silva.' También puedes pedir un asesor.",
+        "not_found": "Entendí el nombre como {name}, pero no lo encontré en la base de clientes. Verifica el nombre e inténtalo otra vez con tu nombre y todos tus apellidos. También puedes pedir un asesor.",
         "handoff_requested": "Claro. Voy a conectarte con un asesor. En esta demostración la transferencia es simulada y enviaré un resumen para que no tengas que repetir la interacción.",
         "handoff_ambiguous": "Encontré más de un perfil de demostración con ese nombre. Para proteger la lista de transacciones, derivaré el caso a un asesor. La transferencia es simulada en esta demostración.",
         "handoff_no_response": "Tal vez haya un problema de audio o conexión. Voy a derivarte a un asesor. La transferencia es simulada en esta demostración.",
@@ -240,6 +240,28 @@ class AuthenticationAgent:
             return self._handoff("handoff_ambiguous", "duplicate_name")
         return None
 
+    @staticmethod
+    def _looks_like_standalone_name(answer: str) -> bool:
+        words = normalize_name(answer).split()
+        if not 2 <= len(words) <= 6:
+            return False
+        conversational_words = {
+            "i", "my", "name", "is", "why", "what", "need", "want", "maybe", "later",
+            "meu", "minha", "nome", "e", "porque", "precisa", "quero", "talvez", "depois",
+            "mi", "nombre", "es", "por", "que", "necesita", "quiero", "quizas", "luego",
+        }
+        return not any(word in conversational_words for word in words)
+
+    def _name_not_found(self, claimed_name: str) -> AuthenticationResult:
+        self.last_claimed_name = claimed_name
+        self.failed_attempts += 1
+        if self.failed_attempts >= self.max_failed_attempts:
+            return self._handoff("handoff_not_found", "name_not_found_after_retries")
+        return AuthenticationResult(
+            AuthStatus.NOT_FOUND,
+            self._message("not_found", name=claimed_name),
+        )
+
     def start(self) -> AuthenticationResult:
         if self.language == "auto":
             prompt = opening_prompt(self.country_code) if self.country_code else AUTO_LANGUAGE_PROMPT
@@ -313,6 +335,9 @@ class AuthenticationAgent:
                     matched_result = self._match_claimed_name(extracted_name)
                     if matched_result is not None:
                         return matched_result
+                    return self._name_not_found(extracted_name)
+                if self._looks_like_standalone_name(answer):
+                    return self._name_not_found(answer)
                 self.unclear_attempts += 1
                 if self.unclear_attempts >= self.max_unclear_attempts:
                     return self._handoff("handoff_unclear", "repeated_unclear_response")
@@ -337,6 +362,9 @@ class AuthenticationAgent:
                 matched_result = self._match_claimed_name(extracted_name)
                 if matched_result is not None:
                     return matched_result
+                return self._name_not_found(extracted_name)
+            if self._looks_like_standalone_name(answer):
+                return self._name_not_found(answer)
             self.unclear_attempts += 1
             if self.unclear_attempts >= self.max_unclear_attempts:
                 return self._handoff("handoff_unclear", "repeated_unclear_response")
@@ -351,8 +379,4 @@ class AuthenticationAgent:
         if matched_result is not None:
             return matched_result
 
-        self.last_claimed_name = claimed_name
-        self.failed_attempts += 1
-        if self.failed_attempts >= self.max_failed_attempts:
-            return self._handoff("handoff_not_found", "name_not_found_after_retries")
-        return AuthenticationResult(AuthStatus.NOT_FOUND, self._message("not_found"))
+        return self._name_not_found(claimed_name)
