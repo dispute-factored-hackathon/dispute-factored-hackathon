@@ -6,13 +6,11 @@ Project documentation is maintained in the repository's [`docs`](../docs/README.
 
 ## Mock customer identification
 
-The first implemented layer asks for the caller's language and full name. A local language-identification model detects English, Portuguese or Spanish from natural caller speech. A separate local multilingual intent classifier categorizes the response as `provides_name`, `avoids_answer`, `asks_why`, `requests_human` or `other`. When a name is embedded in a sentence—such as `meu nome é Samuel Andrés Díaz Pérez`—a local LLM extracts the name before the normalized database lookup. After finding one customer, the agent repeats the database's canonical spelling and asks the caller to confirm it. A zero-shot classifier categorizes that next response as `confirms`, `denies` or `other`; authentication is completed only after confirmation.
+The default agent is orchestrated with LangGraph. Each customer turn passes through three explicit nodes: `prepare_turn`, `apply_policy`, and `validate_response`. One structured `gpt-4.1-mini` call interprets language, intent, and any caller-stated name. The same result is cached and reused throughout that turn, avoiding separate paid calls for classification and extraction.
 
-The default classifier is [`MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli`](https://huggingface.co/MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli), an MIT-licensed multilingual zero-shot model. It runs locally after the model files are downloaded.
+The OpenAI model recognizes `provides_name`, `avoids_answer`, `asks_why`, `requests_human`, `confirms`, `denies`, and `other`. Structured output is validated with Pydantic. Extracted names are accepted only when grounded in the customer's original utterance. The complete customer database, customer IDs, match results, authentication state, retry limits, and handoff decisions remain local and deterministic.
 
-Language identification uses [`langid.py`](https://github.com/saffsd/langid.py), a pretrained statistical model supporting 97 languages. It is restricted here to English (`en`), Portuguese (`pt`) and Spanish (`es`), returns normalized confidence scores and runs fully offline. Explicit menu choices remain deterministic; free-form utterances use this model with a minimum-confidence threshold.
-
-Name extraction uses [`google/flan-t5-small`](https://huggingface.co/google/flan-t5-small), a locally executed instruction-tuned language model. Its output is constrained: the extracted name must contain at least two words and must appear in the caller's original response after case and accent normalization. Ungrounded output is discarded rather than queried against customer data.
+After finding one customer, the agent repeats the canonical database spelling and asks the caller to confirm it. Authentication completes only after confirmation. A correction such as `não, meu nome é José María Pérez López` is extracted, looked up locally, and presented for confirmation in the same turn.
 
 Customer lookup is accent-insensitive and case-insensitive. For example, `samuel andres diaz perez` matches the stored name `Samuel Andrés Díaz Pérez`; the official spelling from the database is used in the response.
 
@@ -38,30 +36,31 @@ uv sync
 uv run python -m unittest discover -s tests -v
 ```
 
-The lightweight test environment does not install or download the ML model. Tests use `tests/fixtures/customers.csv` and inject a fake classification pipeline.
+Tests use `tests/fixtures/customers.csv`, a fake structured model, and the complete synthetic database when available. They do not call the OpenAI API or consume credits.
+
+## Configure the OpenAI API
+
+Create `.env` from the safe template and provide a project-scoped key. The real `.env` is ignored by Git.
+
+```bash
+cp .env.example .env
+```
+
+```dotenv
+OPENAI_API_KEY=your-project-key
+OPENAI_AGENT_MODEL=gpt-4.1-mini
+```
+
+Customer utterances are sent to OpenAI for structured interpretation. Do not use real customer or banking data in this hackathon prototype.
 
 ## Run the interactive demo with the full synthetic dataset
 
-Install the local ML dependencies with the optional `ml` extra:
-
 ```bash
-uv sync --extra ml
-```
-
-On Intel Macs, the project pins PyTorch 2.2.2 because newer PyTorch releases no longer publish macOS x86_64 wheels. It also uses NumPy 1.x and Transformers 4.x, which are compatible with that PyTorch build. Other supported platforms continue to use the current PyTorch release selected by `uv`.
-
-Prepare the model once, before starting a customer interaction:
-
-```bash
-uv run --extra ml python -m dispute_agent.model_setup
-```
-
-The setup downloads the intent and name-extraction models from Hugging Face and validates the bundled language model. Customer interactions then load all models locally and do not make network requests. No API key or remote classification service is required.
-
-```bash
-uv run --extra ml python -m dispute_agent.cli \
+uv sync
+uv run python -m dispute_agent.cli \
   --customers /Users/silvs/Documents/projetos/visa-dispute-hackathon/data/raw/customers.csv \
-  --language pt
+  --country-code +55 \
+  --language auto
 ```
 
 When `--language auto` is used, `--country-code` localizes the opening without forcing the customer's choice. Spanish-speaking country codes open in Spanish and offer Spanish, English, then Portuguese. Portuguese-speaking codes open in Portuguese and offer Portuguese, English, then Spanish. Other or unknown codes open in English and offer English, Spanish, then Portuguese.
@@ -69,7 +68,7 @@ When `--language auto` is used, `--country-code` localizes the opening without f
 The selected language is also regionalized for the rest of the interaction: Brazil uses Brazilian Portuguese (`pt-BR`), Colombia uses Colombian Spanish (`es-CO`), Mexico uses Mexican Spanish (`es-MX`), Argentina uses Argentine Spanish with voseo (`es-AR`), and English uses American English (`en-US`). When the caller chooses a language different from the country's main language, the agent uses American English, Brazilian Portuguese, or neutral Latin American Spanish (`es-419`) as the corresponding fallback.
 
 ```bash
-uv run --extra ml python -m dispute_agent.cli \
+uv run python -m dispute_agent.cli \
   --customers ../data/raw/customers.csv \
   --country-code +55 \
   --language auto
@@ -86,10 +85,10 @@ For a negative case, enter a name absent from the dataset. To test avoidance cla
 ## Run with the small test fixture
 
 ```bash
-uv run --extra ml python -m dispute_agent.cli --customers tests/fixtures/customers.csv
+uv run python -m dispute_agent.cli --customers tests/fixtures/customers.csv
 ```
 
-Use `--language pt`, `--language es` or `--language en` when the IVR already knows the caller's preference. The default `--language auto` uses the local language-identification model for free-form speech and accepts explicit menu choices directly. Add `--debug` only for development; customer-facing output hides internal IDs and assurance labels.
+Use `--language pt`, `--language es` or `--language en` when the IVR already knows the caller's preference. The default `--language auto` accepts explicit menu choices and uses the structured LLM when language must be inferred from free-form text. Add `--debug` only for development; customer-facing output hides internal IDs and assurance labels.
 
 Use:
 
@@ -99,6 +98,6 @@ Use:
 - `Alex Santos` for the duplicate-name path.
 - An empty answer or `Why do you need that?` for avoidance.
 
-Automated tests inject a fake zero-shot pipeline, so they run without downloading the model or accessing the network. The interactive CLI uses the local model.
+Automated tests inject a fake structured model, so they run without accessing the network. The interactive CLI uses the model configured by `OPENAI_AGENT_MODEL`.
 
 The supported commands use `python -m dispute_agent...` rather than relying on generated console scripts. The package lives at the project root, so Python can always import it from that directory—even on Homebrew installations that ignore editable-install `.pth` files marked as hidden by macOS.

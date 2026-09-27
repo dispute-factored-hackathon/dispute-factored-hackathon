@@ -73,8 +73,10 @@ class LocalAvoidanceClassifier:
                 "asesor", "hablar con una persona",
             ),
             AnswerIntent.ASKS_WHY: (
-                "why", "por que", "por quê", "porque precisam", "para que precisam",
-                "por qué", "para qué",
+                "why", "what for", "why do you need", "why is that needed",
+                "por que", "por quê", "porque precisa", "porque precisam",
+                "pra que", "para que precisa", "para que precisam",
+                "por qué", "porque necesita", "para qué", "para qué necesita",
             ),
             AnswerIntent.AVOIDS_ANSWER: (
                 "prefer not", "won't say", "will not say", "não quero informar",

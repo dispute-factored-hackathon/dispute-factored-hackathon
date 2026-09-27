@@ -270,6 +270,29 @@ class AuthenticationAgentTests(unittest.TestCase):
         self.assertIn("only to locate", result.message)
         self.assertEqual(agent.avoidance_attempts, 0)
 
+    def test_exact_portuguese_why_question_gets_a_useful_answer(self):
+        classifier = LocalAvoidanceClassifier()
+        agent = make_agent(classifier=classifier, language="pt", country_code="+55")
+
+        result = agent.handle_answer("porque precisa dele?")
+
+        self.assertEqual(result.status, AuthStatus.NEEDS_NAME)
+        self.assertIn("localizar um perfil sintético", result.message)
+        self.assertIn("não é segura para um banco real", result.message)
+
+    def test_common_why_variants_are_detected_without_loading_model(self):
+        classifier = LocalAvoidanceClassifier()
+        examples = (
+            "pra que precisa do meu nome?",
+            "why do you need my name?",
+            "¿por qué necesita mi nombre?",
+        )
+        for answer in examples:
+            with self.subTest(answer=answer):
+                decision = classifier.classify(answer)
+                self.assertEqual(decision.intent, AnswerIntent.ASKS_WHY)
+                self.assertEqual(decision.confidence, 0.99)
+
     def test_portuguese_human_request_stays_in_portuguese(self):
         classifier = FakeIntentClassifier({
             "Quero falar com um atendente": (AnswerIntent.REQUESTS_HUMAN, 0.99),

@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import argparse
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
 
 from .authentication import AuthenticationAgent, AuthStatus
-from .intent_classifier import LocalAvoidanceClassifier, LocalConfirmationClassifier
-from .language_classifier import LocalLanguageClassifier
-from .name_extractor import LocalLLMNameExtractor
 from .country_context import normalize_country_code
+from .agent_graph import LangGraphAuthenticationAgent
+from .openai_interpreter import (
+    OpenAIConfirmationClassifier,
+    OpenAIIntentClassifier,
+    OpenAILanguageClassifier,
+    OpenAINameExtractor,
+    OpenAITurnInterpreter,
+)
 
 
 def country_code_argument(value: str) -> str:
@@ -42,17 +50,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+    if not os.getenv("OPENAI_API_KEY", "").strip():
+        print("OPENAI_API_KEY is missing. Add it to the project .env file before running the agent.")
+        return 2
     args = build_parser().parse_args()
-    intent_classifier = LocalAvoidanceClassifier()
-    agent = AuthenticationAgent(
+    interpreter = OpenAITurnInterpreter()
+    policy = AuthenticationAgent(
         args.customers,
-        intent_classifier,
+        OpenAIIntentClassifier(interpreter),
         language=args.language,
-        language_classifier=LocalLanguageClassifier(),
-        name_extractor=LocalLLMNameExtractor(),
+        language_classifier=OpenAILanguageClassifier(interpreter),
+        name_extractor=OpenAINameExtractor(interpreter),
         country_code=args.country_code,
-        confirmation_classifier=LocalConfirmationClassifier(intent_classifier),
+        confirmation_classifier=OpenAIConfirmationClassifier(interpreter),
     )
+    agent = LangGraphAuthenticationAgent(policy, interpreter)
     result = agent.start()
     while result.status in {
         AuthStatus.NEEDS_NAME,
