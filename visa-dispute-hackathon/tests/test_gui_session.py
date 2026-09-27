@@ -42,6 +42,7 @@ class GuiDemoLoginTests(unittest.TestCase):
         self.assertEqual(resolved.customer_id, "CLI-002")
         self.assertEqual(resolved.assurance_level, "DEMO_GUI_CUSTOMER_SELECTED")
         self.assertEqual(resolved.country, "Brazil")
+        self.assertEqual(resolved.language.locale, "pt-BR")
 
     def test_selection_token_is_single_use(self):
         token = self.service.search("Ana Silva")[0].selection_token

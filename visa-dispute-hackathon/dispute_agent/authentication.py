@@ -9,6 +9,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .language_context import ConversationLocaleContext
 from .openai_interpreter import TurnIntent
 
 if TYPE_CHECKING:
@@ -269,14 +270,17 @@ class AuthenticationAgent:
         self.inferred_country: str | None = None
         self.inferred_language: str | None = None
         self.inferred_locale: str | None = None
+        self.conversation_locale: ConversationLocaleContext | None = None
 
     def apply_opening(self, opening: CallOpening) -> AuthenticationResult:
         """Store inferred regional context while leaving the customer's choice open."""
 
-        self.inferred_country = opening.country_name
-        self.inferred_language = opening.primary_language
-        self.inferred_locale = opening.locale
-        self.locale = opening.locale
+        context = ConversationLocaleContext.from_voice_opening(opening)
+        self.conversation_locale = context
+        self.inferred_country = context.country
+        self.inferred_language = context.language
+        self.inferred_locale = context.locale
+        self.locale = context.locale
         return AuthenticationResult(AuthStatus.NEEDS_NAME, opening.welcome_message)
 
     def _message(self, key: str, **values: str) -> str:

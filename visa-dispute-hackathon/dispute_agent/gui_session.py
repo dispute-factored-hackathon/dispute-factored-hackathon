@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import csv
 import secrets
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .authentication import normalize_name
+from .language_context import ConversationLocaleContext
 
 
 class DemoLoginError(ValueError):
@@ -32,6 +34,7 @@ class AuthenticatedCustomerContext:
     customer_id: str
     display_name: str
     country: str | None
+    language: ConversationLocaleContext
     assurance_level: str
     expires_at: datetime
 
@@ -43,6 +46,8 @@ class _CustomerRecord:
     search_text: str
     country: str | None
     city: str | None
+    preferred_language: str | None
+    locale: str | None
 
 
 @dataclass(frozen=True)
@@ -66,7 +71,7 @@ class GuiDemoLoginService:
         *,
         selection_ttl: timedelta = timedelta(minutes=5),
         session_ttl: timedelta = timedelta(hours=1),
-        now: callable | None = None,
+        now: Callable[[], datetime] | None = None,
     ) -> None:
         self.customers_csv = Path(customers_csv)
         self.selection_ttl = selection_ttl
@@ -98,6 +103,8 @@ class GuiDemoLoginService:
                         search_text=normalize_name(display_name),
                         country=(row.get("country") or "").strip() or None,
                         city=(row.get("city") or "").strip() or None,
+                        preferred_language=(row.get("preferred_language") or "").strip() or None,
+                        locale=(row.get("locale") or "").strip() or None,
                     )
                 )
         return tuple(records)
@@ -158,6 +165,11 @@ class GuiDemoLoginService:
             customer_id=record.customer_id,
             display_name=record.display_name,
             country=record.country,
+            language=ConversationLocaleContext.from_gui_record(
+                country=record.country,
+                preferred_language=record.preferred_language,
+                locale=record.locale,
+            ),
             assurance_level="DEMO_GUI_CUSTOMER_SELECTED",
             expires_at=now + self.session_ttl,
         )

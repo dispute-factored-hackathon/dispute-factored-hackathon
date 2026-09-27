@@ -41,6 +41,7 @@ class CountryContextTests(unittest.TestCase):
         self.assertEqual(policy.inferred_country, "Brazil")
         self.assertEqual(policy.inferred_language, "pt")
         self.assertEqual(policy.inferred_locale, "pt-BR")
+        self.assertEqual(policy.conversation_locale.source, "voice_country_code_inference")
         self.assertEqual(model.calls[-1][-1][1], "Telephone country calling code: +55")
 
     def test_schema_supports_ambiguous_shared_calling_codes(self):
