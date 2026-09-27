@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import csv
-import re
 import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+
+from .avoidance import AnswerIntent, AnswerIntentClassifier, JevError
 
 
 class AuthStatus(StrEnum):
@@ -42,21 +43,8 @@ def normalize_name(value: str) -> str:
     value = unicodedata.normalize("NFKD", value)
     value = "".join(character for character in value if not unicodedata.combining(character))
     value = value.casefold()
-    value = re.sub(r"[^\w\s'-]", " ", value, flags=re.UNICODE)
+    value = "".join(character if character.isalnum() or character in " '-_" else " " for character in value)
     return " ".join(value.split())
-
-
-def _looks_like_avoidance(answer: str) -> bool:
-    normalized = normalize_name(answer)
-    if not normalized:
-        return True
-    phrases = (
-        "i do not want", "i dont want", "rather not", "not telling",
-        "why do you need", "why should i", "skip", "prefer not",
-        "no quiero", "prefiero no", "por que necesitas",
-        "nao quero", "prefiro nao", "por que precisa",
-    )
-    return any(phrase in normalized for phrase in phrases)
 
 
 class CustomerDirectory:
@@ -94,8 +82,18 @@ class AuthenticationAgent:
 
     QUESTION = "What is your full name?"
 
-    def __init__(self, customers_csv: str | Path, *, max_failed_attempts: int = 2, max_avoidance_attempts: int = 2):
+    def __init__(
+        self,
+        customers_csv: str | Path,
+        intent_classifier: AnswerIntentClassifier,
+        *,
+        min_intent_confidence: float = 0.55,
+        max_failed_attempts: int = 2,
+        max_avoidance_attempts: int = 2,
+    ):
         self.directory = CustomerDirectory(customers_csv)
+        self.intent_classifier = intent_classifier
+        self.min_intent_confidence = min_intent_confidence
         self.max_failed_attempts = max_failed_attempts
         self.max_avoidance_attempts = max_avoidance_attempts
         self.failed_attempts = 0
@@ -114,8 +112,31 @@ class AuthenticationAgent:
                 "DEMO_ONLY_NAME_MATCH",
             )
 
-        answer = answer or ""
-        if _looks_like_avoidance(answer):
+        answer = (answer or "").strip()
+        if not answer:
+            intent = AnswerIntent.AVOIDS_ANSWER
+        else:
+            try:
+                decision = self.intent_classifier.classify(answer)
+            except JevError:
+                return AuthenticationResult(
+                    AuthStatus.HUMAN_HANDOFF,
+                    "I could not classify your response safely. I will transfer you to a human for mock assistance.",
+                )
+            if decision.confidence < self.min_intent_confidence:
+                return AuthenticationResult(
+                    AuthStatus.NEEDS_NAME,
+                    "I am not sure whether that was your name. Please state your full name, or ask for a human.",
+                )
+            intent = decision.intent
+
+        if intent is AnswerIntent.REQUESTS_HUMAN:
+            return AuthenticationResult(
+                AuthStatus.HUMAN_HANDOFF,
+                "I will transfer you to a human for mock assistance.",
+            )
+
+        if intent in {AnswerIntent.AVOIDS_ANSWER, AnswerIntent.ASKS_WHY, AnswerIntent.OTHER}:
             self.avoidance_attempts += 1
             if self.avoidance_attempts >= self.max_avoidance_attempts:
                 return AuthenticationResult(

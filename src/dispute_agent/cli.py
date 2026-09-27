@@ -6,6 +6,7 @@ import argparse
 import os
 
 from .authentication import AuthenticationAgent, AuthStatus
+from .avoidance import JevAvoidanceClassifier
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -20,7 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
-    agent = AuthenticationAgent(args.customers)
+    agent = AuthenticationAgent(args.customers, JevAvoidanceClassifier.from_env())
     print("DEMO ONLY: full-name lookup is not secure banking authentication.")
     result = agent.start()
     while result.status in {AuthStatus.NEEDS_NAME, AuthStatus.NOT_FOUND}:
