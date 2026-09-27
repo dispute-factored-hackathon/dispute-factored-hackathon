@@ -71,7 +71,7 @@ def _invoke_worker(context: Any, *, call_id: str, caller_phone: str) -> None:
 
 def _run_worker(event: dict[str, Any]) -> dict[str, Any]:
     asyncio.run(
-        _get_gateway().control_call(
+        _get_gateway().accept_and_control(
             event["call_id"],
             event["caller_phone"],
             max_duration_seconds=MAX_CALL_SECONDS,
@@ -81,7 +81,7 @@ def _run_worker(event: dict[str, Any]) -> dict[str, Any]:
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
-    """Verify and accept the webhook, then invoke this function as its call worker."""
+    """Verify the webhook, then invoke one worker that accepts and controls the call."""
 
     if event.get("mode") == WORKER_MODE:
         return _run_worker(event)
@@ -103,11 +103,5 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         asyncio.run(asyncio.to_thread(gateway.client.realtime.calls.reject, call_id))
         return _response(422, {"status": "missing_caller_phone"})
 
-    try:
-        asyncio.run(gateway.accept_call(call_id, caller_phone))
-    except Exception:
-        # OpenAI makes the first accept/reject decision authoritative. A retried
-        # webhook therefore does not start a second worker.
-        return _response(200, {"status": "already_decided_or_unavailable"})
     _invoke_worker(context, call_id=call_id, caller_phone=caller_phone)
-    return _response(202, {"status": "accepted"})
+    return _response(202, {"status": "scheduled"})

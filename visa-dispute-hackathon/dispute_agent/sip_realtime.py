@@ -75,9 +75,21 @@ class SipRealtimeGateway:
             self._calls = VoiceCallService(self._customers_csv)
         return self._calls
 
-    async def accept_and_control(self, call_id: str, caller_phone: str) -> None:
+    async def accept_and_control(
+        self,
+        call_id: str,
+        caller_phone: str,
+        *,
+        max_duration_seconds: int | None = None,
+    ) -> None:
+        """Accept and attach in one worker so the pending call cannot expire between them."""
+
         await self.accept_call(call_id, caller_phone)
-        await self.control_call(call_id, caller_phone)
+        await self.control_call(
+            call_id,
+            caller_phone,
+            max_duration_seconds=max_duration_seconds,
+        )
 
     async def accept_call(self, call_id: str, caller_phone: str) -> None:
         """Accept promptly; useful when a separate worker owns the long call."""
