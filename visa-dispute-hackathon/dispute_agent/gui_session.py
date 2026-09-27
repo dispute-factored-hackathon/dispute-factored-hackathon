@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import secrets
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -66,7 +67,7 @@ class GuiDemoLoginService:
         *,
         selection_ttl: timedelta = timedelta(minutes=5),
         session_ttl: timedelta = timedelta(hours=1),
-        now: callable | None = None,
+        now: Callable[[], datetime] | None = None,
     ) -> None:
         self.customers_csv = Path(customers_csv)
         self.selection_ttl = selection_ttl
