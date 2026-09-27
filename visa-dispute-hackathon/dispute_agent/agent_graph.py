@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TypedDict
+from uuid import uuid4
 
 from langgraph.graph import END, START, StateGraph
 
@@ -22,6 +23,8 @@ class AuthenticationGraphState(TypedDict, total=False):
     answer: str | None
     phase: str
     analysis: TurnAnalysis
+    answer_intent: AnswerIntent
+    confirmation_intent: ConfirmationIntent
     classification_confidence: float
     result: AuthenticationResult
 
@@ -74,10 +77,12 @@ class LangGraphAuthenticationAgent:
         self.policy = policy
         self.interpreter = interpreter
         self.abuse_classifier = abuse_classifier
+        self.session_id = uuid4().hex
         self.llm_failures = 0
         builder = StateGraph(AuthenticationGraphState)
         builder.add_node("prepare_turn", self._prepare_turn)
         builder.add_node("guard_input", self._guard_input)
+        builder.add_node("screen_abuse", self._screen_abuse)
         builder.add_node("route_deterministic", self._route_deterministic)
         builder.add_node("interpret_turn", self._interpret_turn)
         builder.add_node("classify_turn", self._classify_turn)
@@ -87,7 +92,8 @@ class LangGraphAuthenticationAgent:
         builder.add_node("validate_response", self._validate_response)
         builder.add_edge(START, "prepare_turn")
         builder.add_edge("prepare_turn", "guard_input")
-        builder.add_conditional_edges("guard_input", lambda s: "done" if "result" in s else "deterministic", {"done": "validate_response", "deterministic": "route_deterministic"})
+        builder.add_conditional_edges("guard_input", lambda s: "done" if "result" in s else "screen", {"done": "validate_response", "screen": "screen_abuse"})
+        builder.add_conditional_edges("screen_abuse", lambda s: "done" if "result" in s else "deterministic", {"done": "validate_response", "deterministic": "route_deterministic"})
         builder.add_conditional_edges("route_deterministic", lambda s: "policy" if s.get("phase") == "deterministic_policy" else "interpret", {"policy": "apply_policy", "interpret": "interpret_turn"})
         builder.add_conditional_edges("interpret_turn", self._route_analysis, {"done": "validate_response", "question": "answer_question", "out_of_scope": "refuse_out_of_scope", "classify": "classify_turn", "policy": "apply_policy"})
         builder.add_conditional_edges("classify_turn", lambda s: "done" if "result" in s else "policy", {"done": "validate_response", "policy": "apply_policy"})
@@ -113,6 +119,12 @@ class LangGraphAuthenticationAgent:
         if len(answer) > self.MAX_INPUT_CHARACTERS:
             return {"result": AuthenticationResult(AuthStatus.NEEDS_NAME, self._text("too_long"))}
         return {}
+
+    def _screen_abuse(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
+        """Enforce screening for direct graph calls as well as the public facade."""
+
+        result = self._check_prompt_abuse(state.get("answer"))
+        return {"result": result} if result is not None else {}
 
     def _check_prompt_abuse(self, answer: str | None) -> AuthenticationResult | None:
         """Screen one valid customer message before it enters the graph."""
@@ -215,6 +227,7 @@ class LangGraphAuthenticationAgent:
                         AuthStatus.NEEDS_CONFIRMATION,
                         self.policy._message("confirmation_unclear", name=self.policy.pending_customer.full_name),
                     )}
+                return {"confirmation_intent": decision.intent, "classification_confidence": decision.confidence}
             else:
                 decision = self.policy.intent_classifier.classify(answer)
                 accepted = (
@@ -223,9 +236,9 @@ class LangGraphAuthenticationAgent:
                 )
                 if not accepted:
                     return self._refuse_out_of_scope(state)
+                return {"answer_intent": decision.intent, "classification_confidence": decision.confidence}
         except ClassificationError:
             return {"result": self.policy._handoff("handoff_system", "zero_shot_classification_unavailable")}
-        return {"classification_confidence": decision.confidence}
 
     def _continuation_status(self) -> AuthStatus:
         return AuthStatus.NEEDS_CONFIRMATION if self.policy.pending_customer else AuthStatus.NEEDS_NAME
@@ -250,6 +263,11 @@ class LangGraphAuthenticationAgent:
         return {"result": AuthenticationResult(self._continuation_status(), message)}
 
     def _apply_policy(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
+        answer = state.get("answer") or ""
+        if "confirmation_intent" in state:
+            return {"result": self.policy.apply_validated_confirmation(answer, state["confirmation_intent"])}
+        if "answer_intent" in state:
+            return {"result": self.policy.apply_validated_intent(answer, state["answer_intent"])}
         return {"result": self.policy.handle_answer(state.get("answer"))}
 
     @staticmethod
@@ -266,7 +284,19 @@ class LangGraphAuthenticationAgent:
     @screen_prompt_abuse
     def handle_answer(self, answer: str | None) -> AuthenticationResult:
         self.policy.last_customer_utterance = (answer or "").strip() or None
-        result = self.graph.invoke({"answer": answer})["result"]
+        config = {
+            "run_name": "card-dispute-authentication-turn",
+            "tags": ["call-center", "synthetic-data", self.policy.locale],
+            "metadata": {
+                "thread_id": self.session_id,
+                "phase": "name_confirmation" if self.policy.pending_customer else "name_collection",
+                "channel": "cli",
+                "synthetic_data": True,
+            },
+        }
+        result = self.graph.invoke(
+            {"answer": answer}, config=config
+        )["result"]
         self.policy.last_agent_message = result.message
         return result
 

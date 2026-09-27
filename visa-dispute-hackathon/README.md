@@ -43,6 +43,14 @@ uv run --extra ml python -m unittest discover -s tests -v
 
 Tests use `tests/fixtures/customers.csv`, a fake structured model, and the complete synthetic database when available. They do not call the OpenAI API or consume credits.
 
+For a machine-readable local evaluation summary, run:
+
+```bash
+uv run --extra ml dispute-agent-eval
+```
+
+This credential-free offline evaluation runs the same scenario suite and exits nonzero on any regression. Its JSON summary reports test count, failures, errors, skipped scenarios, and pass rate.
+
 ## Configure the OpenAI API
 
 Create `.env` from the safe template and provide a project-scoped key. The real `.env` is ignored by Git.
@@ -55,9 +63,18 @@ cp .env.example .env
 OPENAI_API_KEY=your-project-key
 OPENAI_AGENT_MODEL=gpt-4.1-mini
 MAX_LLM_CALLS_PER_SESSION=20
+LANGSMITH_TRACING=false
+LANGSMITH_PROJECT=visa-dispute-hackathon
+LANGSMITH_API_KEY=
 ```
 
 Customer utterances are sent to OpenAI for structured interpretation. Do not use real customer or banking data in this hackathon prototype.
+
+## Optional LangSmith tracing
+
+Tracing is disabled by default. To inspect graph and model runs in LangSmith, set `LANGSMITH_TRACING=true` and provide a project-scoped `LANGSMITH_API_KEY`. Public turns include a random opaque `thread_id` and only non-sensitive metadata (locale, phase, channel, and the `synthetic_data` flag) for filtering and multi-turn grouping. The trace payload itself contains the customer utterance and model output, so enable tracing only with synthetic data in this prototype. Never put real names, account information, secrets, or production banking data in these traces.
+
+Use the local evaluation command for pull-request and offline regression checks. LangSmith datasets and online evaluators can be added later when the team has an approved workspace, privacy policy, sampling policy, and production-like labeled examples.
 
 ## Direct answers and abuse controls
 
@@ -76,7 +93,9 @@ Controls are layered rather than delegated entirely to the model:
 - the model has no customer-database or tool access; and
 - API errors or exhausted limits fail closed to the existing human-handoff path.
 
-LangChain provides `@before_agent` and `@before_model` middleware decorators for agents created with its high-level `create_agent` API. This prototype uses a custom LangGraph `StateGraph`, so its equivalent cross-cutting guard is the `@screen_prompt_abuse` decorator on the public `handle_answer` entry point. This keeps the safety requirement independent of individual graph branches while preserving the custom workflow.
+LangChain provides `@before_agent` and `@before_model` middleware decorators for agents created with its high-level `create_agent` API. This prototype uses a custom LangGraph `StateGraph`. The public `handle_answer` decorator identifies the shared ingress, while the explicit `screen_abuse` graph node performs the authoritative check exactly once and also protects direct compiled-graph invocation. No caller-provided flag can skip this node. This keeps the safety boundary at every customer-message ingress rather than relying on individual business branches.
+
+The current CLI creates one agent object for one caller. Cross-turn counters, the pending customer, model-call budget, and caches live in that object rather than checkpointed LangGraph state. Do not share one instance between callers or present this build as restart-resumable. Before deploying a web, voice, or concurrent service, move authoritative session data into serializable graph state or a dedicated session store, add an appropriate checkpointer, and use stable opaque thread identifiers.
 
 ## Run the interactive demo with the full synthetic dataset
 

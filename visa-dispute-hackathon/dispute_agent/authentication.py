@@ -405,7 +405,23 @@ class AuthenticationAgent:
                 AuthStatus.NEEDS_CONFIRMATION,
                 self._message("confirmation_unclear", name=customer.full_name),
             )
-        if decision.intent is ConfirmationIntent.CONFIRMS:
+        return self.apply_validated_confirmation(answer, decision.intent)
+
+    def apply_validated_confirmation(
+        self, answer: str, intent: ConfirmationIntent
+    ) -> AuthenticationResult:
+        """Apply one confirmation decision already accepted by the graph gate."""
+
+        assert self.pending_customer is not None
+        customer = self.pending_customer
+        corrected_name = self._extract_name(answer)
+        if corrected_name and normalize_name(corrected_name) != normalize_name(customer.full_name):
+            self.pending_customer = None
+            corrected_result = self._match_claimed_name(corrected_name)
+            if corrected_result is not None:
+                return corrected_result
+            return self._name_not_found(corrected_name)
+        if intent is ConfirmationIntent.CONFIRMS:
             return self._authenticate(customer)
 
         self.pending_customer = None
@@ -416,6 +432,26 @@ class AuthenticationAgent:
                 return corrected_result
             return self._name_not_found(corrected_name)
         return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("name_denied"))
+
+    def apply_validated_intent(self, answer: str, intent: AnswerIntent) -> AuthenticationResult:
+        """Apply one non-OTHER intent already accepted by the graph gate."""
+
+        control = self.apply_global_control(intent)
+        if control is not None:
+            return control
+        if intent is AnswerIntent.ASKS_WHY:
+            return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("why"))
+        if intent is AnswerIntent.AVOIDS_ANSWER:
+            self.avoidance_attempts += 1
+            if self.avoidance_attempts >= self.max_avoidance_attempts:
+                return self._handoff("handoff_refusal", "name_not_provided")
+            return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("refusal"))
+
+        claimed_name = self._extract_name(answer) or answer
+        matched_result = self._match_claimed_name(claimed_name)
+        if matched_result is not None:
+            return matched_result
+        return self._name_not_found(claimed_name)
 
     @staticmethod
     def _looks_like_standalone_name(answer: str) -> bool:
@@ -520,19 +556,6 @@ class AuthenticationAgent:
                 return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("unclear"))
             intent = decision.intent
 
-        control = self.apply_global_control(intent)
-        if control is not None:
-            return control
-
-        if intent is AnswerIntent.ASKS_WHY:
-            return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("why"))
-
-        if intent is AnswerIntent.AVOIDS_ANSWER:
-            self.avoidance_attempts += 1
-            if self.avoidance_attempts >= self.max_avoidance_attempts:
-                return self._handoff("handoff_refusal", "name_not_provided")
-            return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("refusal"))
-
         if intent is AnswerIntent.OTHER:
             extracted_name = self._extract_name(answer)
             if extracted_name:
@@ -547,13 +570,4 @@ class AuthenticationAgent:
                 return self._handoff("handoff_unclear", "repeated_unclear_response")
             return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("unclear"))
 
-        claimed_name = answer
-        extracted_name = self._extract_name(answer)
-        if extracted_name:
-            claimed_name = extracted_name
-
-        matched_result = self._match_claimed_name(claimed_name)
-        if matched_result is not None:
-            return matched_result
-
-        return self._name_not_found(claimed_name)
+        return self.apply_validated_intent(answer, intent)

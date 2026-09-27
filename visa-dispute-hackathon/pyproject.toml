@@ -16,6 +16,7 @@ dependencies = [
 [project.scripts]
 dispute-auth-demo = "dispute_agent.cli:main"
 dispute-auth-setup = "dispute_agent.model_setup:main"
+dispute-agent-eval = "dispute_agent.evaluation:main"
 
 [project.optional-dependencies]
 ml = [
