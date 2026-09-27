@@ -46,13 +46,13 @@ On Intel Macs, the project pins PyTorch 2.2.2 because newer PyTorch releases no 
 Prepare the model once, before starting a customer interaction:
 
 ```bash
-uv run --extra ml dispute-auth-setup
+uv run --extra ml python -m dispute_agent.model_setup
 ```
 
 The setup downloads the model from Hugging Face. Customer interactions then load it from the local cache and do not make network requests. No API key or remote classification service is required.
 
 ```bash
-uv run --extra ml dispute-auth-demo \
+uv run --extra ml python -m dispute_agent.cli \
   --customers /Users/silvs/Documents/projetos/visa-dispute-hackathon/data/raw/customers.csv \
   --language pt
 ```
@@ -68,7 +68,7 @@ For a negative case, enter a name absent from the dataset. To test avoidance cla
 ## Run with the small test fixture
 
 ```bash
-uv run --extra ml dispute-auth-demo --customers tests/fixtures/customers.csv
+uv run --extra ml python -m dispute_agent.cli --customers tests/fixtures/customers.csv
 ```
 
 Use `--language pt`, `--language es` or `--language en` when the IVR already knows the caller's preference. The default `--language auto` recognizes common Portuguese and Spanish service phrases. Add `--debug` only for development; customer-facing output hides internal IDs and assurance labels.
@@ -81,3 +81,5 @@ Use:
 - An empty answer or `Why do you need that?` for avoidance.
 
 Automated tests inject a fake zero-shot pipeline, so they run without downloading the model or accessing the network. The interactive CLI uses the local model.
+
+The supported commands use `python -m dispute_agent...` rather than relying on generated console scripts. The package lives at the project root, so Python can always import it from that directory—even on Homebrew installations that ignore editable-install `.pth` files marked as hidden by macOS.
