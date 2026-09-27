@@ -194,6 +194,12 @@ class AuthenticationAgentTests(unittest.TestCase):
         self.assertEqual(result.status, AuthStatus.NEEDS_NAME)
         self.assertIn("nome completo", result.message)
 
+    def test_auto_mode_uses_country_specific_opening(self):
+        agent = make_agent(language="auto", country_code="+55")
+        message = agent.start().message
+        self.assertIn("Brasil", message)
+        self.assertIn("português, inglês ou espanhol", message)
+
     def test_auto_mode_accepts_natural_spanish_language_selection(self):
         agent = make_agent(language="auto")
         result = agent.handle_answer("Español, por favor")

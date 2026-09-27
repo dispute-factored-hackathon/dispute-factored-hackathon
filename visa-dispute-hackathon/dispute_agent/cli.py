@@ -9,6 +9,14 @@ from .authentication import AuthenticationAgent, AuthStatus
 from .intent_classifier import LocalAvoidanceClassifier
 from .language_classifier import LocalLanguageClassifier
 from .name_extractor import LocalLLMNameExtractor
+from .country_context import normalize_country_code
+
+
+def country_code_argument(value: str) -> str:
+    try:
+        return normalize_country_code(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -24,6 +32,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.getenv("CALLER_LANGUAGE", "auto"),
         help="Caller language: auto, en, pt or es (default: auto).",
     )
+    parser.add_argument(
+        "--country-code",
+        type=country_code_argument,
+        help="Caller's telephone country code, for example +55, 52 or +1.",
+    )
     parser.add_argument("--debug", action="store_true", help="Show internal demo identifiers.")
     return parser
 
@@ -36,6 +49,7 @@ def main() -> int:
         language=args.language,
         language_classifier=LocalLanguageClassifier(),
         name_extractor=LocalLLMNameExtractor(),
+        country_code=args.country_code,
     )
     result = agent.start()
     while result.status in {AuthStatus.NEEDS_NAME, AuthStatus.NOT_FOUND}:

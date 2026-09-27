@@ -63,6 +63,15 @@ uv run --extra ml python -m dispute_agent.cli \
   --language pt
 ```
 
+When `--language auto` is used, `--country-code` localizes the opening without forcing the customer's choice. Spanish-speaking country codes open in Spanish and offer Spanish, English, then Portuguese. Portuguese-speaking codes open in Portuguese and offer Portuguese, English, then Spanish. Other or unknown codes open in English and offer English, Spanish, then Portuguese.
+
+```bash
+uv run --extra ml python -m dispute_agent.cli \
+  --customers ../data/raw/customers.csv \
+  --country-code +55 \
+  --language auto
+```
+
 Example successful name from the supplied synthetic dataset:
 
 ```text

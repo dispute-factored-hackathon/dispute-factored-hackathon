@@ -11,6 +11,7 @@ from pathlib import Path
 from .intent_classifier import AnswerIntent, AnswerIntentClassifier, ClassificationError
 from .language_classifier import LanguageClassificationError, LanguageClassifier
 from .name_extractor import NameExtractionError, NameExtractor
+from .country_context import opening_prompt
 
 
 class AuthStatus(StrEnum):
@@ -175,6 +176,7 @@ class AuthenticationAgent:
         language_classifier: LanguageClassifier | None = None,
         min_language_confidence: float = 0.65,
         name_extractor: NameExtractor | None = None,
+        country_code: str | None = None,
     ):
         self.directory = CustomerDirectory(customers_csv)
         self.intent_classifier = intent_classifier
@@ -192,6 +194,7 @@ class AuthenticationAgent:
         self.language_classifier = language_classifier
         self.min_language_confidence = min_language_confidence
         self.name_extractor = name_extractor
+        self.country_code = country_code
         self.last_claimed_name: str | None = None
 
     def _message(self, key: str, **values: str) -> str:
@@ -239,7 +242,8 @@ class AuthenticationAgent:
 
     def start(self) -> AuthenticationResult:
         if self.language == "auto":
-            return AuthenticationResult(AuthStatus.NEEDS_NAME, AUTO_LANGUAGE_PROMPT)
+            prompt = opening_prompt(self.country_code) if self.country_code else AUTO_LANGUAGE_PROMPT
+            return AuthenticationResult(AuthStatus.NEEDS_NAME, prompt)
         return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("start"))
 
     def handle_answer(self, answer: str | None) -> AuthenticationResult:

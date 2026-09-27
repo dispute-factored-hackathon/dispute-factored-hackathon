@@ -1,0 +1,65 @@
+import unittest
+
+from dispute_agent.country_context import normalize_country_code, opening_prompt
+from dispute_agent.cli import build_parser
+
+
+class CountryContextTests(unittest.TestCase):
+    def test_mexico_opens_in_spanish_with_requested_language_order(self):
+        message = opening_prompt("+52")
+        self.assertIn("México", message)
+        self.assertTrue(message.startswith("¡Hola!"))
+        self.assertIn("español, inglés o portugués", message)
+
+    def test_colombia_opens_in_spanish(self):
+        message = opening_prompt("57")
+        self.assertIn("Colombia", message)
+        self.assertIn("español, inglés o portugués", message)
+
+    def test_argentina_opens_in_spanish(self):
+        message = opening_prompt("+54")
+        self.assertIn("Argentina", message)
+        self.assertIn("español, inglés o portugués", message)
+
+    def test_brazil_opens_in_portuguese_with_requested_language_order(self):
+        message = opening_prompt("+55")
+        self.assertIn("Brasil", message)
+        self.assertTrue(message.startswith("Olá!"))
+        self.assertIn("português, inglês ou espanhol", message)
+
+    def test_portugal_opens_in_portuguese(self):
+        message = opening_prompt("351")
+        self.assertIn("Portugal", message)
+        self.assertIn("português, inglês ou espanhol", message)
+
+    def test_united_states_opens_in_english_with_requested_language_order(self):
+        message = opening_prompt("+1")
+        self.assertIn("the United States", message)
+        self.assertTrue(message.startswith("Hello!"))
+        self.assertIn("English, Spanish, or Portuguese", message)
+
+    def test_other_country_opens_in_english(self):
+        message = opening_prompt("+81")
+        self.assertIn("Japan", message)
+        self.assertIn("English, Spanish, or Portuguese", message)
+
+    def test_unknown_code_opens_in_english_and_names_code(self):
+        message = opening_prompt("+999")
+        self.assertIn("country code +999", message)
+        self.assertIn("English, Spanish, or Portuguese", message)
+
+    def test_code_normalization_accepts_optional_plus(self):
+        self.assertEqual(normalize_country_code("55"), "+55")
+        self.assertEqual(normalize_country_code("+55"), "+55")
+
+    def test_cli_accepts_country_code(self):
+        args = build_parser().parse_args(["--country-code", "+57"])
+        self.assertEqual(args.country_code, "+57")
+
+    def test_invalid_code_is_rejected(self):
+        with self.assertRaises(ValueError):
+            normalize_country_code("Brazil")
+
+
+if __name__ == "__main__":
+    unittest.main()
