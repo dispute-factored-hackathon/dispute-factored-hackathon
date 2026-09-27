@@ -49,9 +49,25 @@ cp .env.example .env
 ```dotenv
 OPENAI_API_KEY=your-project-key
 OPENAI_AGENT_MODEL=gpt-4.1-mini
+MAX_LLM_CALLS_PER_SESSION=20
 ```
 
 Customer utterances are sent to OpenAI for structured interpretation. Do not use real customer or banking data in this hackathon prototype.
+
+## Direct answers and abuse controls
+
+The graph can answer short, general questions about disputes, fraud, refunds, chargebacks, evidence, identity collection, and next steps. This route has no database or tool access and may answer only from a small approved knowledge block.
+
+Controls are layered rather than delegated entirely to the model:
+
+- customer text is explicitly treated as untrusted data;
+- prompt-extraction, credential-extraction, and jailbreak markers are blocked locally before an API call;
+- inputs are limited to 500 characters and sessions default to 20 uncached LLM calls;
+- repeated turns use a phase-and-locale-aware cache;
+- unrelated requests receive a fixed scope response;
+- generated answers are length-limited and rejected if they contain internal-instruction, credential, code-block, or URL markers;
+- the model has no customer-database or tool access; and
+- API errors or exhausted limits fail closed to the existing human-handoff path.
 
 ## Run the interactive demo with the full synthetic dataset
 

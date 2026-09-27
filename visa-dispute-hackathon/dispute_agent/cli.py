@@ -67,13 +67,17 @@ def main() -> int:
     )
     agent = LangGraphAuthenticationAgent(policy, interpreter)
     result = agent.start()
-    while result.status in {
-        AuthStatus.NEEDS_NAME,
-        AuthStatus.NEEDS_CONFIRMATION,
-        AuthStatus.NOT_FOUND,
-    }:
-        answer = input(f"Agent: {result.message}\nCustomer: ")
-        result = agent.handle_answer(answer)
+    try:
+        while result.status in {
+            AuthStatus.NEEDS_NAME,
+            AuthStatus.NEEDS_CONFIRMATION,
+            AuthStatus.NOT_FOUND,
+        }:
+            answer = input(f"Agent: {result.message}\nCustomer: ")
+            result = agent.handle_answer(answer)
+    except (KeyboardInterrupt, EOFError):
+        print("\nAgent: Atendimento encerrado. Você pode iniciar uma nova ligação quando desejar.")
+        return 130
     print(f"Agent: {result.message}")
     if result.handoff_summary:
         print("\n--- MOCK HANDOFF NOTE (not read to the caller) ---")

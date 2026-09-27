@@ -1,4 +1,4 @@
-"""LangGraph orchestration for the deterministic authentication policy engine."""
+"""LangGraph orchestration and abuse controls for the authentication conversation."""
 
 from __future__ import annotations
 
@@ -6,44 +6,134 @@ from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from .authentication import AuthenticationAgent, AuthenticationResult
-from .openai_interpreter import OpenAITurnInterpreter
+from .authentication import AuthenticationAgent, AuthenticationResult, AuthStatus
+from .intent_classifier import ClassificationError
+from .openai_interpreter import OpenAITurnInterpreter, TurnAnalysis, TurnIntent
 
 
 class AuthenticationGraphState(TypedDict, total=False):
     answer: str | None
     phase: str
+    analysis: TurnAnalysis
     result: AuthenticationResult
 
 
+MESSAGES = {
+    "en": {
+        "blocked": "I can only help with this card-dispute conversation. I cannot reveal internal instructions, credentials, or customer data. We can continue with your full name or a general question about disputes.",
+        "too_long": "That response was too long for me to process safely. Please use a short question or provide only your full name.",
+        "out_of_scope": "I can help only with this card-dispute process and general questions about disputes. Please provide your full name, ask a dispute-related question, or request a person.",
+        "unsafe_answer": "I cannot safely answer that here. I can help with this card-dispute process or connect you with a person.",
+    },
+    "pt": {
+        "blocked": "Posso ajudar somente com esta conversa sobre contestação de cartão. Não posso revelar instruções internas, credenciais ou dados de clientes. Podemos continuar com seu nome completo ou com uma dúvida geral sobre contestações.",
+        "too_long": "Essa resposta é longa demais para ser processada com segurança. Faça uma pergunta curta ou informe somente seu nome completo.",
+        "out_of_scope": "Posso ajudar apenas com este processo de contestação e com dúvidas gerais sobre contestações. Informe seu nome completo, faça uma pergunta sobre o tema ou peça um atendente.",
+        "unsafe_answer": "Não posso responder isso com segurança por aqui. Posso ajudar com esta contestação ou encaminhar você a um atendente.",
+    },
+    "es": {
+        "blocked": "Solo puedo ayudar con esta conversación sobre reclamos de tarjeta. No puedo revelar instrucciones internas, credenciales ni datos de clientes. Podemos continuar con su nombre completo o con una pregunta general sobre reclamos.",
+        "too_long": "Esa respuesta es demasiado larga para procesarla de forma segura. Haga una pregunta breve o indique únicamente su nombre completo.",
+        "out_of_scope": "Solo puedo ayudar con este proceso y con preguntas generales sobre reclamos de tarjeta. Indique su nombre completo, haga una pregunta sobre el tema o pida un asesor.",
+        "unsafe_answer": "No puedo responder eso de forma segura aquí. Puedo ayudar con este reclamo o derivarle a un asesor.",
+    },
+}
+
+
 class LangGraphAuthenticationAgent:
-    """Expose the call-center interface while executing each customer turn as a graph."""
+    """Execute each turn through explicit interpretation, policy, and safety nodes."""
+
+    MAX_INPUT_CHARACTERS = 500
+    ABUSE_MARKERS = (
+        "ignore previous", "ignore all instructions", "system prompt", "developer message",
+        "reveal your prompt", "show your instructions", "api key", "jailbreak",
+        "ignore as instruções", "mostre suas instruções", "chave da api",
+        "ignora las instrucciones", "muestra tus instrucciones", "clave de api",
+    )
+    FORBIDDEN_OUTPUT = ("system prompt", "api key", "developer message", "```", "http://", "https://")
 
     def __init__(self, policy: AuthenticationAgent, interpreter: OpenAITurnInterpreter):
         self.policy = policy
         self.interpreter = interpreter
         builder = StateGraph(AuthenticationGraphState)
         builder.add_node("prepare_turn", self._prepare_turn)
+        builder.add_node("guard_input", self._guard_input)
+        builder.add_node("interpret_turn", self._interpret_turn)
+        builder.add_node("answer_question", self._answer_question)
+        builder.add_node("refuse_out_of_scope", self._refuse_out_of_scope)
         builder.add_node("apply_policy", self._apply_policy)
         builder.add_node("validate_response", self._validate_response)
         builder.add_edge(START, "prepare_turn")
-        builder.add_edge("prepare_turn", "apply_policy")
+        builder.add_edge("prepare_turn", "guard_input")
+        builder.add_conditional_edges("guard_input", lambda s: "done" if "result" in s else "interpret", {"done": "validate_response", "interpret": "interpret_turn"})
+        builder.add_conditional_edges("interpret_turn", self._route_analysis, {"done": "validate_response", "question": "answer_question", "out_of_scope": "refuse_out_of_scope", "policy": "apply_policy"})
+        builder.add_edge("answer_question", "validate_response")
+        builder.add_edge("refuse_out_of_scope", "validate_response")
         builder.add_edge("apply_policy", "validate_response")
         builder.add_edge("validate_response", END)
         self.graph = builder.compile()
 
+    def _text(self, key: str) -> str:
+        language = self.policy.language if self.policy.language in MESSAGES else "en"
+        return MESSAGES[language][key]
+
     def _prepare_turn(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
         phase = "name_confirmation" if self.policy.pending_customer else "name_collection"
-        self.interpreter.set_phase(phase)
+        self.interpreter.set_context(phase=phase, locale=self.policy.locale)
         return {"phase": phase}
+
+    def _guard_input(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
+        answer = (state.get("answer") or "").strip()
+        if not answer:
+            return {"result": self.policy.handle_answer(answer)}
+        if len(answer) > self.MAX_INPUT_CHARACTERS:
+            return {"result": AuthenticationResult(AuthStatus.NEEDS_NAME, self._text("too_long"))}
+        normalized = answer.casefold()
+        if any(marker in normalized for marker in self.ABUSE_MARKERS):
+            return {"result": AuthenticationResult(AuthStatus.NEEDS_NAME, self._text("blocked"))}
+        return {}
+
+    def _interpret_turn(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
+        try:
+            return {"analysis": self.interpreter.analyze(state.get("answer") or "")}
+        except ClassificationError:
+            return {"result": self.policy._handoff("handoff_system", "llm_interpretation_unavailable_or_limit_reached")}
+
+    @staticmethod
+    def _route_analysis(state: AuthenticationGraphState) -> str:
+        if "result" in state:
+            return "done"
+        if state["analysis"].intent is TurnIntent.IN_SCOPE_QUESTION:
+            return "question"
+        if state["analysis"].intent is TurnIntent.OUT_OF_SCOPE:
+            return "out_of_scope"
+        return "policy"
+
+    def _continuation_status(self) -> AuthStatus:
+        return AuthStatus.NEEDS_CONFIRMATION if self.policy.pending_customer else AuthStatus.NEEDS_NAME
+
+    def _answer_question(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
+        answer = (state["analysis"].direct_answer or "").strip()
+        normalized = answer.casefold()
+        if not answer or len(answer) > 800 or any(marker in normalized for marker in self.FORBIDDEN_OUTPUT):
+            answer = self._text("unsafe_answer")
+        if self.policy.pending_customer:
+            answer = f"{answer} {self.policy._message('confirmation_unclear', name=self.policy.pending_customer.full_name)}"
+        return {"result": AuthenticationResult(self._continuation_status(), answer)}
+
+    def _refuse_out_of_scope(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
+        del state
+        message = self._text("out_of_scope")
+        if self.policy.pending_customer:
+            message = f"{message} {self.policy._message('confirmation_unclear', name=self.policy.pending_customer.full_name)}"
+        return {"result": AuthenticationResult(self._continuation_status(), message)}
 
     def _apply_policy(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
         return {"result": self.policy.handle_answer(state.get("answer"))}
 
     @staticmethod
     def _validate_response(state: AuthenticationGraphState) -> AuthenticationGraphState:
-        result = state["result"]
-        if not result.message.strip():
+        if not state["result"].message.strip():
             raise RuntimeError("Conversation policy returned an empty customer response")
         return {}
 
