@@ -29,8 +29,8 @@ class VoicePreferenceRequest(BaseModel):
     accent: str | None = None
 
 
-class DocumentRequest(BaseModel):
-    document_number: str
+class DtmfRequest(BaseModel):
+    key: str
 
 
 def create_app(customers_csv: str | Path | None = None) -> FastAPI:
@@ -118,6 +118,7 @@ def create_app(customers_csv: str | Path | None = None) -> FastAPI:
             "accent": state.locale.accent,
             "preference_source": state.locale.source,
             "assurance_level": state.identity.assurance_level if state.identity else None,
+            "document_digits_collected": len(state.document_digits),
             "demo_only": True,
         }
 
@@ -136,10 +137,10 @@ def create_app(customers_csv: str | Path | None = None) -> FastAPI:
             raise HTTPException(status_code=422, detail=str(error)) from error
         return voice_response(state)
 
-    @app.post("/api/voice/calls/{call_id}/document")
-    def authenticate_voice_document(call_id: str, payload: DocumentRequest) -> dict[str, object]:
+    @app.post("/api/voice/calls/{call_id}/dtmf")
+    def receive_voice_dtmf(call_id: str, payload: DtmfRequest) -> dict[str, object]:
         try:
-            state = calls.authenticate_document(call_id, payload.document_number)
+            state = calls.receive_dtmf(call_id, payload.key)
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         return voice_response(state)

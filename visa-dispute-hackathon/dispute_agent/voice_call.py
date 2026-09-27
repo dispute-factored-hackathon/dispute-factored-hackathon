@@ -15,6 +15,7 @@ class VoiceCallStage(StrEnum):
     NEEDS_LANGUAGE = "needs_language"
     NEEDS_DOCUMENT = "needs_document"
     AUTHENTICATED = "authenticated"
+    HANDOFF = "handoff"
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,7 @@ class VoiceCallState:
     locale: ConversationLocaleContext
     identity: CallerIdentity | None = None
     failed_document_attempts: int = 0
+    document_digits: str = ""
 
 
 class VoiceCallService:
@@ -87,12 +89,44 @@ class VoiceCallService:
                 state,
                 stage=VoiceCallStage.AUTHENTICATED,
                 identity=result.identity,
+                document_digits="",
             )
         else:
             attempts = state.failed_document_attempts + 1
             if attempts >= self.max_document_attempts:
-                raise ValueError("document authentication attempts exhausted")
-            updated = replace(state, failed_document_attempts=attempts)
+                updated = replace(
+                    state,
+                    stage=VoiceCallStage.HANDOFF,
+                    failed_document_attempts=attempts,
+                    document_digits="",
+                )
+            else:
+                updated = replace(
+                    state,
+                    failed_document_attempts=attempts,
+                    document_digits="",
+                )
+        self._calls[call_id] = updated
+        return updated
+
+    def receive_dtmf(self, call_id: str, key: str) -> VoiceCallState:
+        """Consume one SIP `transport.dtmf.received` event without model access."""
+
+        state = self.get(call_id)
+        if state.stage is not VoiceCallStage.NEEDS_DOCUMENT:
+            raise ValueError("DTMF document entry is not active")
+        if key not in "0123456789*#" or len(key) != 1:
+            raise ValueError("DTMF key must be one of 0-9, *, or #")
+        if key == "*":
+            updated = replace(state, document_digits="")
+        elif key == "#":
+            if not state.document_digits:
+                raise ValueError("enter document digits before pressing #")
+            return self.authenticate_document(call_id, state.document_digits)
+        else:
+            if len(state.document_digits) >= 24:
+                raise ValueError("document entry is too long")
+            updated = replace(state, document_digits=f"{state.document_digits}{key}")
         self._calls[call_id] = updated
         return updated
 

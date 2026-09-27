@@ -28,7 +28,7 @@ Then open `http://127.0.0.1:8000`. The current page ends after creating the demo
 
 The service returns country and detected-accent data only from the matched synthetic customer record. It does not expose documents or phone numbers to the conversational model. The language branch consumes this deterministic result and owns the conversation state needed to keep or explicitly change language and accent.
 
-The FastAPI voice contract is available at `/api/voice/calls`. A recognized phone starts in `authenticated` using the customer's country and compatible `detected_accent`. An unknown phone starts in `needs_language`, accepts the explicit preference at `/preferences`, and then accepts the synthetic document at `/document`. The selected language and accent remain pinned after document authentication. The same `/preferences` endpoint allows an explicit change at any later phase.
+The FastAPI voice contract is available at `/api/voice/calls`. A recognized phone starts in `authenticated` using the customer's country and compatible `detected_accent`. An unknown phone starts in `needs_language`, accepts the explicit preference at `/preferences`, and then collects the numeric synthetic document through `/dtmf`. Each OpenAI SIP `transport.dtmf.received` event maps to one request: `0`–`9` append, `*` clears, and `#` submits. Responses expose only the number of collected digits, never the document or buffer. The selected language and accent remain pinned after authentication. The same `/preferences` endpoint allows an explicit change at any later phase.
 
 ## Mock customer identification
 
