@@ -81,6 +81,7 @@ class GuiDemoLoginService:
         self._records_by_id = {record.customer_id: record for record in self._records}
         self._pending: dict[str, _PendingSelection] = {}
         self._sessions: dict[str, AuthenticatedCustomerContext] = {}
+        self._language_context_counts: dict[str, int] = {}
 
     def _load_records(self) -> tuple[_CustomerRecord, ...]:
         if not self.customers_csv.is_file():
@@ -174,7 +175,25 @@ class GuiDemoLoginService:
             expires_at=now + self.session_ttl,
         )
         self._sessions[session_id] = context
+        source = context.language.source
+        self._language_context_counts[source] = self._language_context_counts.get(source, 0) + 1
         return context
+
+    def language_metrics(self) -> dict[str, int | float]:
+        """Return aggregate GUI language-source metrics without customer data."""
+
+        total = sum(self._language_context_counts.values())
+        fallback_count = sum(
+            count for source, count in self._language_context_counts.items() if source != "database"
+        )
+        return {
+            "sessions": total,
+            "database_preferences": self._language_context_counts.get("database", 0),
+            "country_default_fallbacks": self._language_context_counts.get("country_default", 0),
+            "product_default_fallbacks": self._language_context_counts.get("product_default", 0),
+            "fallback_rate": fallback_count / total if total else 0.0,
+            "language_detection_model_calls": 0,
+        }
 
     def resolve_session(self, session_id: str) -> AuthenticatedCustomerContext:
         """Return the server-side customer context for a live session."""

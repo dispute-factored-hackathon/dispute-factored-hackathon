@@ -19,6 +19,17 @@ class LanguageContextTests(unittest.TestCase):
         self.assertEqual(context.language.language, "pt")
         self.assertEqual(context.language.locale, "pt-BR")
         self.assertEqual(context.language.source, "database")
+        self.assertEqual(
+            service.language_metrics(),
+            {
+                "sessions": 1,
+                "database_preferences": 1,
+                "country_default_fallbacks": 0,
+                "product_default_fallbacks": 0,
+                "fallback_rate": 0.0,
+                "language_detection_model_calls": 0,
+            },
+        )
 
     def test_supported_regional_database_preferences(self):
         cases = (
@@ -108,6 +119,25 @@ class LanguageContextTests(unittest.TestCase):
             option = service.search("Gui Customer")[0]
             context = service.select(option.selection_token)
             self.assertEqual(context.language.locale, "es-CO")
+
+    def test_gui_fallback_metrics_are_aggregated_without_customer_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "customers.csv"
+            path.write_text(
+                "customer_id,first_name,last_name,customer_status,country\n"
+                "1,Country,Default,Active,Argentina\n"
+                "2,Product,Default,Active,Atlantis\n",
+                encoding="utf-8",
+            )
+            service = GuiDemoLoginService(path)
+            for query in ("Country Default", "Product Default"):
+                option = service.search(query)[0]
+                service.select(option.selection_token)
+            metrics = service.language_metrics()
+            self.assertEqual(metrics["country_default_fallbacks"], 1)
+            self.assertEqual(metrics["product_default_fallbacks"], 1)
+            self.assertEqual(metrics["fallback_rate"], 1.0)
+            self.assertNotIn("customer_id", metrics)
 
 
 if __name__ == "__main__":

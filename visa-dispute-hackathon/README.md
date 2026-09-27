@@ -12,6 +12,8 @@ Selecting an option creates a short-lived server-side `AuthenticatedCustomerCont
 
 The GUI also reads country, preferred language, and locale from the selected synthetic customer record. It never invokes the language-detection model. Missing or invalid preferences use an explicit country default when supported, otherwise the product default (`en-US`); the source and fallback reason remain in the immutable session context for metrics and debugging. Voice country-code inference and GUI database preferences normalize to the same `ConversationLocaleContext`, while retaining different provenance.
 
+`GuiDemoLoginService.language_metrics()` reports aggregate database-preference, country-fallback, product-fallback, and fallback-rate counters. It intentionally contains no customer values and reports `language_detection_model_calls: 0` as an architectural invariant of the GUI channel.
+
 ## Mock customer identification
 
 The default agent is orchestrated with LangGraph. A single OpenAI Structured Output call receives the raw customer turn and returns a Pydantic-generated JSON Schema containing language, one closed intent class, confidence, prompt-abuse class, abuse confidence, grounded name extraction, and an optional scoped answer. No tokenization, label-vector mapping, regex intent preprocessing, or local zero-shot inference is required.
