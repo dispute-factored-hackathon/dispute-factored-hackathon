@@ -6,9 +6,9 @@ Project documentation is maintained in the repository's [`docs`](../docs/README.
 
 ## Mock customer identification
 
-The default agent is orchestrated with LangGraph. The LLM extracts a caller-stated name and may answer an allowed dispute question directly. Whenever the conversation must choose a state-changing branch, the graph uses a local multilingual zero-shot classifier. The graph advances only when the top class is not `other`, meets the configured confidence threshold, and—during name confirmation—also meets the minimum score margin.
+The default agent is orchestrated with LangGraph. A single OpenAI Structured Output call receives the raw customer turn and returns a Pydantic-generated JSON Schema containing language, one closed intent class, confidence, prompt-abuse class, abuse confidence, grounded name extraction, and an optional scoped answer. No tokenization, label-vector mapping, regex intent preprocessing, or local zero-shot inference is required.
 
-The zero-shot model recognizes `provides_name`, `avoids_answer`, `asks_why`, `requests_human`, and `other`; confirmation uses `confirms`, `denies`, and `other`. Low-confidence and `other` results never change conversation state. OpenAI structured output is validated with Pydantic, and extracted names are accepted only when grounded in the customer's original utterance. The complete customer database, customer IDs, match results, authentication state, retry limits, and handoff decisions remain local and deterministic.
+The schema recognizes `provides_name`, `asks_why`, `avoids_answer`, `requests_human`, `cancels`, `restarts`, `confirms`, `denies`, `selects_language`, `in_scope_question`, `out_of_scope`, and `other`. Low-confidence and `other` results never cause a consequential transition. Extracted names are accepted only when grounded in the customer's original utterance. Customer lookup, canonical names, customer IDs, authentication state, retry limits, confidence gates, and handoff decisions remain local and deterministic.
 
 After finding one customer, the agent repeats the canonical database spelling and asks the caller to confirm it. Authentication completes only after confirmation. A correction such as `não, meu nome é José María Pérez López` is extracted, looked up locally, and presented for confirmation in the same turn.
 
@@ -36,9 +36,8 @@ This is deliberately insecure demo identification. It must never protect real ba
 From the repository root:
 
 ```bash
-uv sync --extra ml
-uv run --extra ml dispute-auth-setup
-uv run --extra ml python -m unittest discover -s tests -v
+uv sync --dev
+uv run python -m unittest discover -s tests -v
 ```
 
 Tests use `tests/fixtures/customers.csv`, a fake structured model, and the complete synthetic database when available. They do not call the OpenAI API or consume credits.
@@ -46,10 +45,10 @@ Tests use `tests/fixtures/customers.csv`, a fake structured model, and the compl
 Before opening a pull request, run the same quality checks used by GitHub Actions:
 
 ```bash
-uv sync --extra ml --dev
+uv sync --dev
 uv run ruff check .
 uv run ruff format --check .
-uv run --extra ml python -m unittest discover -s tests -v
+uv run python -m unittest discover -s tests -v
 ```
 
 The pull-request workflow uses the committed lockfile, checks lint and formatting with Ruff, and then runs the complete test suite on Python 3.11.
@@ -57,7 +56,7 @@ The pull-request workflow uses the committed lockfile, checks lint and formattin
 For a machine-readable local evaluation summary, run:
 
 ```bash
-uv run --extra ml dispute-agent-eval
+uv run dispute-agent-eval
 ```
 
 This credential-free offline evaluation runs the same scenario suite and exits nonzero on any regression. Its JSON summary reports test count, failures, errors, skipped scenarios, and pass rate.
@@ -89,13 +88,13 @@ Use the local evaluation command for pull-request and offline regression checks.
 
 ## Direct answers and abuse controls
 
-The graph can directly answer short questions about the agent's identity, role, capabilities, limitations, disputes, fraud, refunds, chargebacks, evidence, identity collection, and next steps. These conversational questions do not pass through workflow intent classification. This route has no database or tool access and may answer only from a small approved knowledge block. If the same utterance contains a grounded full name, name extraction takes priority and the identification flow continues.
+The graph can directly answer short questions about the agent's identity, role, capabilities, limitations, disputes, fraud, refunds, chargebacks, evidence, identity collection, and next steps. The same schema-constrained call classifies and answers the turn from a small approved knowledge block. It has no database or tool access. If the same utterance contains a grounded full name, name extraction takes priority and the identification flow continues.
 
 Controls are layered rather than delegated entirely to the model:
 
 - a reusable ingress decorator applies prompt-abuse screening to every non-empty, size-valid customer message before graph execution;
 - customer text is explicitly treated as untrusted data;
-- a local zero-shot safety model detects prompt manipulation, hidden-instruction extraction, credential extraction, and unrelated-data access attempts before an API call;
+- the structured schema classifies prompt manipulation, hidden-instruction extraction, credential extraction, and unrelated-data access attempts in the same bounded LLM call;
 - abuse blocking requires both a high-confidence abuse class and a minimum probability margin, reducing false positives on legitimate banking questions;
 - inputs are limited to 500 characters and sessions default to 20 uncached LLM calls;
 - repeated turns use a phase-and-locale-aware cache;
@@ -111,8 +110,8 @@ The current CLI creates one agent object for one caller. Cross-turn counters, th
 ## Run the interactive demo with the full synthetic dataset
 
 ```bash
-uv sync --extra ml
-uv run --extra ml dispute-auth-demo \
+uv sync --dev
+uv run dispute-auth-demo \
   --customers /Users/silvs/Documents/projetos/visa-dispute-hackathon/data/raw/customers.csv \
   --country-code +55 \
   --language auto
@@ -123,7 +122,7 @@ When `--language auto` is used, `--country-code` localizes the opening without f
 The selected language is also regionalized for the rest of the interaction: Brazil uses Brazilian Portuguese (`pt-BR`), Colombia uses Colombian Spanish (`es-CO`), Mexico uses Mexican Spanish (`es-MX`), Argentina uses Argentine Spanish with voseo (`es-AR`), and English uses American English (`en-US`). When the caller chooses a language different from the country's main language, the agent uses American English, Brazilian Portuguese, or neutral Latin American Spanish (`es-419`) as the corresponding fallback.
 
 ```bash
-uv run --extra ml dispute-auth-demo \
+uv run dispute-auth-demo \
   --customers ../data/raw/customers.csv \
   --country-code +55 \
   --language auto
@@ -140,7 +139,7 @@ For a negative case, enter a name absent from the dataset. To test avoidance cla
 ## Run with the small test fixture
 
 ```bash
-uv run --extra ml dispute-auth-demo --customers tests/fixtures/customers.csv
+uv run dispute-auth-demo --customers tests/fixtures/customers.csv
 ```
 
 Use `--language pt`, `--language es` or `--language en` when the IVR already knows the caller's preference. The default `--language auto` accepts explicit menu choices and uses the structured LLM when language must be inferred from free-form text. Add `--debug` only for development; customer-facing output hides internal IDs and assurance labels.

@@ -243,7 +243,7 @@ class AuthenticationAgent:
     def __init__(
         self,
         customers_csv: str | Path,
-        intent_classifier: AnswerIntentClassifier,
+        intent_classifier: AnswerIntentClassifier | None = None,
         *,
         min_intent_confidence: float = 0.55,
         max_failed_attempts: int = 3,
@@ -358,13 +358,11 @@ class AuthenticationAgent:
     def _match_claimed_name(self, claimed_name: str) -> AuthenticationResult | None:
         matches = self.directory.find_by_full_name(claimed_name)
         if len(matches) == 1:
-            if self.confirmation_classifier is not None:
-                self.pending_customer = matches[0]
-                return AuthenticationResult(
-                    AuthStatus.NEEDS_CONFIRMATION,
-                    self._message("confirm_name", name=matches[0].full_name),
-                )
-            return self._authenticate(matches[0], confirmed=False)
+            self.pending_customer = matches[0]
+            return AuthenticationResult(
+                AuthStatus.NEEDS_CONFIRMATION,
+                self._message("confirm_name", name=matches[0].full_name),
+            )
         if len(matches) > 1:
             self.last_claimed_name = claimed_name
             return self._handoff("handoff_ambiguous", "duplicate_name")
@@ -507,6 +505,89 @@ class AuthenticationAgent:
             AuthStatus.NOT_FOUND,
             self._message("not_found", name=claimed_name),
         )
+
+    def handle_empty_answer(self) -> AuthenticationResult:
+        """Handle silence without sending it to the hosted classifier."""
+
+        self.no_response_attempts += 1
+        if self.no_response_attempts >= self.max_no_response_attempts:
+            return self._handoff("handoff_no_response", "repeated_no_response")
+        key = "silence_1" if self.no_response_attempts == 1 else "silence_2"
+        status = AuthStatus.NEEDS_CONFIRMATION if self.pending_customer else AuthStatus.NEEDS_NAME
+        return AuthenticationResult(status, self._message(key))
+
+    def handle_unclear_classification(self) -> AuthenticationResult:
+        """Keep consequential state unchanged when the LLM is uncertain."""
+
+        if self.pending_customer:
+            return AuthenticationResult(
+                AuthStatus.NEEDS_CONFIRMATION,
+                self._message("confirmation_unclear", name=self.pending_customer.full_name),
+            )
+        self.unclear_attempts += 1
+        if self.unclear_attempts >= self.max_unclear_attempts:
+            return self._handoff("handoff_unclear", "repeated_unclear_response")
+        return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("unclear"))
+
+    def apply_llm_classification(self, answer: str, analysis) -> AuthenticationResult:
+        """Apply one validated schema decision without reclassifying or preprocessing text."""
+
+        from .openai_interpreter import TurnIntent
+
+        if self.current_customer is not None:
+            return AuthenticationResult(
+                AuthStatus.AUTHENTICATED,
+                self._message("already", name=self.current_customer.full_name),
+                self.current_customer,
+                "DEMO_ONLY_NAME_MATCH_CONFIRMED",
+            )
+
+        if self.language == "auto":
+            if analysis.language not in {"en", "pt", "es"}:
+                return AuthenticationResult(AuthStatus.NEEDS_NAME, AUTO_LANGUAGE_RETRY)
+            self.language = analysis.language
+            self.locale = locale_for(self.language, self.country_code)
+            return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("start"))
+
+        controls = {
+            TurnIntent.REQUESTS_HUMAN: ("handoff_requested", "customer_requested_human"),
+            TurnIntent.CANCELS: None,
+            TurnIntent.RESTARTS: None,
+        }
+        if analysis.intent is TurnIntent.REQUESTS_HUMAN:
+            return self._handoff(*controls[analysis.intent])
+        if analysis.intent is TurnIntent.CANCELS:
+            self.pending_customer = None
+            return AuthenticationResult(AuthStatus.CANCELLED, self._message("cancelled"))
+        if analysis.intent is TurnIntent.RESTARTS:
+            return self._reset_identification()
+
+        claimed_name = analysis.extracted_name
+        if self.pending_customer:
+            customer = self.pending_customer
+            if claimed_name and normalize_name(claimed_name) != normalize_name(customer.full_name):
+                self.pending_customer = None
+                return self._match_claimed_name(claimed_name) or self._name_not_found(claimed_name)
+            if analysis.intent is TurnIntent.CONFIRMS:
+                return self._authenticate(customer)
+            if analysis.intent is TurnIntent.DENIES:
+                self.pending_customer = None
+                return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("name_denied"))
+            return AuthenticationResult(
+                AuthStatus.NEEDS_CONFIRMATION,
+                self._message("confirmation_unclear", name=customer.full_name),
+            )
+
+        if analysis.intent is TurnIntent.ASKS_WHY:
+            return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("why"))
+        if analysis.intent is TurnIntent.AVOIDS_ANSWER:
+            self.avoidance_attempts += 1
+            if self.avoidance_attempts >= self.max_avoidance_attempts:
+                return self._handoff("handoff_refusal", "name_not_provided")
+            return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("refusal"))
+        if claimed_name:
+            return self._match_claimed_name(claimed_name) or self._name_not_found(claimed_name)
+        return self.handle_unclear_classification()
 
     def start(self) -> AuthenticationResult:
         if self.language == "auto":

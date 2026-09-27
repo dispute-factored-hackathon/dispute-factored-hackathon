@@ -10,8 +10,7 @@ The implementation focuses on identifying a synthetic customer, understanding na
 ## What the prototype demonstrates
 
 - LangGraph-based conversation orchestration
-- Grounded full-name extraction and scoped conversational answers with an OpenAI model
-- Local multilingual zero-shot classification for state-changing decisions
+- Raw-turn classification, grounded name extraction, and scoped answers through one OpenAI Structured Output schema
 - Accent-insensitive customer lookup against synthetic data
 - Brazilian Portuguese, American English, and regional Spanish experiences
 - Explicit confirmation before mocked authentication succeeds
@@ -19,7 +18,7 @@ The implementation focuses on identifying a synthetic customer, understanding na
 - Confidence gates that prevent uncertain classifications from advancing state
 - Context-preserving handoff summaries for call-center agents
 - Input, output, scope, and model-usage controls
-- Local model-based prompt-abuse detection before hosted LLM calls
+- Schema-constrained prompt-abuse classification in the same bounded LLM call
 
 ## Repository map
 
@@ -54,11 +53,10 @@ OPENAI_AGENT_MODEL=gpt-4.1-mini
 MAX_LLM_CALLS_PER_SESSION=20
 ```
 
-Install the application and prepare the local models:
+Install the application:
 
 ```bash
-uv sync --extra ml
-uv run --extra ml dispute-auth-setup
+uv sync --dev
 ```
 
 Never commit `.env` or a real API key.
@@ -68,7 +66,7 @@ Never commit `.env` or a real API key.
 From `visa-dispute-hackathon/`:
 
 ```bash
-uv run --extra ml dispute-auth-demo \
+uv run dispute-auth-demo \
   --customers ../data/raw/customers.csv \
   --country-code +55 \
   --language auto
@@ -77,7 +75,7 @@ uv run --extra ml dispute-auth-demo \
 Use the small fixture when the complete synthetic dataset is unavailable:
 
 ```bash
-uv run --extra ml dispute-auth-demo \
+uv run dispute-auth-demo \
   --customers tests/fixtures/customers.csv \
   --country-code +55 \
   --language pt
@@ -89,7 +87,7 @@ Fixture examples include `Ana Silva` for a unique match, `Nobody Here` for no ma
 
 ```bash
 cd visa-dispute-hackathon
-uv run --extra ml python -m unittest discover -s tests -v
+uv run python -m unittest discover -s tests -v
 ```
 
 The automated suite uses controlled model doubles and does not consume OpenAI API credits. Some integration tests use the complete synthetic database when available.
