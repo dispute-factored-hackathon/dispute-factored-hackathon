@@ -2,6 +2,7 @@
 
 from .authentication import AuthenticationAgent, AuthenticationResult, AuthStatus, Language
 from .intent_classifier import AnswerIntent, IntentDecision, LocalAvoidanceClassifier
+from .language_classifier import LanguageDecision, LocalLanguageClassifier
 
 __all__ = [
     "AnswerIntent",
@@ -10,5 +11,7 @@ __all__ = [
     "AuthStatus",
     "IntentDecision",
     "Language",
+    "LanguageDecision",
+    "LocalLanguageClassifier",
     "LocalAvoidanceClassifier",
 ]

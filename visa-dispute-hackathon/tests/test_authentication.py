@@ -8,6 +8,11 @@ from dispute_agent.intent_classifier import (
     IntentDecision,
     LocalAvoidanceClassifier,
 )
+from dispute_agent.language_classifier import (
+    LanguageClassificationError,
+    LanguageDecision,
+    LocalLanguageClassifier,
+)
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "customers.csv"
@@ -23,6 +28,18 @@ class FakeIntentClassifier:
             raise ClassificationError("offline")
         intent, confidence = self.decisions.get(answer, (AnswerIntent.PROVIDES_NAME, 0.99))
         return IntentDecision(intent, confidence, {intent.value: 1.0})
+
+
+class FakeLanguageClassifier:
+    def __init__(self, decisions=None, error=False):
+        self.decisions = decisions or {}
+        self.error = error
+
+    def classify(self, text):
+        if self.error:
+            raise LanguageClassificationError("offline")
+        language, confidence = self.decisions.get(text, ("en", 0.99))
+        return LanguageDecision(language, confidence)
 
 
 def make_agent(**kwargs):
@@ -108,9 +125,14 @@ class AuthenticationAgentTests(unittest.TestCase):
         classifier = FakeIntentClassifier({
             "Quero falar com um atendente": (AnswerIntent.REQUESTS_HUMAN, 0.99),
         })
-        result = make_agent(classifier=classifier, language="auto").handle_answer(
-            "Quero falar com um atendente"
-        )
+        language_classifier = FakeLanguageClassifier({
+            "Quero falar com um atendente": ("pt", 0.98),
+        })
+        result = make_agent(
+            classifier=classifier,
+            language="auto",
+            language_classifier=language_classifier,
+        ).handle_answer("Quero falar com um atendente")
         self.assertIn("atendente", result.message)
         self.assertEqual(result.handoff_summary["language"], "pt")
 
@@ -138,9 +160,14 @@ class AuthenticationAgentTests(unittest.TestCase):
         classifier = FakeIntentClassifier({
             "¿Por qué necesitan mi nombre?": (AnswerIntent.ASKS_WHY, 0.99),
         })
-        result = make_agent(classifier=classifier, language="auto").handle_answer(
-            "¿Por qué necesitan mi nombre?"
-        )
+        language_classifier = FakeLanguageClassifier({
+            "¿Por qué necesitan mi nombre?": ("es", 0.98),
+        })
+        result = make_agent(
+            classifier=classifier,
+            language="auto",
+            language_classifier=language_classifier,
+        ).handle_answer("¿Por qué necesitan mi nombre?")
         self.assertIn("Uso tu nombre", result.message)
         self.assertNotIn("I use", result.message)
 
@@ -189,6 +216,25 @@ class AuthenticationAgentTests(unittest.TestCase):
         result = classifier.classify("Quero falar com um atendente")
         self.assertEqual(result.intent, AnswerIntent.REQUESTS_HUMAN)
         self.assertEqual(result.confidence, 0.99)
+
+    def test_statistical_language_model_maps_supported_language(self):
+        class FakeIdentifier:
+            def classify(self, text):
+                return "pt", 0.93
+
+        classifier = LocalLanguageClassifier(identifier_instance=FakeIdentifier())
+        result = classifier.classify("Quero contestar uma compra")
+        self.assertEqual(result.language, "pt")
+        self.assertEqual(result.confidence, 0.93)
+
+    def test_low_confidence_language_detection_repeats_menu(self):
+        agent = make_agent(
+            language="auto",
+            language_classifier=FakeLanguageClassifier({"hola": ("es", 0.40)}),
+        )
+        result = agent.handle_answer("hola")
+        self.assertEqual(result.status, AuthStatus.NEEDS_NAME)
+        self.assertIn("No reconocí", result.message)
 
 
 if __name__ == "__main__":

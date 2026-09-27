@@ -9,6 +9,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from .intent_classifier import AnswerIntent, AnswerIntentClassifier, ClassificationError
+from .language_classifier import LanguageClassificationError, LanguageClassifier
 
 
 class AuthStatus(StrEnum):
@@ -95,21 +96,6 @@ AUTO_LANGUAGE_RETRY = (
 )
 
 
-def detect_language(value: str, fallback: str = "en") -> str:
-    """Detect common Portuguese or Spanish service phrases without a network call."""
-
-    normalized = normalize_name(value)
-    portuguese = ("nao", "atendente", "por que", "quero falar", "meu nome", "prefiro")
-    spanish = ("asesor", "por que", "quiero hablar", "mi nombre", "prefiero", "no quiero")
-    pt_score = sum(marker in normalized for marker in portuguese)
-    es_score = sum(marker in normalized for marker in spanish)
-    if pt_score > es_score:
-        return "pt"
-    if es_score > pt_score:
-        return "es"
-    return fallback
-
-
 @dataclass(frozen=True)
 class CustomerMatch:
     customer_id: str
@@ -185,6 +171,8 @@ class AuthenticationAgent:
         max_no_response_attempts: int = 3,
         max_unclear_attempts: int = 2,
         language: str = "en",
+        language_classifier: LanguageClassifier | None = None,
+        min_language_confidence: float = 0.65,
     ):
         self.directory = CustomerDirectory(customers_csv)
         self.intent_classifier = intent_classifier
@@ -199,6 +187,8 @@ class AuthenticationAgent:
         self.unclear_attempts = 0
         self.current_customer: CustomerMatch | None = None
         self.language = language if language in {"en", "pt", "es", "auto"} else "en"
+        self.language_classifier = language_classifier
+        self.min_language_confidence = min_language_confidence
         self.last_claimed_name: str | None = None
 
     def _message(self, key: str, **values: str) -> str:
@@ -258,10 +248,18 @@ class AuthenticationAgent:
                 if selected is not None:
                     self.language = selected
                     return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("start"))
-                detected = detect_language(answer, fallback="auto")
-                if detected == "auto":
+                if self.language_classifier is None:
                     return AuthenticationResult(AuthStatus.NEEDS_NAME, AUTO_LANGUAGE_RETRY)
-                self.language = detected
+                try:
+                    language_decision = self.language_classifier.classify(answer)
+                except LanguageClassificationError:
+                    return AuthenticationResult(AuthStatus.NEEDS_NAME, AUTO_LANGUAGE_RETRY)
+                if (
+                    language_decision.language not in {"en", "pt", "es"}
+                    or language_decision.confidence < self.min_language_confidence
+                ):
+                    return AuthenticationResult(AuthStatus.NEEDS_NAME, AUTO_LANGUAGE_RETRY)
+                self.language = language_decision.language
             matches = self.directory.find_by_full_name(answer)
             if len(matches) == 1:
                 self.current_customer = matches[0]
