@@ -20,7 +20,7 @@ Then open `http://127.0.0.1:8000`. The current page ends after creating the demo
 
 ## Synthetic voice identity contract
 
-`VoiceCallerIdentityService` first performs an exact normalized lookup of the supplied mobile phone. A unique match creates `DEMO_ONLY_PHONE_MATCH`. An unknown phone preserves only its calling-code hint and requires a `document_number`; a unique exact normalized document match creates `DEMO_ONLY_DOCUMENT_MATCH`. Neither mechanism is secure enough for real banking.
+`VoiceCallerIdentityService` first performs an exact normalized lookup of the supplied mobile phone. A unique match creates `DEMO_ONLY_PHONE_MATCH`. An unknown phone preserves only its calling-code hint and requires a numeric `document_number`; a unique exact normalized document match creates `DEMO_ONLY_DOCUMENT_MATCH`. The telephone integration must collect this value from DTMF keypad events rather than speech or model extraction. Alphanumeric documents require human fallback because a numeric telephone keypad cannot represent them unambiguously. Neither mechanism is secure enough for real banking.
 
 The service returns country and detected-accent data only from the matched synthetic customer record. It does not expose documents or phone numbers to the conversational model. The language branch consumes this deterministic result and owns the conversation state needed to keep or explicitly change language and accent.
 

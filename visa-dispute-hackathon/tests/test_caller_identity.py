@@ -31,7 +31,7 @@ class VoiceCallerIdentityTests(unittest.TestCase):
         self.assertIsNone(result.identity)
 
     def test_document_fallback_authenticates(self):
-        result = self.service.identify_document("cpf-456")
+        result = self.service.identify_document("456.789.001-23")
         self.assertEqual(result.status, CallerIdentityStatus.AUTHENTICATED)
         self.assertEqual(result.identity.customer_id, "CLI-002")
         self.assertEqual(result.identity.assurance_level, "DEMO_ONLY_DOCUMENT_MATCH")
@@ -44,7 +44,7 @@ class VoiceCallerIdentityTests(unittest.TestCase):
     def test_normalizers_are_deterministic(self):
         self.assertEqual(normalize_phone("+351 91 111 2222"), "+351911112222")
         self.assertEqual(calling_code_from_phone("+351 91 111 2222"), "+351")
-        self.assertEqual(normalize_document(" CPF-456 "), "cpf456")
+        self.assertEqual(normalize_document(" 456.789.001-23 "), "45678900123")
 
     def test_invalid_phone_is_rejected(self):
         with self.assertRaises(ValueError):
