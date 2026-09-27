@@ -3,6 +3,12 @@ import unittest
 
 from dispute_agent.agent_graph import LangGraphAuthenticationAgent
 from dispute_agent.authentication import AuthenticationAgent, AuthStatus
+from dispute_agent.intent_classifier import (
+    AnswerIntent,
+    ConfirmationDecision,
+    ConfirmationIntent,
+    IntentDecision,
+)
 from dispute_agent.openai_interpreter import (
     OpenAIConfirmationClassifier,
     OpenAIIntentClassifier,
@@ -26,6 +32,34 @@ class FakeStructuredModel:
         self.calls.append(messages)
         utterance = messages[-1][1].split("Customer utterance: ", 1)[1]
         return self.responses[utterance]
+
+
+class StaticIntentClassifier:
+    def __init__(self, intent, confidence):
+        self.intent = intent
+        self.confidence = confidence
+        self.calls = 0
+
+    def classify(self, answer):
+        del answer
+        self.calls += 1
+        probabilities = {item.value: 0.01 for item in AnswerIntent}
+        probabilities[self.intent.value] = self.confidence
+        return IntentDecision(self.intent, self.confidence, probabilities)
+
+
+class StaticConfirmationClassifier:
+    def __init__(self, intent, confidence):
+        self.intent = intent
+        self.confidence = confidence
+        self.calls = 0
+
+    def classify(self, answer):
+        del answer
+        self.calls += 1
+        probabilities = {item.value: 0.01 for item in ConfirmationIntent}
+        probabilities[self.intent.value] = self.confidence
+        return ConfirmationDecision(self.intent, self.confidence, probabilities)
 
 
 def make_graph(responses, *, language="pt"):
@@ -86,6 +120,24 @@ class LangGraphAgentTests(unittest.TestCase):
         self.assertIn("perfil sintético", result.message)
         self.assertEqual(len(model.calls), 1)
 
+    def test_language_selection_precedes_zero_shot_authentication_routing(self):
+        selection = "português"
+        graph, _ = make_graph({
+            selection: TurnAnalysis(
+                language="pt",
+                intent=TurnIntent.OTHER,
+                extracted_name=None,
+                direct_answer=None,
+            ),
+        }, language="auto")
+        graph.policy.intent_classifier = StaticIntentClassifier(AnswerIntent.OTHER, 0.99)
+
+        result = graph.handle_answer(selection)
+
+        self.assertEqual(result.status, AuthStatus.NEEDS_NAME)
+        self.assertEqual(graph.language, "pt")
+        self.assertIn("qual é o seu nome completo", result.message)
+
     def test_different_extracted_name_overrides_misclassified_confirmation(self):
         correction = "não, meu nome é José María Pérez López"
         graph, model = make_graph({
@@ -113,7 +165,63 @@ class LangGraphAgentTests(unittest.TestCase):
     def test_graph_exposes_three_named_processing_nodes(self):
         graph, _ = make_graph({})
         node_names = set(graph.graph.get_graph().nodes)
-        self.assertTrue({"prepare_turn", "apply_policy", "validate_response"} <= node_names)
+        self.assertTrue({"prepare_turn", "classify_turn", "apply_policy", "validate_response"} <= node_names)
+
+    def test_high_confidence_non_other_zero_shot_class_advances_policy(self):
+        request = "quero falar com uma pessoa"
+        graph, _ = make_graph({
+            request: TurnAnalysis(language="pt", intent=TurnIntent.OTHER, extracted_name=None, direct_answer=None),
+        })
+        classifier = StaticIntentClassifier(AnswerIntent.REQUESTS_HUMAN, 0.94)
+        graph.policy.intent_classifier = classifier
+
+        result = graph.handle_answer(request)
+
+        self.assertEqual(result.status, AuthStatus.HUMAN_HANDOFF)
+        self.assertEqual(classifier.calls, 2)  # graph gate, then policy application
+
+    def test_other_zero_shot_class_does_not_advance_policy(self):
+        request = "conte uma história"
+        graph, _ = make_graph({
+            request: TurnAnalysis(language="pt", intent=TurnIntent.REQUESTS_HUMAN, extracted_name=None, direct_answer=None),
+        })
+        classifier = StaticIntentClassifier(AnswerIntent.OTHER, 0.91)
+        graph.policy.intent_classifier = classifier
+
+        result = graph.handle_answer(request)
+
+        self.assertEqual(result.status, AuthStatus.NEEDS_NAME)
+        self.assertIn("apenas com este processo", result.message)
+        self.assertEqual(classifier.calls, 1)
+        self.assertEqual(graph.policy.unclear_attempts, 0)
+
+    def test_low_confidence_non_other_class_does_not_advance_policy(self):
+        request = "talvez"
+        graph, _ = make_graph({
+            request: TurnAnalysis(language="pt", intent=TurnIntent.REQUESTS_HUMAN, extracted_name=None, direct_answer=None),
+        })
+        classifier = StaticIntentClassifier(AnswerIntent.REQUESTS_HUMAN, 0.40)
+        graph.policy.intent_classifier = classifier
+
+        result = graph.handle_answer(request)
+
+        self.assertEqual(result.status, AuthStatus.NEEDS_NAME)
+        self.assertEqual(classifier.calls, 1)
+
+    def test_other_confirmation_class_keeps_pending_customer(self):
+        graph, _ = make_graph({
+            "Ana Silva": TurnAnalysis(language="pt", intent=TurnIntent.PROVIDES_NAME, extracted_name="Ana Silva", direct_answer=None),
+            "talvez": TurnAnalysis(language="pt", intent=TurnIntent.CONFIRMS, extracted_name=None, direct_answer=None),
+        })
+        graph.handle_answer("Ana Silva")
+        classifier = StaticConfirmationClassifier(ConfirmationIntent.OTHER, 0.90)
+        graph.policy.confirmation_classifier = classifier
+
+        result = graph.handle_answer("talvez")
+
+        self.assertEqual(result.status, AuthStatus.NEEDS_CONFIRMATION)
+        self.assertIsNotNone(graph.policy.pending_customer)
+        self.assertEqual(classifier.calls, 1)
 
     def test_in_scope_question_is_answered_directly(self):
         question = "qual a diferença entre reembolso e chargeback?"

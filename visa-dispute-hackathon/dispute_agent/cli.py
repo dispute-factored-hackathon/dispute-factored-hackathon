@@ -11,10 +11,9 @@ from dotenv import load_dotenv
 from .authentication import AuthenticationAgent, AuthStatus
 from .country_context import normalize_country_code
 from .agent_graph import LangGraphAuthenticationAgent
+from .intent_classifier import LocalAvoidanceClassifier, LocalConfirmationClassifier
+from .language_classifier import LocalLanguageClassifier
 from .openai_interpreter import (
-    OpenAIConfirmationClassifier,
-    OpenAIIntentClassifier,
-    OpenAILanguageClassifier,
     OpenAINameExtractor,
     OpenAITurnInterpreter,
 )
@@ -56,14 +55,15 @@ def main() -> int:
         return 2
     args = build_parser().parse_args()
     interpreter = OpenAITurnInterpreter()
+    intent_classifier = LocalAvoidanceClassifier()
     policy = AuthenticationAgent(
         args.customers,
-        OpenAIIntentClassifier(interpreter),
+        intent_classifier,
         language=args.language,
-        language_classifier=OpenAILanguageClassifier(interpreter),
+        language_classifier=LocalLanguageClassifier(),
         name_extractor=OpenAINameExtractor(interpreter),
         country_code=args.country_code,
-        confirmation_classifier=OpenAIConfirmationClassifier(interpreter),
+        confirmation_classifier=LocalConfirmationClassifier(intent_classifier),
     )
     agent = LangGraphAuthenticationAgent(policy, interpreter)
     result = agent.start()

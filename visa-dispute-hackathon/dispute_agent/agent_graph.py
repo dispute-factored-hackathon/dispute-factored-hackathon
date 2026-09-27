@@ -7,14 +7,15 @@ from typing import TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from .authentication import AuthenticationAgent, AuthenticationResult, AuthStatus
-from .intent_classifier import ClassificationError
-from .openai_interpreter import OpenAITurnInterpreter, TurnAnalysis, TurnIntent
+from .intent_classifier import AnswerIntent, ClassificationError, ConfirmationIntent
+from .openai_interpreter import OpenAITurnInterpreter, TurnAnalysis
 
 
 class AuthenticationGraphState(TypedDict, total=False):
     answer: str | None
     phase: str
     analysis: TurnAnalysis
+    classification_confidence: float
     result: AuthenticationResult
 
 
@@ -59,6 +60,7 @@ class LangGraphAuthenticationAgent:
         builder.add_node("prepare_turn", self._prepare_turn)
         builder.add_node("guard_input", self._guard_input)
         builder.add_node("interpret_turn", self._interpret_turn)
+        builder.add_node("classify_turn", self._classify_turn)
         builder.add_node("answer_question", self._answer_question)
         builder.add_node("refuse_out_of_scope", self._refuse_out_of_scope)
         builder.add_node("apply_policy", self._apply_policy)
@@ -66,7 +68,8 @@ class LangGraphAuthenticationAgent:
         builder.add_edge(START, "prepare_turn")
         builder.add_edge("prepare_turn", "guard_input")
         builder.add_conditional_edges("guard_input", lambda s: "done" if "result" in s else "interpret", {"done": "validate_response", "interpret": "interpret_turn"})
-        builder.add_conditional_edges("interpret_turn", self._route_analysis, {"done": "validate_response", "question": "answer_question", "out_of_scope": "refuse_out_of_scope", "policy": "apply_policy"})
+        builder.add_conditional_edges("interpret_turn", self._route_analysis, {"done": "validate_response", "question": "answer_question", "classify": "classify_turn", "policy": "apply_policy"})
+        builder.add_conditional_edges("classify_turn", lambda s: "done" if "result" in s else "policy", {"done": "validate_response", "policy": "apply_policy"})
         builder.add_edge("answer_question", "validate_response")
         builder.add_edge("refuse_out_of_scope", "validate_response")
         builder.add_edge("apply_policy", "validate_response")
@@ -99,15 +102,54 @@ class LangGraphAuthenticationAgent:
         except ClassificationError:
             return {"result": self.policy._handoff("handoff_system", "llm_interpretation_unavailable_or_limit_reached")}
 
-    @staticmethod
-    def _route_analysis(state: AuthenticationGraphState) -> str:
+    def _route_analysis(self, state: AuthenticationGraphState) -> str:
         if "result" in state:
             return "done"
-        if state["analysis"].intent is TurnIntent.IN_SCOPE_QUESTION:
+        # Language selection is its own deterministic gate before authentication.
+        if self.policy.language == "auto":
+            return "policy"
+        if (state["analysis"].direct_answer or "").strip():
             return "question"
-        if state["analysis"].intent is TurnIntent.OUT_OF_SCOPE:
-            return "out_of_scope"
-        return "policy"
+        if (state["analysis"].extracted_name or "").strip():
+            return "policy"
+        return "classify"
+
+    @staticmethod
+    def _has_margin(probabilities: dict[str, float], minimum: float) -> bool:
+        scores = sorted(probabilities.values(), reverse=True)
+        return len(scores) < 2 or scores[0] - scores[1] >= minimum
+
+    def _classify_turn(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
+        """Permit state changes only for a confident, non-OTHER zero-shot class."""
+
+        answer = state.get("answer") or ""
+        try:
+            if self.policy.pending_customer:
+                classifier = self.policy.confirmation_classifier
+                if classifier is None:
+                    return {"result": self.policy._handoff("handoff_system", "confirmation_model_unavailable")}
+                decision = classifier.classify(answer)
+                accepted = (
+                    decision.intent is not ConfirmationIntent.OTHER
+                    and decision.confidence >= self.policy.min_confirmation_confidence
+                    and self._has_margin(decision.probabilities, self.policy.min_confirmation_margin)
+                )
+                if not accepted:
+                    return {"result": AuthenticationResult(
+                        AuthStatus.NEEDS_CONFIRMATION,
+                        self.policy._message("confirmation_unclear", name=self.policy.pending_customer.full_name),
+                    )}
+            else:
+                decision = self.policy.intent_classifier.classify(answer)
+                accepted = (
+                    decision.intent is not AnswerIntent.OTHER
+                    and decision.confidence >= self.policy.min_intent_confidence
+                )
+                if not accepted:
+                    return self._refuse_out_of_scope(state)
+        except ClassificationError:
+            return {"result": self.policy._handoff("handoff_system", "zero_shot_classification_unavailable")}
+        return {"classification_confidence": decision.confidence}
 
     def _continuation_status(self) -> AuthStatus:
         return AuthStatus.NEEDS_CONFIRMATION if self.policy.pending_customer else AuthStatus.NEEDS_NAME

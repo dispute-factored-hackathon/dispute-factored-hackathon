@@ -63,6 +63,7 @@ class LocalAvoidanceClassifier:
     def __init__(self, *, model_id: str | None = None, pipeline_instance: Any | None = None):
         self.model_id = model_id or os.getenv("AVOIDANCE_MODEL_ID", self.DEFAULT_MODEL)
         self._pipeline = pipeline_instance
+        self._decision_cache: dict[str, IntentDecision] = {}
 
     @staticmethod
     def _explicit_intent(answer: str) -> AnswerIntent | None:
@@ -119,11 +120,16 @@ class LocalAvoidanceClassifier:
         return self._pipeline
 
     def classify(self, answer: str) -> IntentDecision:
+        cache_key = " ".join(answer.casefold().strip().split())
+        if cache_key in self._decision_cache:
+            return self._decision_cache[cache_key]
         explicit_intent = self._explicit_intent(answer)
         if explicit_intent is not None:
             probabilities = {intent.value: 0.0025 for intent in AnswerIntent}
             probabilities[explicit_intent.value] = 0.99
-            return IntentDecision(explicit_intent, 0.99, probabilities)
+            decision = IntentDecision(explicit_intent, 0.99, probabilities)
+            self._decision_cache[cache_key] = decision
+            return decision
 
         candidate_labels = list(self.LABELS.values())
         try:
@@ -153,11 +159,13 @@ class LocalAvoidanceClassifier:
         except (KeyError, TypeError, ValueError) as exc:
             raise ClassificationError("Local model returned an unknown intent label") from exc
 
-        return IntentDecision(
+        decision = IntentDecision(
             intent=top_intent,
             confidence=float(scores[0]),
             probabilities=probabilities,
         )
+        self._decision_cache[cache_key] = decision
+        return decision
 
 
 class LocalConfirmationClassifier:
@@ -171,8 +179,12 @@ class LocalConfirmationClassifier:
 
     def __init__(self, base_classifier: LocalAvoidanceClassifier):
         self.base_classifier = base_classifier
+        self._decision_cache: dict[str, ConfirmationDecision] = {}
 
     def classify(self, answer: str) -> ConfirmationDecision:
+        cache_key = " ".join(answer.casefold().strip().split())
+        if cache_key in self._decision_cache:
+            return self._decision_cache[cache_key]
         candidate_labels = list(self.LABELS.values())
         try:
             output = self.base_classifier._get_pipeline()(
@@ -198,4 +210,6 @@ class LocalConfirmationClassifier:
             top_intent = intent_by_label[labels[0]]
         except (KeyError, TypeError, ValueError) as exc:
             raise ClassificationError("Local model returned an unknown confirmation label") from exc
-        return ConfirmationDecision(top_intent, float(scores[0]), probabilities)
+        decision = ConfirmationDecision(top_intent, float(scores[0]), probabilities)
+        self._decision_cache[cache_key] = decision
+        return decision

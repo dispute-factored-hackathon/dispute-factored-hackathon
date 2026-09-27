@@ -6,9 +6,9 @@ Project documentation is maintained in the repository's [`docs`](../docs/README.
 
 ## Mock customer identification
 
-The default agent is orchestrated with LangGraph. Each customer turn passes through three explicit nodes: `prepare_turn`, `apply_policy`, and `validate_response`. One structured `gpt-4.1-mini` call interprets language, intent, and any caller-stated name. The same result is cached and reused throughout that turn, avoiding separate paid calls for classification and extraction.
+The default agent is orchestrated with LangGraph. The LLM extracts a caller-stated name and may answer an allowed dispute question directly. Whenever the conversation must choose a state-changing branch, the graph uses a local multilingual zero-shot classifier. The graph advances only when the top class is not `other`, meets the configured confidence threshold, and—during name confirmation—also meets the minimum score margin.
 
-The OpenAI model recognizes `provides_name`, `avoids_answer`, `asks_why`, `requests_human`, `confirms`, `denies`, and `other`. Structured output is validated with Pydantic. Extracted names are accepted only when grounded in the customer's original utterance. The complete customer database, customer IDs, match results, authentication state, retry limits, and handoff decisions remain local and deterministic.
+The zero-shot model recognizes `provides_name`, `avoids_answer`, `asks_why`, `requests_human`, and `other`; confirmation uses `confirms`, `denies`, and `other`. Low-confidence and `other` results never change conversation state. OpenAI structured output is validated with Pydantic, and extracted names are accepted only when grounded in the customer's original utterance. The complete customer database, customer IDs, match results, authentication state, retry limits, and handoff decisions remain local and deterministic.
 
 After finding one customer, the agent repeats the canonical database spelling and asks the caller to confirm it. Authentication completes only after confirmation. A correction such as `não, meu nome é José María Pérez López` is extracted, looked up locally, and presented for confirmation in the same turn.
 
@@ -32,8 +32,9 @@ This is deliberately insecure demo identification. It must never protect real ba
 From the repository root:
 
 ```bash
-uv sync
-uv run python -m unittest discover -s tests -v
+uv sync --extra ml
+uv run --extra ml dispute-auth-setup
+uv run --extra ml python -m unittest discover -s tests -v
 ```
 
 Tests use `tests/fixtures/customers.csv`, a fake structured model, and the complete synthetic database when available. They do not call the OpenAI API or consume credits.
@@ -72,8 +73,8 @@ Controls are layered rather than delegated entirely to the model:
 ## Run the interactive demo with the full synthetic dataset
 
 ```bash
-uv sync
-uv run python -m dispute_agent.cli \
+uv sync --extra ml
+uv run --extra ml dispute-auth-demo \
   --customers /Users/silvs/Documents/projetos/visa-dispute-hackathon/data/raw/customers.csv \
   --country-code +55 \
   --language auto
@@ -84,7 +85,7 @@ When `--language auto` is used, `--country-code` localizes the opening without f
 The selected language is also regionalized for the rest of the interaction: Brazil uses Brazilian Portuguese (`pt-BR`), Colombia uses Colombian Spanish (`es-CO`), Mexico uses Mexican Spanish (`es-MX`), Argentina uses Argentine Spanish with voseo (`es-AR`), and English uses American English (`en-US`). When the caller chooses a language different from the country's main language, the agent uses American English, Brazilian Portuguese, or neutral Latin American Spanish (`es-419`) as the corresponding fallback.
 
 ```bash
-uv run python -m dispute_agent.cli \
+uv run --extra ml dispute-auth-demo \
   --customers ../data/raw/customers.csv \
   --country-code +55 \
   --language auto
@@ -101,7 +102,7 @@ For a negative case, enter a name absent from the dataset. To test avoidance cla
 ## Run with the small test fixture
 
 ```bash
-uv run python -m dispute_agent.cli --customers tests/fixtures/customers.csv
+uv run --extra ml dispute-auth-demo --customers tests/fixtures/customers.csv
 ```
 
 Use `--language pt`, `--language es` or `--language en` when the IVR already knows the caller's preference. The default `--language auto` accepts explicit menu choices and uses the structured LLM when language must be inferred from free-form text. Add `--debug` only for development; customer-facing output hides internal IDs and assurance labels.
