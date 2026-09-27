@@ -2,26 +2,31 @@ from pathlib import Path
 import unittest
 
 from dispute_agent.authentication import AuthenticationAgent, AuthStatus, normalize_name
-from dispute_agent.avoidance import AnswerIntent, IntentDecision, JevAvoidanceClassifier, JevError
+from dispute_agent.intent_classifier import (
+    AnswerIntent,
+    ClassificationError,
+    IntentDecision,
+    LocalAvoidanceClassifier,
+)
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "customers.csv"
 
 
-class FakeJevClassifier:
+class FakeIntentClassifier:
     def __init__(self, decisions=None, error=False):
         self.decisions = decisions or {}
         self.error = error
 
     def classify(self, answer):
         if self.error:
-            raise JevError("offline")
+            raise ClassificationError("offline")
         intent, confidence = self.decisions.get(answer, (AnswerIntent.PROVIDES_NAME, 0.99))
         return IntentDecision(intent, confidence, {intent.value: 1.0})
 
 
 def make_agent(**kwargs):
-    classifier = kwargs.pop("classifier", FakeJevClassifier())
+    classifier = kwargs.pop("classifier", FakeIntentClassifier())
     return AuthenticationAgent(FIXTURE, classifier, **kwargs)
 
 
@@ -64,7 +69,7 @@ class AuthenticationAgentTests(unittest.TestCase):
         self.assertIn("need your full name", result.message)
 
     def test_avoidance_is_reprompted_then_handed_off(self):
-        classifier = FakeJevClassifier({
+        classifier = FakeIntentClassifier({
             "Why do you need that?": (AnswerIntent.ASKS_WHY, 0.96),
             "I prefer not to say": (AnswerIntent.AVOIDS_ANSWER, 0.98),
         })
@@ -78,30 +83,37 @@ class AuthenticationAgentTests(unittest.TestCase):
         self.assertEqual(normalize_name(" José  Muñoz "), "jose munoz")
 
     def test_request_for_human_hands_off_immediately(self):
-        classifier = FakeJevClassifier({
+        classifier = FakeIntentClassifier({
             "Give me a human": (AnswerIntent.REQUESTS_HUMAN, 0.99),
         })
         result = make_agent(classifier=classifier).handle_answer("Give me a human")
         self.assertEqual(result.status, AuthStatus.HUMAN_HANDOFF)
 
-    def test_low_confidence_jev_result_reprompts(self):
-        classifier = FakeJevClassifier({
+    def test_low_confidence_classifier_result_reprompts(self):
+        classifier = FakeIntentClassifier({
             "Maybe Ana": (AnswerIntent.PROVIDES_NAME, 0.30),
         })
         result = make_agent(classifier=classifier).handle_answer("Maybe Ana")
         self.assertEqual(result.status, AuthStatus.NEEDS_NAME)
         self.assertIn("not sure", result.message)
 
-    def test_jev_failure_fails_closed_to_human(self):
-        result = make_agent(classifier=FakeJevClassifier(error=True)).handle_answer("Ana Silva")
+    def test_classifier_failure_fails_closed_to_human(self):
+        result = make_agent(classifier=FakeIntentClassifier(error=True)).handle_answer("Ana Silva")
         self.assertEqual(result.status, AuthStatus.HUMAN_HANDOFF)
 
-    def test_jev_payload_uses_typed_choice_labels(self):
-        payload = JevAvoidanceClassifier("test-key").build_payload("I prefer not to answer")
-        question = payload["questions"]["answer_intent"]
-        self.assertEqual(payload["model"], "jev-latest")
-        self.assertEqual(question["type"], "choice")
-        self.assertEqual(set(question["criteria"]), {intent.value for intent in AnswerIntent})
+    def test_local_model_maps_ranked_labels_to_intents(self):
+        class FakePipeline:
+            def __call__(self, text, **kwargs):
+                labels = kwargs["candidate_labels"]
+                preferred = LocalAvoidanceClassifier.LABELS[AnswerIntent.AVOIDS_ANSWER]
+                ranked = [preferred] + [label for label in labels if label != preferred]
+                return {"labels": ranked, "scores": [0.82, 0.08, 0.05, 0.03, 0.02]}
+
+        classifier = LocalAvoidanceClassifier(pipeline_instance=FakePipeline())
+        result = classifier.classify("I prefer not to say")
+        self.assertEqual(result.intent, AnswerIntent.AVOIDS_ANSWER)
+        self.assertEqual(result.confidence, 0.82)
+        self.assertEqual(set(result.probabilities), {intent.value for intent in AnswerIntent})
 
 
 if __name__ == "__main__":

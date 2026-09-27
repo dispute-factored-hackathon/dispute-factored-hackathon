@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from .avoidance import AnswerIntent, AnswerIntentClassifier, JevError
+from .intent_classifier import AnswerIntent, AnswerIntentClassifier, ClassificationError
 
 
 class AuthStatus(StrEnum):
@@ -118,7 +118,7 @@ class AuthenticationAgent:
         else:
             try:
                 decision = self.intent_classifier.classify(answer)
-            except JevError:
+            except ClassificationError:
                 return AuthenticationResult(
                     AuthStatus.HUMAN_HANDOFF,
                     "I could not classify your response safely. I will transfer you to a human for mock assistance.",

@@ -11,6 +11,13 @@ requires-python = ">=3.11"
 [project.scripts]
 dispute-auth-demo = "dispute_agent.cli:main"
 
+[project.optional-dependencies]
+ml = [
+  "sentencepiece>=0.2.0",
+  "torch>=2.4.0",
+  "transformers>=4.41.0",
+]
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 

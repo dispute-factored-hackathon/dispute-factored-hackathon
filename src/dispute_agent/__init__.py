@@ -1,7 +1,7 @@
 """Core components for the call-center dispute agent prototype."""
 
 from .authentication import AuthenticationAgent, AuthenticationResult, AuthStatus
-from .avoidance import AnswerIntent, IntentDecision, JevAvoidanceClassifier
+from .intent_classifier import AnswerIntent, IntentDecision, LocalAvoidanceClassifier
 
 __all__ = [
     "AnswerIntent",
@@ -9,5 +9,5 @@ __all__ = [
     "AuthenticationResult",
     "AuthStatus",
     "IntentDecision",
-    "JevAvoidanceClassifier",
+    "LocalAvoidanceClassifier",
 ]
