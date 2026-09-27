@@ -118,8 +118,12 @@ class FakeWebsocket:
 class FakeConnector:
     def __init__(self, websocket):
         self.websocket = websocket
+        self.url = None
+        self.kwargs = None
 
     def __call__(self, url, **kwargs):
+        self.url = url
+        self.kwargs = kwargs
         return self.websocket
 
 
@@ -161,11 +165,12 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         websocket = FakeWebsocket(events)
         calls = FakeAcceptCalls()
         client = SimpleNamespace(realtime=SimpleNamespace(calls=calls))
+        connector = FakeConnector(websocket)
         gateway = SipRealtimeGateway(
             FIXTURE,
             api_key="sk-test",
             openai_client=client,
-            websocket_connect=FakeConnector(websocket),
+            websocket_connect=connector,
         )
 
         await gateway.accept_and_control("call_unknown", "+573009998877")
@@ -184,6 +189,13 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(session_updates), 1)
         self.assertIn("es-CO", session_updates[0]["session"]["instructions"])
         self.assertNotIn("123456789", json.dumps(websocket.sent))
+        self.assertEqual(
+            connector.kwargs["additional_headers"],
+            {
+                "Authorization": "Bearer sk-test",
+                "OpenAI-Beta": "realtime=v1",
+            },
+        )
 
 
 if __name__ == "__main__":

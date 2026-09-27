@@ -135,7 +135,13 @@ class SipRealtimeGateway:
             from websockets.asyncio.client import connect
 
             connector = connect
-        return connector(url, additional_headers={"Authorization": f"Bearer {self.api_key}"})
+        return connector(
+            url,
+            additional_headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "OpenAI-Beta": "realtime=v1",
+            },
+        )
 
     async def _control_sideband(self, call_id: str, state: VoiceCallState) -> None:
         connection = self._connect(f"wss://api.openai.com/v1/realtime?call_id={call_id}")
