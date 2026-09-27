@@ -5,8 +5,11 @@ from dispute_agent.authentication import AuthenticationAgent, AuthStatus, normal
 from dispute_agent.intent_classifier import (
     AnswerIntent,
     ClassificationError,
+    ConfirmationDecision,
+    ConfirmationIntent,
     IntentDecision,
     LocalAvoidanceClassifier,
+    LocalConfirmationClassifier,
 )
 from dispute_agent.language_classifier import (
     LanguageClassificationError,
@@ -54,6 +57,19 @@ class FakeNameExtractor:
         return self.values.get(text)
 
 
+class FakeConfirmationClassifier:
+    def __init__(self, decisions=None, confidence=0.99):
+        self.decisions = decisions or {}
+        self.confidence = confidence
+
+    def classify(self, answer):
+        intent = self.decisions.get(answer, ConfirmationIntent.OTHER)
+        remaining = (1.0 - self.confidence) / 2
+        probabilities = {candidate.value: remaining for candidate in ConfirmationIntent}
+        probabilities[intent.value] = self.confidence
+        return ConfirmationDecision(intent, self.confidence, probabilities)
+
+
 def make_agent(**kwargs):
     classifier = kwargs.pop("classifier", FakeIntentClassifier())
     return AuthenticationAgent(FIXTURE, classifier, **kwargs)
@@ -71,6 +87,59 @@ class AuthenticationAgentTests(unittest.TestCase):
         self.assertTrue(result.authenticated)
         self.assertEqual(result.customer.customer_id, "CLI-002")
         self.assertEqual(result.assurance_level, "DEMO_ONLY_NAME_MATCH")
+
+    def test_found_name_requires_confirmation_when_classifier_is_enabled(self):
+        classifier = FakeConfirmationClassifier({"sim": ConfirmationIntent.CONFIRMS})
+        agent = make_agent(language="pt", confirmation_classifier=classifier)
+
+        proposed = agent.handle_answer("Ana Silva")
+        confirmed = agent.handle_answer("sim")
+
+        self.assertEqual(proposed.status, AuthStatus.NEEDS_CONFIRMATION)
+        self.assertIn("Ana Silva", proposed.message)
+        self.assertIn("sim ou não", proposed.message)
+        self.assertTrue(confirmed.authenticated)
+        self.assertEqual(confirmed.customer.customer_id, "CLI-002")
+        self.assertEqual(confirmed.assurance_level, "DEMO_ONLY_NAME_MATCH_CONFIRMED")
+
+    def test_denied_name_asks_for_correct_name(self):
+        classifier = FakeConfirmationClassifier({"não": ConfirmationIntent.DENIES})
+        agent = make_agent(language="pt", confirmation_classifier=classifier)
+        agent.handle_answer("Ana Silva")
+
+        result = agent.handle_answer("não")
+
+        self.assertEqual(result.status, AuthStatus.NEEDS_NAME)
+        self.assertIn("nome completo correto", result.message)
+
+    def test_denial_with_correction_looks_up_corrected_name_in_same_turn(self):
+        answer = "não, meu nome é José María Pérez López"
+        # A long correction can confuse zero-shot classification; the explicitly
+        # extracted different name must still take precedence.
+        classifier = FakeConfirmationClassifier({answer: ConfirmationIntent.CONFIRMS})
+        extractor = FakeNameExtractor({answer: "José María Pérez López"})
+        agent = make_agent(
+            language="pt",
+            confirmation_classifier=classifier,
+            name_extractor=extractor,
+        )
+        agent.handle_answer("Ana Silva")
+
+        result = agent.handle_answer(answer)
+
+        self.assertEqual(result.status, AuthStatus.NEEDS_CONFIRMATION)
+        self.assertIn("José María Pérez López", result.message)
+
+    def test_other_confirmation_response_explains_required_answer(self):
+        classifier = FakeConfirmationClassifier({"talvez": ConfirmationIntent.OTHER})
+        agent = make_agent(language="pt", confirmation_classifier=classifier)
+        agent.handle_answer("Ana Silva")
+
+        result = agent.handle_answer("talvez")
+
+        self.assertEqual(result.status, AuthStatus.NEEDS_CONFIRMATION)
+        self.assertIn("Ana Silva", result.message)
+        self.assertIn("sim ou não", result.message)
 
     def test_matching_ignores_case_accents_and_extra_spaces(self):
         result = make_agent().handle_answer("  JOSE   MARIA PEREZ LOPEZ ")
@@ -297,6 +366,20 @@ class AuthenticationAgentTests(unittest.TestCase):
         self.assertEqual(result.intent, AnswerIntent.AVOIDS_ANSWER)
         self.assertEqual(result.confidence, 0.82)
         self.assertEqual(set(result.probabilities), {intent.value for intent in AnswerIntent})
+
+    def test_zero_shot_confirmation_model_maps_ranked_labels(self):
+        class FakePipeline:
+            def __call__(self, text, **kwargs):
+                labels = kwargs["candidate_labels"]
+                preferred = LocalConfirmationClassifier.LABELS[ConfirmationIntent.DENIES]
+                ranked = [preferred] + [label for label in labels if label != preferred]
+                return {"labels": ranked, "scores": [0.88, 0.08, 0.04]}
+
+        base = LocalAvoidanceClassifier(pipeline_instance=FakePipeline())
+        classifier = LocalConfirmationClassifier(base)
+        result = classifier.classify("Não, esse não é meu nome")
+        self.assertEqual(result.intent, ConfirmationIntent.DENIES)
+        self.assertEqual(result.confidence, 0.88)
 
     def test_explicit_multilingual_human_request_does_not_load_model(self):
         classifier = LocalAvoidanceClassifier()

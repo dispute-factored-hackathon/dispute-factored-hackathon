@@ -6,7 +6,7 @@ Project documentation is maintained in the repository's [`docs`](../docs/README.
 
 ## Mock customer identification
 
-The first implemented layer asks for the caller's language and full name. A local language-identification model detects English, Portuguese or Spanish from natural caller speech. A separate local multilingual intent classifier categorizes the response as `provides_name`, `avoids_answer`, `asks_why`, `requests_human` or `other`. When a name is embedded in a sentence—such as `meu nome é Samuel Andrés Díaz Pérez`—a local LLM extracts the name before the normalized database lookup.
+The first implemented layer asks for the caller's language and full name. A local language-identification model detects English, Portuguese or Spanish from natural caller speech. A separate local multilingual intent classifier categorizes the response as `provides_name`, `avoids_answer`, `asks_why`, `requests_human` or `other`. When a name is embedded in a sentence—such as `meu nome é Samuel Andrés Díaz Pérez`—a local LLM extracts the name before the normalized database lookup. After finding one customer, the agent repeats the database's canonical spelling and asks the caller to confirm it. A zero-shot classifier categorizes that next response as `confirms`, `denies` or `other`; authentication is completed only after confirmation.
 
 The default classifier is [`MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli`](https://huggingface.co/MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli), an MIT-licensed multilingual zero-shot model. It runs locally after the model files are downloaded.
 
@@ -18,7 +18,8 @@ Customer lookup is accent-insensitive and case-insensitive. For example, `samuel
 
 Outcomes:
 
-- One match creates a `DEMO_ONLY_NAME_MATCH` session.
+- One match triggers an explicit name-confirmation question. Confirmation creates a `DEMO_ONLY_NAME_MATCH_CONFIRMED` session.
+- A denial asks for the correct name. If the correction is included in the denial, the agent extracts and looks it up in the same turn.
 - No match asks the caller to retry; two failures route to mock human handoff.
 - Multiple matches do not authenticate and require human handoff.
 - An empty or model-classified evasive answer produces an explanation, one retry and then handoff.

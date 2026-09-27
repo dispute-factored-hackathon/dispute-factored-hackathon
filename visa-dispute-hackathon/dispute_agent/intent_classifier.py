@@ -31,6 +31,23 @@ class ClassificationError(RuntimeError):
     """Raised when the local model cannot return a valid classification."""
 
 
+class ConfirmationIntent(StrEnum):
+    CONFIRMS = "confirms"
+    DENIES = "denies"
+    OTHER = "other"
+
+
+@dataclass(frozen=True)
+class ConfirmationDecision:
+    intent: ConfirmationIntent
+    confidence: float
+    probabilities: dict[str, float]
+
+
+class ConfirmationClassifier(Protocol):
+    def classify(self, answer: str) -> ConfirmationDecision: ...
+
+
 class LocalAvoidanceClassifier:
     """Multilingual zero-shot classifier backed by a local Hugging Face model."""
 
@@ -139,3 +156,44 @@ class LocalAvoidanceClassifier:
             confidence=float(scores[0]),
             probabilities=probabilities,
         )
+
+
+class LocalConfirmationClassifier:
+    """Zero-shot classification of a customer's response to a name confirmation."""
+
+    LABELS = {
+        ConfirmationIntent.CONFIRMS: "confirms: yes, sim, sí, correct",
+        ConfirmationIntent.DENIES: "denies: no, não, incorrect, wrong",
+        ConfirmationIntent.OTHER: "uncertain or unrelated: maybe, talvez, quizás, does not answer",
+    }
+
+    def __init__(self, base_classifier: LocalAvoidanceClassifier):
+        self.base_classifier = base_classifier
+
+    def classify(self, answer: str) -> ConfirmationDecision:
+        candidate_labels = list(self.LABELS.values())
+        try:
+            output = self.base_classifier._get_pipeline()(
+                answer,
+                candidate_labels=candidate_labels,
+                hypothesis_template="The customer response {}.",
+                multi_label=False,
+            )
+            labels = output["labels"]
+            scores = output["scores"]
+        except ClassificationError:
+            raise
+        except Exception as exc:
+            raise ClassificationError(f"Local confirmation classification failed: {exc}") from exc
+        if not labels or len(labels) != len(scores):
+            raise ClassificationError("Local model returned invalid confirmation labels or scores")
+        intent_by_label = {label: intent for intent, label in self.LABELS.items()}
+        try:
+            probabilities = {
+                intent_by_label[label].value: float(score)
+                for label, score in zip(labels, scores, strict=True)
+            }
+            top_intent = intent_by_label[labels[0]]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ClassificationError("Local model returned an unknown confirmation label") from exc
+        return ConfirmationDecision(top_intent, float(scores[0]), probabilities)

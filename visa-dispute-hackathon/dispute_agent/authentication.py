@@ -8,7 +8,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from .intent_classifier import AnswerIntent, AnswerIntentClassifier, ClassificationError
+from .intent_classifier import (
+    AnswerIntent,
+    AnswerIntentClassifier,
+    ClassificationError,
+    ConfirmationClassifier,
+    ConfirmationIntent,
+)
 from .language_classifier import LanguageClassificationError, LanguageClassifier
 from .name_extractor import NameExtractionError, NameExtractor
 from .country_context import opening_prompt
@@ -16,6 +22,7 @@ from .country_context import opening_prompt
 
 class AuthStatus(StrEnum):
     NEEDS_NAME = "needs_name"
+    NEEDS_CONFIRMATION = "needs_confirmation"
     AUTHENTICATED = "authenticated"
     NOT_FOUND = "not_found"
     AMBIGUOUS = "ambiguous"
@@ -32,6 +39,9 @@ MESSAGES = {
     "en": {
         "start": "Hello. I can help you start a card dispute. To locate your demo profile, what is your full name? You can also ask why I need it or request a person.",
         "success": "Thanks, {name}. I located your profile for this demo. Next, I can retrieve your recent card transactions so you can choose the one with a problem.",
+        "confirm_name": "I found the customer name {name}. Is that your correct full name? Please answer yes or no.",
+        "name_denied": "Thanks for correcting me. Please say your correct full name, including all surnames.",
+        "confirmation_unclear": "I need to confirm the name before continuing. Is {name} your correct full name? Please answer yes or no.",
         "already": "Your demo profile is already located as {name}.",
         "why": "I use your name only to locate a synthetic demo profile and its test transactions. Name-only identification is not secure enough for real banking. Would you like to continue by giving your full name, or speak with a person?",
         "silence_1": "I did not hear a response. When you are ready, please say or type your full name. You can also ask for a person.",
@@ -50,6 +60,9 @@ MESSAGES = {
     "pt": {
         "start": "Olá. Posso ajudar a iniciar uma contestação de cartão. Para localizar seu perfil de demonstração, qual é o seu nome completo? Você também pode perguntar por que preciso dele ou pedir um atendente.",
         "success": "Obrigado, {name}. Localizei seu perfil nesta demonstração. Agora posso buscar suas transações recentes de cartão para você indicar qual apresenta o problema.",
+        "confirm_name": "Encontrei o nome {name} na base de clientes. Esse é o seu nome completo correto? Responda sim ou não.",
+        "name_denied": "Obrigado por me corrigir. Diga seu nome completo correto, incluindo todos os sobrenomes.",
+        "confirmation_unclear": "Preciso confirmar o nome antes de continuar. {name} é o seu nome completo correto? Responda sim ou não.",
         "already": "Seu perfil de demonstração já foi localizado como {name}.",
         "why": "Uso seu nome somente para localizar um perfil sintético de demonstração e suas transações de teste. Identificação apenas pelo nome não é segura para um banco real. Você prefere informar seu nome completo ou falar com um atendente?",
         "silence_1": "Não ouvi uma resposta. Quando estiver pronto, diga ou digite seu nome completo. Você também pode pedir um atendente.",
@@ -68,6 +81,9 @@ MESSAGES = {
     "es": {
         "start": "Hola. Puedo ayudarte a iniciar una disputa de tarjeta. Para localizar tu perfil de demostración, ¿cuál es tu nombre completo? También puedes preguntar por qué lo necesito o pedir un asesor.",
         "success": "Gracias, {name}. Encontré tu perfil para esta demostración. Ahora puedo buscar tus transacciones recientes de tarjeta para que indiques cuál tiene el problema.",
+        "confirm_name": "Encontré el nombre {name} en la base de clientes. ¿Ese es tu nombre completo correcto? Responde sí o no.",
+        "name_denied": "Gracias por corregirme. Di tu nombre completo correcto, incluidos todos tus apellidos.",
+        "confirmation_unclear": "Necesito confirmar el nombre antes de continuar. ¿{name} es tu nombre completo correcto? Responde sí o no.",
         "already": "Tu perfil de demostración ya fue localizado como {name}.",
         "why": "Uso tu nombre únicamente para localizar un perfil sintético de demostración y sus transacciones de prueba. Identificar a alguien solo por su nombre no es seguro para un banco real. ¿Prefieres dar tu nombre completo o hablar con un asesor?",
         "silence_1": "No escuché una respuesta. Cuando estés listo, di o escribe tu nombre completo. También puedes pedir un asesor.",
@@ -177,6 +193,9 @@ class AuthenticationAgent:
         min_language_confidence: float = 0.65,
         name_extractor: NameExtractor | None = None,
         country_code: str | None = None,
+        confirmation_classifier: ConfirmationClassifier | None = None,
+        min_confirmation_confidence: float = 0.35,
+        min_confirmation_margin: float = 0.05,
     ):
         self.directory = CustomerDirectory(customers_csv)
         self.intent_classifier = intent_classifier
@@ -195,6 +214,10 @@ class AuthenticationAgent:
         self.min_language_confidence = min_language_confidence
         self.name_extractor = name_extractor
         self.country_code = country_code
+        self.confirmation_classifier = confirmation_classifier
+        self.min_confirmation_confidence = min_confirmation_confidence
+        self.min_confirmation_margin = min_confirmation_margin
+        self.pending_customer: CustomerMatch | None = None
         self.last_claimed_name: str | None = None
 
     def _message(self, key: str, **values: str) -> str:
@@ -228,17 +251,66 @@ class AuthenticationAgent:
     def _match_claimed_name(self, claimed_name: str) -> AuthenticationResult | None:
         matches = self.directory.find_by_full_name(claimed_name)
         if len(matches) == 1:
-            self.current_customer = matches[0]
-            return AuthenticationResult(
-                AuthStatus.AUTHENTICATED,
-                self._message("success", name=matches[0].full_name),
-                matches[0],
-                "DEMO_ONLY_NAME_MATCH",
-            )
+            if self.confirmation_classifier is not None:
+                self.pending_customer = matches[0]
+                return AuthenticationResult(
+                    AuthStatus.NEEDS_CONFIRMATION,
+                    self._message("confirm_name", name=matches[0].full_name),
+                )
+            return self._authenticate(matches[0], confirmed=False)
         if len(matches) > 1:
             self.last_claimed_name = claimed_name
             return self._handoff("handoff_ambiguous", "duplicate_name")
         return None
+
+    def _authenticate(self, customer: CustomerMatch, *, confirmed: bool = True) -> AuthenticationResult:
+        self.current_customer = customer
+        self.pending_customer = None
+        return AuthenticationResult(
+            AuthStatus.AUTHENTICATED,
+            self._message("success", name=customer.full_name),
+            customer,
+            "DEMO_ONLY_NAME_MATCH_CONFIRMED" if confirmed else "DEMO_ONLY_NAME_MATCH",
+        )
+
+    def _handle_confirmation(self, answer: str) -> AuthenticationResult:
+        assert self.pending_customer is not None
+        customer = self.pending_customer
+        corrected_name = self._extract_name(answer)
+        if (
+            corrected_name
+            and normalize_name(corrected_name) != normalize_name(customer.full_name)
+        ):
+            self.pending_customer = None
+            corrected_result = self._match_claimed_name(corrected_name)
+            if corrected_result is not None:
+                return corrected_result
+            return self._name_not_found(corrected_name)
+        try:
+            decision = self.confirmation_classifier.classify(answer)
+        except ClassificationError:
+            return self._handoff("handoff_system", "confirmation_model_unavailable")
+        if (
+            decision.confidence < self.min_confirmation_confidence
+            or decision.confidence - sorted(decision.probabilities.values(), reverse=True)[1]
+            < self.min_confirmation_margin
+            or decision.intent is ConfirmationIntent.OTHER
+        ):
+            return AuthenticationResult(
+                AuthStatus.NEEDS_CONFIRMATION,
+                self._message("confirmation_unclear", name=customer.full_name),
+            )
+        if decision.intent is ConfirmationIntent.CONFIRMS:
+            return self._authenticate(customer)
+
+        self.pending_customer = None
+        corrected_name = corrected_name or self._extract_name(answer)
+        if corrected_name:
+            corrected_result = self._match_claimed_name(corrected_name)
+            if corrected_result is not None:
+                return corrected_result
+            return self._name_not_found(corrected_name)
+        return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("name_denied"))
 
     @staticmethod
     def _looks_like_standalone_name(answer: str) -> bool:
@@ -285,6 +357,8 @@ class AuthenticationAgent:
             key = "silence_1" if self.no_response_attempts == 1 else "silence_2"
             return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message(key))
         else:
+            if self.pending_customer is not None:
+                return self._handle_confirmation(answer)
             if self.language == "auto":
                 selected_language = normalize_name(answer)
                 language_markers = {
@@ -314,13 +388,7 @@ class AuthenticationAgent:
                 self.language = language_decision.language
             matches = self.directory.find_by_full_name(answer)
             if len(matches) == 1:
-                self.current_customer = matches[0]
-                return AuthenticationResult(
-                    AuthStatus.AUTHENTICATED,
-                    self._message("success", name=matches[0].full_name),
-                    matches[0],
-                    "DEMO_ONLY_NAME_MATCH",
-                )
+                return self._match_claimed_name(answer)
             if len(matches) > 1:
                 self.last_claimed_name = answer
                 return self._handoff("handoff_ambiguous", "duplicate_name")

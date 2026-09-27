@@ -6,7 +6,7 @@ import argparse
 import os
 
 from .authentication import AuthenticationAgent, AuthStatus
-from .intent_classifier import LocalAvoidanceClassifier
+from .intent_classifier import LocalAvoidanceClassifier, LocalConfirmationClassifier
 from .language_classifier import LocalLanguageClassifier
 from .name_extractor import LocalLLMNameExtractor
 from .country_context import normalize_country_code
@@ -43,16 +43,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
+    intent_classifier = LocalAvoidanceClassifier()
     agent = AuthenticationAgent(
         args.customers,
-        LocalAvoidanceClassifier(),
+        intent_classifier,
         language=args.language,
         language_classifier=LocalLanguageClassifier(),
         name_extractor=LocalLLMNameExtractor(),
         country_code=args.country_code,
+        confirmation_classifier=LocalConfirmationClassifier(intent_classifier),
     )
     result = agent.start()
-    while result.status in {AuthStatus.NEEDS_NAME, AuthStatus.NOT_FOUND}:
+    while result.status in {
+        AuthStatus.NEEDS_NAME,
+        AuthStatus.NEEDS_CONFIRMATION,
+        AuthStatus.NOT_FOUND,
+    }:
         answer = input(f"Agent: {result.message}\nCustomer: ")
         result = agent.handle_answer(answer)
     print(f"Agent: {result.message}")

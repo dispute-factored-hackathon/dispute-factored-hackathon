@@ -1,7 +1,14 @@
 """Core components for the call-center dispute agent prototype."""
 
 from .authentication import AuthenticationAgent, AuthenticationResult, AuthStatus, Language
-from .intent_classifier import AnswerIntent, IntentDecision, LocalAvoidanceClassifier
+from .intent_classifier import (
+    AnswerIntent,
+    ConfirmationDecision,
+    ConfirmationIntent,
+    IntentDecision,
+    LocalAvoidanceClassifier,
+    LocalConfirmationClassifier,
+)
 from .language_classifier import LanguageDecision, LocalLanguageClassifier
 from .name_extractor import LocalLLMNameExtractor, NameExtractionError
 from .country_context import CountryContext, country_context, opening_prompt
@@ -12,6 +19,8 @@ __all__ = [
     "AuthenticationResult",
     "AuthStatus",
     "CountryContext",
+    "ConfirmationDecision",
+    "ConfirmationIntent",
     "IntentDecision",
     "Language",
     "LanguageDecision",
@@ -21,4 +30,5 @@ __all__ = [
     "country_context",
     "opening_prompt",
     "LocalAvoidanceClassifier",
+    "LocalConfirmationClassifier",
 ]
