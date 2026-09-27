@@ -27,25 +27,24 @@ This is deliberately insecure demo identification. It must never protect real ba
 From the repository root:
 
 ```bash
-PYTHONPATH=src python3 -m unittest discover -s tests -v
+uv sync
+uv run python -m unittest discover -s tests -v
 ```
 
-The tests use `tests/fixtures/customers.csv`; the full dataset is not required.
+The lightweight test environment does not install or download the ML model. Tests use `tests/fixtures/customers.csv` and inject a fake classification pipeline.
 
 ## Run the interactive demo with the full synthetic dataset
 
-Create a virtual environment and install the local ML dependencies:
+Install the local ML dependencies with the optional `ml` extra:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install -e '.[ml]'
+uv sync --extra ml
 ```
 
 The first interactive run downloads the model from Hugging Face. Later runs use the local cache. No API key or classification service is required.
 
 ```bash
-PYTHONPATH=src python3 -m dispute_agent.cli \
+uv run --extra ml dispute-auth-demo \
   --customers /Users/silvs/Documents/projetos/visa-dispute-hackathon/data/raw/customers.csv
 ```
 
@@ -60,7 +59,7 @@ For a negative case, enter a name absent from the dataset. To test avoidance cla
 ## Run with the small test fixture
 
 ```bash
-PYTHONPATH=src python3 -m dispute_agent.cli --customers tests/fixtures/customers.csv
+uv run --extra ml dispute-auth-demo --customers tests/fixtures/customers.csv
 ```
 
 Use:
