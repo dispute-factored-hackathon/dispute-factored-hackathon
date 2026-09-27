@@ -113,7 +113,10 @@ class LangGraphAuthenticationAgent:
         return MESSAGES[language][key]
 
     def _prepare_turn(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
-        phase = "name_confirmation" if self.policy.pending_customer else "name_collection"
+        if self.policy.language == "auto":
+            phase = "language_selection"
+        else:
+            phase = "name_confirmation" if self.policy.pending_customer else "name_collection"
         self.interpreter.set_context(phase=phase, locale=self.policy.locale)
         return {"phase": phase}
 
@@ -165,6 +168,8 @@ class LangGraphAuthenticationAgent:
         if "result" in state:
             return "done"
         analysis = state["analysis"]
+        if self.policy.language == "auto":
+            return "policy"
         if analysis.extracted_name:
             return "policy"
         if analysis.direct_answer:
@@ -202,7 +207,11 @@ class LangGraphAuthenticationAgent:
 
     def _apply_policy(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
         analysis = state["analysis"]
-        if analysis.confidence < self.MIN_CLASSIFICATION_CONFIDENCE and not analysis.extracted_name:
+        if (
+            self.policy.language != "auto"
+            and analysis.confidence < self.MIN_CLASSIFICATION_CONFIDENCE
+            and not analysis.extracted_name
+        ):
             return {"result": self.policy.handle_unclear_classification()}
         return {"result": self.policy.apply_llm_classification(analysis)}
 

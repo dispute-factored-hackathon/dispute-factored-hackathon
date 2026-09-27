@@ -202,6 +202,38 @@ class LLMClassificationGraphTests(unittest.TestCase):
         self.assertEqual(agent.language, "pt")
         self.assertIn("nome completo", result.message)
 
+    def test_ambiguous_word_does_not_silently_select_english(self):
+        agent, _ = make_agent(
+            {"banana": analysis(TurnIntent.OTHER, language="unknown", confidence=0.45)},
+            language="auto",
+        )
+
+        result = agent.handle_answer("banana")
+
+        self.assertEqual(agent.language, "auto")
+        self.assertIn("Não reconheci o idioma", result.message)
+        self.assertIn("English, Portuguese, or Spanish", result.message)
+
+    def test_substantive_portuguese_turn_selects_language_and_keeps_the_name(self):
+        utterance = "meu nome é Ana Silva"
+        agent, _ = make_agent(
+            {
+                utterance: analysis(
+                    TurnIntent.PROVIDES_NAME,
+                    language="pt",
+                    confidence=0.98,
+                    name="Ana Silva",
+                )
+            },
+            language="auto",
+        )
+
+        result = agent.handle_answer(utterance)
+
+        self.assertEqual(agent.language, "pt")
+        self.assertEqual(result.status, AuthStatus.NEEDS_CONFIRMATION)
+        self.assertIn("Ana Silva", result.message)
+
 
 if __name__ == "__main__":
     unittest.main()

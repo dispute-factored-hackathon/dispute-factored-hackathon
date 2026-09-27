@@ -375,11 +375,18 @@ class AuthenticationAgent:
             )
 
         if self.language == "auto":
-            if analysis.language not in {"en", "pt", "es"}:
+            supported_language = analysis.language in {"en", "pt", "es"}
+            explicit_selection = analysis.intent is TurnIntent.SELECTS_LANGUAGE
+            substantive_turn = analysis.intent not in {
+                TurnIntent.OTHER,
+                TurnIntent.OUT_OF_SCOPE,
+            }
+            if not supported_language or not (explicit_selection or substantive_turn):
                 return AuthenticationResult(AuthStatus.NEEDS_NAME, AUTO_LANGUAGE_RETRY)
             self.language = analysis.language
             self.locale = locale_for(self.language, self.country_code)
-            return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("start"))
+            if explicit_selection:
+                return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("start"))
 
         if analysis.intent is TurnIntent.REQUESTS_HUMAN:
             return self._handoff("handoff_requested", "customer_requested_human")
