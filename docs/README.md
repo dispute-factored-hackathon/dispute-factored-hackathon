@@ -1,6 +1,6 @@
 # Obsidian vault
 
-Open this `obsidian-vault` directory as a vault in Obsidian.
+Open the repository's `docs` directory as a vault in Obsidian.
 
 Start with [[Home]] and use [[Navigation]] as the topic index. Internal references use Obsidian wikilinks. Mermaid diagrams, Markdown tables and external research links remain embedded in the source notes.
 

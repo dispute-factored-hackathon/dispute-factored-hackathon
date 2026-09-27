@@ -2,7 +2,7 @@
 
 Issuer-side Visa dispute resolution for the call-center channel.
 
-Project documentation is maintained in the [`obsidian-vault`](obsidian-vault/README.md) directory. Open it as an Obsidian vault and start with `Home`.
+Project documentation is maintained in the repository's [`docs`](../docs/README.md) directory. Open that directory as an Obsidian vault and start with `Home`.
 
 ## Mock customer identification
 
