@@ -17,7 +17,7 @@ from .intent_classifier import (
 )
 from .language_classifier import LanguageClassificationError, LanguageClassifier
 from .name_extractor import NameExtractionError, NameExtractor
-from .country_context import opening_prompt
+from .country_context import locale_for, opening_prompt
 
 
 class AuthStatus(StrEnum):
@@ -100,6 +100,57 @@ MESSAGES = {
         "handoff_system": "Tengo un problema temporal para entender las respuestas. Voy a derivarte a un asesor. La transferencia es simulada en esta demostración.",
     },
 }
+
+# The base dictionaries remain the fallback; these overrides make the active
+# call-center wording consistent with the caller's country and chosen language.
+MESSAGES["en-US"] = {**MESSAGES["en"]}
+MESSAGES["pt-BR"] = {**MESSAGES["pt"]}
+MESSAGES["es-419"] = {**MESSAGES["es"]}
+MESSAGES["es-CO"] = {
+    **MESSAGES["es"],
+    "start": "Hola. Puedo ayudarle a iniciar una reclamación sobre su tarjeta. Para localizar su perfil de demostración, ¿cuál es su nombre completo? También puede preguntar por qué lo necesito o pedir un asesor.",
+    "confirm_name": "Encontré el nombre {name} en la base de clientes. ¿Ese es su nombre completo correcto? Responda sí o no.",
+    "name_denied": "Gracias por corregirme. Dígame su nombre completo correcto, incluidos todos sus apellidos.",
+    "confirmation_unclear": "Necesito confirmar el nombre antes de continuar. ¿{name} es su nombre completo correcto? Responda sí o no.",
+    "not_found": "Entendí el nombre como {name}, pero no lo encontré en la base de clientes. Verifique el nombre e inténtelo otra vez con su nombre y todos sus apellidos. También puede pedir un asesor.",
+}
+MESSAGES["es-MX"] = {
+    **MESSAGES["es"],
+    "start": "Hola. Puedo ayudarle a iniciar una aclaración de tarjeta. Para localizar su perfil de demostración, ¿cuál es su nombre completo? También puede preguntar por qué lo necesito o pedir un asesor.",
+    "confirm_name": "Encontré el nombre {name} en la base de clientes. ¿Ese es su nombre completo correcto? Responda sí o no.",
+    "name_denied": "Gracias por corregirme. Dígame su nombre completo correcto, incluidos todos sus apellidos.",
+    "confirmation_unclear": "Necesito confirmar el nombre antes de continuar. ¿{name} es su nombre completo correcto? Responda sí o no.",
+    "not_found": "Entendí el nombre como {name}, pero no lo encontré en la base de clientes. Revise el nombre e inténtelo de nuevo con su nombre y todos sus apellidos. También puede pedir un asesor.",
+}
+MESSAGES["es-AR"] = {
+    **MESSAGES["es"],
+    "start": "Hola. Puedo ayudarte a iniciar un reclamo por una tarjeta. Para encontrar tu perfil de demostración, ¿cuál es tu nombre completo? También podés preguntar por qué lo necesito o pedir hablar con una persona.",
+    "confirm_name": "Encontré el nombre {name} en la base de clientes. ¿Ese es tu nombre completo correcto? Respondé sí o no.",
+    "name_denied": "Gracias por corregirme. Decime tu nombre completo correcto, incluidos todos tus apellidos.",
+    "confirmation_unclear": "Necesito confirmar el nombre antes de continuar. ¿{name} es tu nombre completo correcto? Respondé sí o no.",
+    "not_found": "Entendí el nombre como {name}, pero no lo encontré en la base de clientes. Revisá el nombre e intentá otra vez con tu nombre y todos tus apellidos. También podés pedir hablar con una persona.",
+}
+
+_FORMAL_SPANISH = {
+    "success": "Gracias, {name}. Encontré su perfil para esta demostración. Ahora puedo buscar sus transacciones recientes de tarjeta para que indique cuál tiene el problema.",
+    "already": "Su perfil de demostración ya fue localizado como {name}.",
+    "why": "Uso su nombre únicamente para localizar un perfil sintético de demostración y sus transacciones de prueba. Identificar a alguien solo por su nombre no es seguro para un banco real. ¿Prefiere dar su nombre completo o hablar con un asesor?",
+    "silence_1": "No escuché una respuesta. Cuando esté listo, diga o escriba su nombre completo. También puede pedir un asesor.",
+    "silence_2": "Tal vez haya un problema de audio o conexión. Puede repetir o escribir su nombre completo, o pedir un asesor. No abriré transacciones hasta localizar un perfil.",
+    "refusal": "Está bien. Sin el nombre completo no puedo localizar el perfil de demostración ni mostrar transacciones. Puede darlo ahora o pedir un asesor.",
+    "unclear": "No pude identificar un nombre completo en esa respuesta. Diga su nombre y todos sus apellidos, por ejemplo: 'Mi nombre completo es Ana Silva.' También puede pedir un asesor.",
+    "handoff_requested": "Claro. Voy a conectarle con un asesor. En esta demostración la transferencia es simulada y enviaré un resumen para que no tenga que repetir la interacción.",
+}
+MESSAGES["es-CO"].update(_FORMAL_SPANISH)
+MESSAGES["es-MX"].update(_FORMAL_SPANISH)
+
+MESSAGES["es-AR"].update({
+    "why": "Uso tu nombre solamente para encontrar un perfil sintético de demostración y sus transacciones de prueba. Identificar a alguien solo por su nombre no es seguro para un banco real. ¿Preferís dar tu nombre completo o hablar con una persona?",
+    "silence_1": "No escuché una respuesta. Cuando estés listo, decí o escribí tu nombre completo. También podés pedir hablar con una persona.",
+    "silence_2": "Tal vez haya un problema de audio o conexión. Podés repetir o escribir tu nombre completo, o pedir hablar con una persona. No voy a abrir transacciones hasta encontrar un perfil.",
+    "refusal": "Está bien. Sin el nombre completo no puedo encontrar el perfil de demostración ni mostrar transacciones. Podés darlo ahora o pedir hablar con una persona.",
+    "unclear": "No pude identificar un nombre completo en esa respuesta. Decí tu nombre y todos tus apellidos, por ejemplo: 'Mi nombre completo es Ana Silva.' También podés pedir hablar con una persona.",
+})
 
 AUTO_LANGUAGE_PROMPT = (
     "Choose a language: English, Portuguese, or Spanish. / "
@@ -214,6 +265,7 @@ class AuthenticationAgent:
         self.min_language_confidence = min_language_confidence
         self.name_extractor = name_extractor
         self.country_code = country_code
+        self.locale = locale_for(self.language, country_code) if self.language != "auto" else "en-US"
         self.confirmation_classifier = confirmation_classifier
         self.min_confirmation_confidence = min_confirmation_confidence
         self.min_confirmation_margin = min_confirmation_margin
@@ -221,8 +273,7 @@ class AuthenticationAgent:
         self.last_claimed_name: str | None = None
 
     def _message(self, key: str, **values: str) -> str:
-        locale = "en" if self.language == "auto" else self.language
-        return MESSAGES[locale][key].format(**values)
+        return MESSAGES[self.locale][key].format(**values)
 
     def _handoff(self, key: str, reason: str) -> AuthenticationResult:
         return AuthenticationResult(
@@ -230,6 +281,7 @@ class AuthenticationAgent:
             self._message(key),
             handoff_summary={
                 "language": "en" if self.language == "auto" else self.language,
+                "locale": self.locale,
                 "reason": reason,
                 "name_provided": self.last_claimed_name,
                 "failed_name_attempts": self.failed_attempts,
@@ -373,6 +425,7 @@ class AuthenticationAgent:
                 )
                 if selected is not None:
                     self.language = selected
+                    self.locale = locale_for(selected, self.country_code)
                     return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("start"))
                 if self.language_classifier is None:
                     return AuthenticationResult(AuthStatus.NEEDS_NAME, AUTO_LANGUAGE_RETRY)
@@ -386,6 +439,7 @@ class AuthenticationAgent:
                 ):
                     return AuthenticationResult(AuthStatus.NEEDS_NAME, AUTO_LANGUAGE_RETRY)
                 self.language = language_decision.language
+                self.locale = locale_for(self.language, self.country_code)
             matches = self.directory.find_by_full_name(answer)
             if len(matches) == 1:
                 return self._match_claimed_name(answer)

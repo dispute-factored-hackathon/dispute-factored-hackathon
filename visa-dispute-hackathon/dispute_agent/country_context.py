@@ -73,3 +73,25 @@ def opening_prompt(value: str) -> str:
         f"Hello! This is Bank Factored. We see you are calling from {context.country_en}. "
         "Would you like to continue this call in English, Spanish, or Portuguese?"
     )
+
+
+def locale_for(language: str, country_code: str | None) -> str:
+    """Choose a supported regional locale without overriding the chosen language."""
+
+    if language == "en":
+        return "en-US"
+    if language == "pt":
+        return "pt-BR"
+    if language == "es":
+        regional_spanish = {
+            "+54": "es-AR",
+            "+52": "es-MX",
+            "+57": "es-CO",
+        }
+        if country_code:
+            try:
+                return regional_spanish.get(normalize_country_code(country_code), "es-419")
+            except ValueError:
+                pass
+        return "es-419"
+    return "en-US"

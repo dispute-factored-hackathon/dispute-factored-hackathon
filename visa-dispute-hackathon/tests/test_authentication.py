@@ -304,6 +304,28 @@ class AuthenticationAgentTests(unittest.TestCase):
         self.assertEqual(result.status, AuthStatus.NEEDS_NAME)
         self.assertIn("nombre completo", result.message)
 
+    def test_colombian_spanish_is_used_after_language_selection(self):
+        agent = make_agent(language="auto", country_code="+57")
+        result = agent.handle_answer("Español, por favor")
+        self.assertEqual(agent.locale, "es-CO")
+        self.assertIn("reclamación", result.message)
+        self.assertIn("su nombre completo", result.message)
+
+    def test_mexican_spanish_uses_local_dispute_term(self):
+        agent = make_agent(language="es", country_code="+52")
+        self.assertEqual(agent.locale, "es-MX")
+        self.assertIn("aclaración", agent.start().message)
+
+    def test_argentine_spanish_uses_voseo(self):
+        agent = make_agent(language="es", country_code="+54")
+        self.assertEqual(agent.locale, "es-AR")
+        self.assertIn("podés", agent.start().message)
+
+    def test_english_choice_uses_american_english(self):
+        agent = make_agent(language="auto", country_code="+57")
+        agent.handle_answer("English, please")
+        self.assertEqual(agent.locale, "en-US")
+
     def test_auto_mode_repeats_menu_for_unknown_language_choice(self):
         agent = make_agent(language="auto")
         result = agent.handle_answer("maybe later")

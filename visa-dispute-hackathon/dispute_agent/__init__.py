@@ -11,7 +11,7 @@ from .intent_classifier import (
 )
 from .language_classifier import LanguageDecision, LocalLanguageClassifier
 from .name_extractor import LocalLLMNameExtractor, NameExtractionError
-from .country_context import CountryContext, country_context, opening_prompt
+from .country_context import CountryContext, country_context, locale_for, opening_prompt
 
 __all__ = [
     "AnswerIntent",
@@ -28,6 +28,7 @@ __all__ = [
     "LocalLLMNameExtractor",
     "NameExtractionError",
     "country_context",
+    "locale_for",
     "opening_prompt",
     "LocalAvoidanceClassifier",
     "LocalConfirmationClassifier",

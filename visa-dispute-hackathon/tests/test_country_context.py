@@ -1,6 +1,6 @@
 import unittest
 
-from dispute_agent.country_context import normalize_country_code, opening_prompt
+from dispute_agent.country_context import locale_for, normalize_country_code, opening_prompt
 from dispute_agent.cli import build_parser
 
 
@@ -59,6 +59,18 @@ class CountryContextTests(unittest.TestCase):
     def test_invalid_code_is_rejected(self):
         with self.assertRaises(ValueError):
             normalize_country_code("Brazil")
+
+    def test_regional_locale_mapping(self):
+        self.assertEqual(locale_for("pt", "+55"), "pt-BR")
+        self.assertEqual(locale_for("es", "+57"), "es-CO")
+        self.assertEqual(locale_for("es", "+52"), "es-MX")
+        self.assertEqual(locale_for("es", "+54"), "es-AR")
+        self.assertEqual(locale_for("en", "+1"), "en-US")
+
+    def test_language_choice_uses_default_variant_when_country_differs(self):
+        self.assertEqual(locale_for("en", "+57"), "en-US")
+        self.assertEqual(locale_for("pt", "+52"), "pt-BR")
+        self.assertEqual(locale_for("es", "+55"), "es-419")
 
 
 if __name__ == "__main__":

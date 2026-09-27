@@ -66,6 +66,8 @@ uv run --extra ml python -m dispute_agent.cli \
 
 When `--language auto` is used, `--country-code` localizes the opening without forcing the customer's choice. Spanish-speaking country codes open in Spanish and offer Spanish, English, then Portuguese. Portuguese-speaking codes open in Portuguese and offer Portuguese, English, then Spanish. Other or unknown codes open in English and offer English, Spanish, then Portuguese.
 
+The selected language is also regionalized for the rest of the interaction: Brazil uses Brazilian Portuguese (`pt-BR`), Colombia uses Colombian Spanish (`es-CO`), Mexico uses Mexican Spanish (`es-MX`), Argentina uses Argentine Spanish with voseo (`es-AR`), and English uses American English (`en-US`). When the caller chooses a language different from the country's main language, the agent uses American English, Brazilian Portuguese, or neutral Latin American Spanish (`es-419`) as the corresponding fallback.
+
 ```bash
 uv run --extra ml python -m dispute_agent.cli \
   --customers ../data/raw/customers.csv \
