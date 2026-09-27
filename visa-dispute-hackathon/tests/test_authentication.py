@@ -78,37 +78,37 @@ class AuthenticationAgentTests(unittest.TestCase):
         self.assertEqual(result.customer.customer_id, "CLI-001")
 
     def test_llm_extracts_name_from_natural_portuguese_response(self):
-        answer = "meu nome é lélia gonzales"
-        extractor = FakeNameExtractor({answer: "lélia gonzales"})
+        answer = "meu nome é josé maría pérez lópez"
+        extractor = FakeNameExtractor({answer: "josé maría pérez lópez"})
         result = make_agent(name_extractor=extractor).handle_answer(answer)
         self.assertTrue(result.authenticated)
-        self.assertEqual(result.customer.customer_id, "CLI-005")
+        self.assertEqual(result.customer.customer_id, "CLI-001")
 
     def test_llm_extraction_overrides_other_intent_for_grounded_name(self):
-        answer = "meu nome é lélia gonzales"
+        answer = "meu nome é josé maría pérez lópez"
         classifier = FakeIntentClassifier({
             answer: (AnswerIntent.OTHER, 0.98),
         })
-        extractor = FakeNameExtractor({answer: "lélia gonzales"})
+        extractor = FakeNameExtractor({answer: "josé maría pérez lópez"})
         result = make_agent(
             classifier=classifier,
             name_extractor=extractor,
         ).handle_answer(answer)
         self.assertTrue(result.authenticated)
-        self.assertEqual(result.customer.customer_id, "CLI-005")
+        self.assertEqual(result.customer.customer_id, "CLI-001")
 
     def test_llm_extraction_overrides_low_confidence_intent_for_grounded_name(self):
-        answer = "meu nome é lélia gonzales"
+        answer = "meu nome é josé maría pérez lópez"
         classifier = FakeIntentClassifier({
             answer: (AnswerIntent.PROVIDES_NAME, 0.30),
         })
-        extractor = FakeNameExtractor({answer: "lélia gonzales"})
+        extractor = FakeNameExtractor({answer: "josé maría pérez lópez"})
         result = make_agent(
             classifier=classifier,
             name_extractor=extractor,
         ).handle_answer(answer)
         self.assertTrue(result.authenticated)
-        self.assertEqual(result.customer.customer_id, "CLI-005")
+        self.assertEqual(result.customer.customer_id, "CLI-001")
 
     def test_name_extraction_failure_falls_back_without_authenticating(self):
         result = make_agent(name_extractor=FakeNameExtractor(error=True)).handle_answer(
@@ -296,6 +296,17 @@ class AuthenticationAgentTests(unittest.TestCase):
 
         extractor = LocalLLMNameExtractor(pipeline_instance=FakePipeline())
         self.assertIsNone(extractor.extract("meu nome é Lélia Gonzales"))
+
+    def test_llm_name_extractor_grounds_minor_model_typo_in_original_span(self):
+        class FakePipeline:
+            def __call__(self, prompt, **kwargs):
+                return [{"generated_text": "samuel andrés daz pérez"}]
+
+        extractor = LocalLLMNameExtractor(pipeline_instance=FakePipeline())
+        self.assertEqual(
+            extractor.extract("meu nome é samuel andrés díaz pérez"),
+            "samuel andrés díaz pérez",
+        )
 
     def test_low_confidence_language_detection_repeats_menu(self):
         agent = make_agent(

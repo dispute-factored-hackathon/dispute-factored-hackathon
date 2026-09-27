@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import unicodedata
+from difflib import SequenceMatcher
 from typing import Any, Protocol
 
 
@@ -99,10 +100,43 @@ Name:"""
         if not candidate or candidate.casefold() == "none":
             return None
 
+        grounded_candidate = self._ground_in_original_text(candidate, text)
+        if grounded_candidate is None:
+            return None
+        if len(_normalize(grounded_candidate).split()) < 2:
+            return None
+        return grounded_candidate
+
+    @staticmethod
+    def _ground_in_original_text(candidate: str, text: str) -> str | None:
+        """Return the original utterance span that safely grounds the model output."""
+
         normalized_candidate = _normalize(candidate)
         normalized_text = _normalize(text)
-        if not normalized_candidate or normalized_candidate not in normalized_text:
+        if not normalized_candidate:
             return None
-        if len(normalized_candidate.split()) < 2:
+        if normalized_candidate in normalized_text:
+            # Normalization preserves word order but not character offsets. Rebuild from
+            # original word spans so accents and casing come from the caller, not the LLM.
+            target_words = normalized_candidate.split()
+            original_words = text.split()
+            normalized_words = [_normalize(word) for word in original_words]
+            for index in range(len(original_words) - len(target_words) + 1):
+                if normalized_words[index : index + len(target_words)] == target_words:
+                    return " ".join(original_words[index : index + len(target_words)]).strip(" ,.!?;:\"")
+
+        candidate_words = normalized_candidate.split()
+        if len(candidate_words) < 2:
             return None
-        return candidate
+        original_words = text.split()
+        best_span: str | None = None
+        best_score = 0.0
+        for size in range(max(2, len(candidate_words) - 1), len(candidate_words) + 2):
+            for index in range(len(original_words) - size + 1):
+                span = " ".join(original_words[index : index + size]).strip(" ,.!?;:\"")
+                score = SequenceMatcher(None, normalized_candidate, _normalize(span)).ratio()
+                if score > best_score:
+                    best_score = score
+                    best_span = span
+        # This tolerates a small model spelling error while rejecting unrelated names.
+        return best_span if best_score >= 0.88 else None
