@@ -25,18 +25,24 @@ MESSAGES = {
         "too_long": "That response was too long for me to process safely. Please use a short question or provide only your full name.",
         "out_of_scope": "I can help only with this card-dispute process and general questions about disputes. Please provide your full name, ask a dispute-related question, or request a person.",
         "unsafe_answer": "I cannot safely answer that here. I can help with this card-dispute process or connect you with a person.",
+        "continue_name": "To continue, please give your full name or ask for a person.",
+        "temporary": "I am having trouble interpreting that response. Please say only your full name, or ask for a person.",
     },
     "pt": {
         "blocked": "Posso ajudar somente com esta conversa sobre contestação de cartão. Não posso revelar instruções internas, credenciais ou dados de clientes. Podemos continuar com seu nome completo ou com uma dúvida geral sobre contestações.",
         "too_long": "Essa resposta é longa demais para ser processada com segurança. Faça uma pergunta curta ou informe somente seu nome completo.",
         "out_of_scope": "Posso ajudar apenas com este processo de contestação e com dúvidas gerais sobre contestações. Informe seu nome completo, faça uma pergunta sobre o tema ou peça um atendente.",
         "unsafe_answer": "Não posso responder isso com segurança por aqui. Posso ajudar com esta contestação ou encaminhar você a um atendente.",
+        "continue_name": "Para continuar, informe seu nome completo ou peça um atendente.",
+        "temporary": "Estou com dificuldade para interpretar essa resposta. Diga somente seu nome completo ou peça um atendente.",
     },
     "es": {
         "blocked": "Solo puedo ayudar con esta conversación sobre reclamos de tarjeta. No puedo revelar instrucciones internas, credenciales ni datos de clientes. Podemos continuar con su nombre completo o con una pregunta general sobre reclamos.",
         "too_long": "Esa respuesta es demasiado larga para procesarla de forma segura. Haga una pregunta breve o indique únicamente su nombre completo.",
         "out_of_scope": "Solo puedo ayudar con este proceso y con preguntas generales sobre reclamos de tarjeta. Indique su nombre completo, haga una pregunta sobre el tema o pida un asesor.",
         "unsafe_answer": "No puedo responder eso de forma segura aquí. Puedo ayudar con este reclamo o derivarle a un asesor.",
+        "continue_name": "Para continuar, indique su nombre completo o pida un asesor.",
+        "temporary": "Tengo dificultades para interpretar esa respuesta. Indique solamente su nombre completo o pida un asesor.",
     },
 }
 
@@ -56,9 +62,11 @@ class LangGraphAuthenticationAgent:
     def __init__(self, policy: AuthenticationAgent, interpreter: OpenAITurnInterpreter):
         self.policy = policy
         self.interpreter = interpreter
+        self.llm_failures = 0
         builder = StateGraph(AuthenticationGraphState)
         builder.add_node("prepare_turn", self._prepare_turn)
         builder.add_node("guard_input", self._guard_input)
+        builder.add_node("route_deterministic", self._route_deterministic)
         builder.add_node("interpret_turn", self._interpret_turn)
         builder.add_node("classify_turn", self._classify_turn)
         builder.add_node("answer_question", self._answer_question)
@@ -67,7 +75,8 @@ class LangGraphAuthenticationAgent:
         builder.add_node("validate_response", self._validate_response)
         builder.add_edge(START, "prepare_turn")
         builder.add_edge("prepare_turn", "guard_input")
-        builder.add_conditional_edges("guard_input", lambda s: "done" if "result" in s else "interpret", {"done": "validate_response", "interpret": "interpret_turn"})
+        builder.add_conditional_edges("guard_input", lambda s: "done" if "result" in s else "deterministic", {"done": "validate_response", "deterministic": "route_deterministic"})
+        builder.add_conditional_edges("route_deterministic", lambda s: "policy" if s.get("phase") == "deterministic_policy" else "interpret", {"policy": "apply_policy", "interpret": "interpret_turn"})
         builder.add_conditional_edges("interpret_turn", self._route_analysis, {"done": "validate_response", "question": "answer_question", "classify": "classify_turn", "policy": "apply_policy"})
         builder.add_conditional_edges("classify_turn", lambda s: "done" if "result" in s else "policy", {"done": "validate_response", "policy": "apply_policy"})
         builder.add_edge("answer_question", "validate_response")
@@ -98,9 +107,25 @@ class LangGraphAuthenticationAgent:
 
     def _interpret_turn(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
         try:
-            return {"analysis": self.interpreter.analyze(state.get("answer") or "")}
+            analysis = self.interpreter.analyze(state.get("answer") or "")
+            self.llm_failures = 0
+            return {"analysis": analysis}
         except ClassificationError:
+            self.llm_failures += 1
+            if self.llm_failures == 1:
+                return {"result": AuthenticationResult(self._continuation_status(), self._text("temporary"))}
             return {"result": self.policy._handoff("handoff_system", "llm_interpretation_unavailable_or_limit_reached")}
+
+    def _route_deterministic(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
+        """Keep simple menu, exact-name, and explicit control turns independent of the API."""
+
+        answer = state.get("answer") or ""
+        if self.policy.language == "auto" or self.policy.directory.find_by_full_name(answer):
+            return {"phase": "deterministic_policy"}
+        explicit = self.policy.intent_classifier._explicit_intent(answer) if hasattr(self.policy.intent_classifier, "_explicit_intent") else None
+        if explicit in {AnswerIntent.REQUESTS_HUMAN, AnswerIntent.CANCELS, AnswerIntent.RESTARTS}:
+            return {"phase": "deterministic_policy"}
+        return {}
 
     def _route_analysis(self, state: AuthenticationGraphState) -> str:
         if "result" in state:
@@ -125,6 +150,9 @@ class LangGraphAuthenticationAgent:
         answer = state.get("answer") or ""
         try:
             if self.policy.pending_customer:
+                control_intent = self.policy.classify_global_control(answer)
+                if control_intent is not None:
+                    return {"result": self.policy.apply_global_control(control_intent)}
                 classifier = self.policy.confirmation_classifier
                 if classifier is None:
                     return {"result": self.policy._handoff("handoff_system", "confirmation_model_unavailable")}
@@ -161,6 +189,9 @@ class LangGraphAuthenticationAgent:
             answer = self._text("unsafe_answer")
         if self.policy.pending_customer:
             answer = f"{answer} {self.policy._message('confirmation_unclear', name=self.policy.pending_customer.full_name)}"
+        else:
+            answer = f"{answer} {self._text('continue_name')}"
+        self.policy.questions_answered += 1
         return {"result": AuthenticationResult(self._continuation_status(), answer)}
 
     def _refuse_out_of_scope(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
@@ -180,10 +211,15 @@ class LangGraphAuthenticationAgent:
         return {}
 
     def start(self) -> AuthenticationResult:
-        return self.policy.start()
+        result = self.policy.start()
+        self.policy.last_agent_message = result.message
+        return result
 
     def handle_answer(self, answer: str | None) -> AuthenticationResult:
-        return self.graph.invoke({"answer": answer})["result"]
+        self.policy.last_customer_utterance = (answer or "").strip() or None
+        result = self.graph.invoke({"answer": answer})["result"]
+        self.policy.last_agent_message = result.message
+        return result
 
     @property
     def language(self) -> str:

@@ -22,8 +22,12 @@ Outcomes:
 - Multiple matches do not authenticate and require human handoff.
 - An empty or model-classified evasive answer produces an explanation, one retry and then handoff.
 - A request for a human creates an immediate handoff.
+- Human, cancel, and restart requests are available in every phase, including name confirmation.
+- Handoff notes preserve the current phase, pending name, confirmation state, last customer request, and previous agent question so the customer does not need to repeat the interaction.
 - A low-confidence result asks the caller to clarify.
-- A model loading or inference error fails closed to mock human handoff.
+- A first model loading or inference error offers one deterministic recovery path; a repeated failure closes safely through mock human handoff.
+
+Control commands use word boundaries and command-shaped phrases. Ordinary questions containing words such as `cancelamento`, `agente`, or `parece` are not treated as cancel or handoff instructions.
 
 This is deliberately insecure demo identification. It must never protect real banking data or be described as production authentication.
 

@@ -27,6 +27,7 @@ class AuthStatus(StrEnum):
     NOT_FOUND = "not_found"
     AMBIGUOUS = "ambiguous"
     HUMAN_HANDOFF = "human_handoff"
+    CANCELLED = "cancelled"
 
 
 class Language(StrEnum):
@@ -56,6 +57,8 @@ MESSAGES = {
         "handoff_not_found": "I still could not locate the profile. I will connect you with a person and pass along the attempts already made. The transfer is simulated in this demo.",
         "handoff_unclear": "I am having trouble understanding the response, so I will connect you with a person. The transfer is simulated in this demo.",
         "handoff_system": "I am having a temporary problem understanding responses. I will connect you with a person instead. The transfer is simulated in this demo.",
+        "cancelled": "Okay, I cancelled this demo interaction. No dispute was opened and no transaction was selected.",
+        "restarted": "Okay, we can start again. What is your full name? You can also ask why I need it or request a person.",
     },
     "pt": {
         "start": "Olá. Posso ajudar a iniciar uma contestação de cartão. Para localizar seu perfil de demonstração, qual é o seu nome completo? Você também pode perguntar por que preciso dele ou pedir um atendente.",
@@ -77,6 +80,8 @@ MESSAGES = {
         "handoff_not_found": "Ainda não localizei o perfil. Vou encaminhar você a um atendente e enviar as tentativas já realizadas. A transferência é simulada nesta demonstração.",
         "handoff_unclear": "Estou com dificuldade para entender a resposta. Vou encaminhar você a um atendente. A transferência é simulada nesta demonstração.",
         "handoff_system": "Estou com um problema temporário para entender respostas. Vou encaminhar você a um atendente. A transferência é simulada nesta demonstração.",
+        "cancelled": "Certo, cancelei esta interação de demonstração. Nenhuma contestação foi aberta e nenhuma transação foi selecionada.",
+        "restarted": "Certo, vamos começar de novo. Qual é o seu nome completo? Você também pode perguntar por que preciso dele ou pedir um atendente.",
     },
     "es": {
         "start": "Hola. Puedo ayudarte a iniciar una disputa de tarjeta. Para localizar tu perfil de demostración, ¿cuál es tu nombre completo? También puedes preguntar por qué lo necesito o pedir un asesor.",
@@ -98,6 +103,8 @@ MESSAGES = {
         "handoff_not_found": "Todavía no pude localizar el perfil. Voy a derivarte a un asesor y enviaré los intentos realizados. La transferencia es simulada en esta demostración.",
         "handoff_unclear": "Tengo dificultades para entender la respuesta. Voy a derivarte a un asesor. La transferencia es simulada en esta demostración.",
         "handoff_system": "Tengo un problema temporal para entender las respuestas. Voy a derivarte a un asesor. La transferencia es simulada en esta demostración.",
+        "cancelled": "De acuerdo, cancelé esta interacción de demostración. No se abrió ningún reclamo ni se seleccionó ninguna transacción.",
+        "restarted": "De acuerdo, empecemos de nuevo. ¿Cuál es tu nombre completo? También puedes preguntar por qué lo necesito o pedir un asesor.",
     },
 }
 
@@ -271,6 +278,9 @@ class AuthenticationAgent:
         self.min_confirmation_margin = min_confirmation_margin
         self.pending_customer: CustomerMatch | None = None
         self.last_claimed_name: str | None = None
+        self.last_customer_utterance: str | None = None
+        self.last_agent_message: str | None = None
+        self.questions_answered = 0
 
     def _message(self, key: str, **values: str) -> str:
         return MESSAGES[self.locale][key].format(**values)
@@ -289,8 +299,44 @@ class AuthenticationAgent:
                 "avoidance_attempts": self.avoidance_attempts,
                 "unclear_attempts": self.unclear_attempts,
                 "recommended_next_step": "Human verifies identity with the mocked fallback process before showing transactions.",
+                "phase": "name_confirmation" if self.pending_customer else "name_collection",
+                "matched_candidate": self.pending_customer.full_name if self.pending_customer else None,
+                "confirmation_status": "pending" if self.pending_customer else "not_started",
+                "last_customer_utterance": self.last_customer_utterance,
+                "previous_agent_message": self.last_agent_message,
+                "questions_answered": self.questions_answered,
             },
         )
+
+    def _reset_identification(self) -> AuthenticationResult:
+        self.pending_customer = None
+        self.last_claimed_name = None
+        self.failed_attempts = 0
+        self.avoidance_attempts = 0
+        self.no_response_attempts = 0
+        self.unclear_attempts = 0
+        return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("restarted"))
+
+    def apply_global_control(self, intent: AnswerIntent) -> AuthenticationResult | None:
+        if intent is AnswerIntent.REQUESTS_HUMAN:
+            return self._handoff("handoff_requested", "customer_requested_human")
+        if intent is AnswerIntent.CANCELS:
+            self.pending_customer = None
+            return AuthenticationResult(AuthStatus.CANCELLED, self._message("cancelled"))
+        if intent is AnswerIntent.RESTARTS:
+            return self._reset_identification()
+        return None
+
+    def classify_global_control(self, answer: str) -> AnswerIntent | None:
+        """Return only a control decision that passes the normal confidence gate."""
+
+        decision = self.intent_classifier.classify(answer)
+        if (
+            decision.intent in {AnswerIntent.REQUESTS_HUMAN, AnswerIntent.CANCELS, AnswerIntent.RESTARTS}
+            and decision.confidence >= self.min_intent_confidence
+        ):
+            return decision.intent
+        return None
 
     def _extract_name(self, answer: str) -> str | None:
         if self.name_extractor is None:
@@ -328,6 +374,13 @@ class AuthenticationAgent:
     def _handle_confirmation(self, answer: str) -> AuthenticationResult:
         assert self.pending_customer is not None
         customer = self.pending_customer
+        try:
+            control_intent = self.classify_global_control(answer)
+        except ClassificationError:
+            control_intent = None
+        control = self.apply_global_control(control_intent) if control_intent is not None else None
+        if control is not None:
+            return control
         corrected_name = self._extract_name(answer)
         if (
             corrected_name
@@ -393,6 +446,7 @@ class AuthenticationAgent:
         return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("start"))
 
     def handle_answer(self, answer: str | None) -> AuthenticationResult:
+        self.last_customer_utterance = (answer or "").strip() or None
         if self.current_customer is not None:
             return AuthenticationResult(
                 AuthStatus.AUTHENTICATED,
@@ -466,8 +520,9 @@ class AuthenticationAgent:
                 return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("unclear"))
             intent = decision.intent
 
-        if intent is AnswerIntent.REQUESTS_HUMAN:
-            return self._handoff("handoff_requested", "customer_requested_human")
+        control = self.apply_global_control(intent)
+        if control is not None:
+            return control
 
         if intent is AnswerIntent.ASKS_WHY:
             return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("why"))

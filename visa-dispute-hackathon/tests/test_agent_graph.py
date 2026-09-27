@@ -8,6 +8,7 @@ from dispute_agent.intent_classifier import (
     ConfirmationDecision,
     ConfirmationIntent,
     IntentDecision,
+    LocalAvoidanceClassifier,
 )
 from dispute_agent.openai_interpreter import (
     OpenAIConfirmationClassifier,
@@ -160,7 +161,7 @@ class LangGraphAgentTests(unittest.TestCase):
 
         self.assertEqual(result.status, AuthStatus.NEEDS_CONFIRMATION)
         self.assertIn("José María Pérez López", result.message)
-        self.assertEqual(len(model.calls), 2)
+        self.assertEqual(len(model.calls), 1)
 
     def test_graph_exposes_three_named_processing_nodes(self):
         graph, _ = make_graph({})
@@ -223,6 +224,20 @@ class LangGraphAgentTests(unittest.TestCase):
         self.assertIsNotNone(graph.policy.pending_customer)
         self.assertEqual(classifier.calls, 1)
 
+    def test_low_confidence_control_label_cannot_override_confirmation(self):
+        answer = "sim, pode continuar"
+        graph, _ = make_graph({
+            answer: TurnAnalysis(language="pt", intent=TurnIntent.CONFIRMS, extracted_name=None, direct_answer=None),
+        })
+        graph.handle_answer("Ana Silva")
+        graph.policy.intent_classifier = StaticIntentClassifier(AnswerIntent.RESTARTS, 0.53)
+        graph.policy.confirmation_classifier = StaticConfirmationClassifier(ConfirmationIntent.CONFIRMS, 0.90)
+
+        result = graph.handle_answer(answer)
+
+        self.assertTrue(result.authenticated)
+        self.assertEqual(result.customer.full_name, "Ana Silva")
+
     def test_in_scope_question_is_answered_directly(self):
         question = "qual a diferença entre reembolso e chargeback?"
         answer = "O reembolso é iniciado pelo lojista. O chargeback é um processo formal da bandeira iniciado pelo banco emissor quando aplicável."
@@ -238,7 +253,8 @@ class LangGraphAgentTests(unittest.TestCase):
         result = graph.handle_answer(question)
 
         self.assertEqual(result.status, AuthStatus.NEEDS_NAME)
-        self.assertEqual(result.message, answer)
+        self.assertTrue(result.message.startswith(answer))
+        self.assertIn("Para continuar", result.message)
         self.assertEqual(len(model.calls), 1)
 
     def test_out_of_scope_request_is_refused(self):
@@ -288,15 +304,63 @@ class LangGraphAgentTests(unittest.TestCase):
 
         self.assertIn("Não posso responder isso com segurança", result.message)
 
-    def test_session_call_limit_fails_closed_to_handoff(self):
+    def test_session_call_limit_offers_one_recovery_then_handoff(self):
         graph, model = make_graph({})
         graph.interpreter.max_api_calls = 0
 
-        result = graph.handle_answer("uma resposta nova")
+        first = graph.handle_answer("uma resposta nova")
+        result = graph.handle_answer("outra resposta nova")
 
+        self.assertEqual(first.status, AuthStatus.NEEDS_NAME)
+        self.assertIn("Diga somente seu nome completo", first.message)
         self.assertEqual(result.status, AuthStatus.HUMAN_HANDOFF)
         self.assertEqual(result.handoff_summary["reason"], "llm_interpretation_unavailable_or_limit_reached")
         self.assertEqual(len(model.calls), 0)
+
+    def test_human_request_during_confirmation_never_authenticates(self):
+        request = "quero falar com uma pessoa"
+        graph, _ = make_graph({
+            request: TurnAnalysis(language="pt", intent=TurnIntent.CONFIRMS, extracted_name=None, direct_answer=None),
+        })
+        graph.policy.intent_classifier = LocalAvoidanceClassifier()
+        graph.handle_answer("Ana Silva")
+
+        result = graph.handle_answer(request)
+
+        self.assertEqual(result.status, AuthStatus.HUMAN_HANDOFF)
+        self.assertIsNone(graph.policy.current_customer)
+        self.assertEqual(result.handoff_summary["matched_candidate"], "Ana Silva")
+        self.assertEqual(result.handoff_summary["confirmation_status"], "pending")
+        self.assertEqual(result.handoff_summary["last_customer_utterance"], request)
+
+    def test_human_request_interrupt_is_multilingual(self):
+        scenarios = (
+            ("pt", "quero falar com uma pessoa"),
+            ("es", "quiero hablar con una persona"),
+            ("en", "I want a human representative"),
+        )
+        for language, request in scenarios:
+            with self.subTest(language=language):
+                graph, _ = make_graph({}, language=language)
+                graph.policy.intent_classifier = LocalAvoidanceClassifier()
+                graph.handle_answer("Ana Silva")
+
+                result = graph.handle_answer(request)
+
+                self.assertEqual(result.status, AuthStatus.HUMAN_HANDOFF)
+                self.assertIsNone(graph.policy.current_customer)
+                self.assertEqual(result.handoff_summary["matched_candidate"], "Ana Silva")
+
+    def test_cancel_and_restart_are_available_during_confirmation(self):
+        for utterance, expected in (("cancelar", AuthStatus.CANCELLED), ("começar de novo", AuthStatus.NEEDS_NAME)):
+            with self.subTest(utterance=utterance):
+                graph, _ = make_graph({})
+                graph.policy.intent_classifier = LocalAvoidanceClassifier()
+                graph.handle_answer("Ana Silva")
+                result = graph.handle_answer(utterance)
+                self.assertEqual(result.status, expected)
+                self.assertIsNone(graph.policy.current_customer)
+                self.assertIsNone(graph.policy.pending_customer)
 
 
 if __name__ == "__main__":

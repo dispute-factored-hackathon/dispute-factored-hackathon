@@ -404,7 +404,8 @@ class AuthenticationAgentTests(unittest.TestCase):
                 labels = kwargs["candidate_labels"]
                 preferred = LocalAvoidanceClassifier.LABELS[AnswerIntent.AVOIDS_ANSWER]
                 ranked = [preferred] + [label for label in labels if label != preferred]
-                return {"labels": ranked, "scores": [0.82, 0.08, 0.05, 0.03, 0.02]}
+                remainder = 0.18 / (len(ranked) - 1)
+                return {"labels": ranked, "scores": [0.82] + [remainder] * (len(ranked) - 1)}
 
         classifier = LocalAvoidanceClassifier(pipeline_instance=FakePipeline())
         result = classifier.classify("This response cannot be interpreted directly")
@@ -431,6 +432,16 @@ class AuthenticationAgentTests(unittest.TestCase):
         result = classifier.classify("Quero falar com um atendente")
         self.assertEqual(result.intent, AnswerIntent.REQUESTS_HUMAN)
         self.assertEqual(result.confidence, 0.99)
+
+    def test_legitimate_words_are_not_mistaken_for_control_commands(self):
+        for utterance in (
+            "o que é cancelamento de compra?",
+            "¿qué hace el agente adquirente?",
+            "parece uma fraude",
+            "what is an agentic workflow?",
+        ):
+            with self.subTest(utterance=utterance):
+                self.assertIsNone(LocalAvoidanceClassifier._explicit_intent(utterance))
 
     def test_statistical_language_model_maps_supported_language(self):
         class FakeIdentifier:
