@@ -1,11 +1,65 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python
 __pycache__/
 *.py[cod]
+*$py.class
 .pytest_cache/
-.venv/
-.env
-dist/
-build/
-*.egg-info/
+.ruff_cache/
+.mypy_cache/
 .coverage
-coverage.json
+.coverage.*
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+
+# Logs and local debugging
+*.log
+call-debug.log
+realtime-events.log
+successful-call.log
+
+# Local temporary files
+*.tmp
+*.temp
+*.bak
+*~
+
+# Terraform / AWS local artifacts
+.terraform/
+*.tfstate
+*.tfstate.*
+.aws-sam/
+
+# Coverage / test artifacts
 coverage.xml
+junit.xml
+
+# Python tooling
+.python-version
