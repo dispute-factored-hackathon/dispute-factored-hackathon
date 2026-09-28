@@ -6,7 +6,10 @@ AWS_REGION="${AWS_REGION:-sa-east-1}"
 PROJECT_NAME="${PROJECT_NAME:-dispute-factored}"
 BOOTSTRAP_STACK="${PROJECT_NAME}-bootstrap"
 APPLICATION_STACK="${PROJECT_NAME}-demo"
-IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short HEAD 2>/dev/null || date +%Y%m%d%H%M%S)}"
+GIT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo local)"
+IMAGE_TAG="${IMAGE_TAG:-${GIT_SHA}-$(date +%Y%m%d%H%M%S)}"
+LANGSMITH_SECRET_ID="${LANGSMITH_SECRET_ID:-${PROJECT_NAME}/langsmith}"
+LANGSMITH_PROJECT="${LANGSMITH_PROJECT:-${PROJECT_NAME}}"
 
 stack_output() {
   aws cloudformation describe-stacks \
@@ -27,7 +30,29 @@ if [[ "${ACTION}" == "bootstrap" ]]; then
   echo "Update that secret before deploying the application."
 elif [[ "${ACTION}" == "application" ]]; then
   REPOSITORY_URI="$(stack_output "${BOOTSTRAP_STACK}" RepositoryUri)"
-  SECRET_ARN="$(stack_output "${BOOTSTRAP_STACK}" OpenAISecretArn)"
+  OPENAI_SECRET_ARN="$(stack_output "${BOOTSTRAP_STACK}" OpenAISecretArn)"
+
+  if [[ -z "${REPOSITORY_URI}" || "${REPOSITORY_URI}" == "None" ]]; then
+    echo "Bootstrap stack did not return RepositoryUri." >&2
+    exit 1
+  fi
+
+  if [[ -z "${OPENAI_SECRET_ARN}" || "${OPENAI_SECRET_ARN}" == "None" ]]; then
+    echo "Bootstrap stack did not return OpenAISecretArn." >&2
+    exit 1
+  fi
+
+  LANGSMITH_SECRET_ARN="$(aws secretsmanager describe-secret \
+    --region "${AWS_REGION}" \
+    --secret-id "${LANGSMITH_SECRET_ID}" \
+    --query ARN \
+    --output text)"
+
+  if [[ -z "${LANGSMITH_SECRET_ARN}" || "${LANGSMITH_SECRET_ARN}" == "None" ]]; then
+    echo "Unable to resolve LangSmith secret: ${LANGSMITH_SECRET_ID}" >&2
+    exit 1
+  fi
+
   REGISTRY="${REPOSITORY_URI%%/*}"
   IMAGE_URI="${REPOSITORY_URI}:${IMAGE_TAG}"
   DOCKER_DESKTOP_CONTEXT="$(docker context show)"
@@ -97,7 +122,12 @@ elif [[ "${ACTION}" == "application" ]]; then
     --parameter-overrides \
       ProjectName="${PROJECT_NAME}" \
       ContainerImageUri="${IMAGE_URI}" \
-      OpenAISecretArn="${SECRET_ARN}"
+      OpenAISecretArn="${OPENAI_SECRET_ARN}" \
+      LangSmithSecretArn="${LANGSMITH_SECRET_ARN}" \
+      LangSmithProject="${LANGSMITH_PROJECT}"
+
+  echo "Image: ${IMAGE_URI}"
+  echo "LangSmith project: ${LANGSMITH_PROJECT}"
   echo "Webhook: $(stack_output "${APPLICATION_STACK}" OpenAIWebhookUrl)"
 else
   echo "Usage: $0 bootstrap|application" >&2
