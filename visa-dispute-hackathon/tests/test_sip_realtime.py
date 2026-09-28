@@ -46,6 +46,26 @@ def tool_call_event(name: str, call_id: str, arguments: dict) -> str:
     )
 
 
+def session_updated_event() -> str:
+    return json.dumps(
+        {
+            "type": "session.updated",
+            "session": {
+                "type": "realtime",
+            },
+        }
+    )
+
+
+def dtmf_event(key: str) -> str:
+    return json.dumps(
+        {
+            "type": "input_audio_buffer.dtmf_event_received",
+            "event": key,
+        }
+    )
+
+
 class FakeWebhooks:
     def __init__(self, event=None, error=None):
         self.event = event
@@ -268,8 +288,63 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             "needs_language_confirmation",
         )
 
+    async def test_opening_waits_for_session_updated(self):
+        events = [
+            json.dumps(
+                {
+                    "type": "response.created",
+                    "response": {
+                        "id": "resp_existing",
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "response.done",
+                    "response": {
+                        "id": "resp_existing",
+                        "output": [],
+                    },
+                }
+            ),
+            session_updated_event(),
+        ]
+
+        gateway, websocket, _ = self._gateway(events)
+
+        await gateway.accept_and_control(
+            "call_startup",
+            "+5511999990001",
+        )
+
+        sent_types = [event.get("type") for event in websocket.sent]
+
+        self.assertGreaterEqual(
+            sent_types.count("session.update"),
+            1,
+        )
+        self.assertEqual(
+            sent_types.count("response.create"),
+            1,
+        )
+
+        initial_session_index = sent_types.index("session.update")
+        opening_index = sent_types.index("response.create")
+
+        self.assertLess(
+            initial_session_index,
+            opening_index,
+        )
+
+        opening = next(event for event in websocket.sent if event.get("type") == "response.create")
+        instructions = opening["response"]["instructions"]
+
+        self.assertIn("Izzy", instructions)
+        self.assertIn("Factored Bank", instructions)
+
     async def test_confirm_language_then_phone_authentication_succeeds(self):
         events = [
+            session_updated_event(),
             tool_call_event(
                 "confirm_language",
                 "tool_language",
@@ -349,6 +424,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_phone_failure_falls_back_to_document_and_dtmf_authenticates(self):
         events = [
+            session_updated_event(),
             tool_call_event(
                 "confirm_language",
                 "tool_language",
@@ -359,15 +435,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                 "tool_auth",
                 {"method": "phone"},
             ),
-        ] + [
-            json.dumps(
-                {
-                    "type": "transport.dtmf.received",
-                    "event": key,
-                }
-            )
-            for key in "123456789#"
-        ]
+        ] + [dtmf_event(key) for key in "123456789#"]
 
         gateway, websocket, _ = self._gateway(events)
 
@@ -411,8 +479,9 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             ensure_ascii=False,
         )
 
-        # The model may be told that document authentication is required, but
-        # the document digits themselves must never be sent back to Realtime.
+        # OpenAI SIP emits input_audio_buffer.dtmf_event_received. The model may
+        # be told that document authentication is required, but the document
+        # digits themselves must never be sent back to Realtime.
         self.assertNotIn(
             "123456789",
             outbound,
@@ -420,6 +489,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_language_change_then_direct_document_authentication(self):
         events = [
+            session_updated_event(),
             tool_call_event(
                 "set_language",
                 "tool_language",
@@ -433,15 +503,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                 "tool_auth",
                 {"method": "document"},
             ),
-        ] + [
-            json.dumps(
-                {
-                    "type": "transport.dtmf.received",
-                    "event": key,
-                }
-            )
-            for key in "123456789#"
-        ]
+        ] + [dtmf_event(key) for key in "123456789#"]
 
         gateway, websocket, _ = self._gateway(events)
 

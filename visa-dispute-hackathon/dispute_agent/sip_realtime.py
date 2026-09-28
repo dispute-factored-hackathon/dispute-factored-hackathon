@@ -282,6 +282,7 @@ class SipRealtimeGateway:
 
         for attempt in range(1, 7):
             connect_started = time.monotonic()
+
             try:
                 _telemetry(
                     "realtime.sideband.connect.started",
@@ -297,11 +298,16 @@ class SipRealtimeGateway:
                         "realtime.sideband.connected",
                         call_id=call_id,
                         attempt=attempt,
-                        duration_ms=round((time.monotonic() - connect_started) * 1000, 2),
+                        duration_ms=round(
+                            (time.monotonic() - connect_started) * 1000,
+                            2,
+                        ),
                     )
 
-                    # Replace the temporary silent initialization instructions
-                    # with the real locale/authentication instructions.
+                    # Replace the temporary silent accept-time instructions with
+                    # the real locale/authentication instructions. Do not create
+                    # Izzy's opening response until OpenAI acknowledges this
+                    # session update and any pre-existing response has finished.
                     await websocket.send(
                         json.dumps(
                             {
@@ -321,16 +327,12 @@ class SipRealtimeGateway:
                         language=state.locale.language,
                         locale=state.locale.locale,
                         accent=state.locale.accent,
+                        reason="initialization",
                     )
 
-                    # Only speak after sending the real session configuration.
-                    await self._speak(
-                        websocket,
-                        self._message_for(
-                            state,
-                            "opening",
-                        ),
-                    )
+                    session_ready = False
+                    active_response = False
+                    opening_sent = False
 
                     async for raw_event in websocket:
                         try:
@@ -344,8 +346,8 @@ class SipRealtimeGateway:
                             )
                             continue
 
-                        # Temporary diagnostic logging. This lets us inspect
-                        # the exact DTMF payload returned by OpenAI.
+                        # Temporary diagnostic logging. Keep this while DTMF and
+                        # startup sequencing are being validated in production.
                         LOGGER.info(
                             "REALTIME_EVENT call_id=%s event=%s",
                             call_id,
@@ -355,49 +357,146 @@ class SipRealtimeGateway:
                             ),
                         )
 
-                        event_type = event.get("type")
+                        event_type = str(event.get("type", ""))
 
-                        if event_type == "transport.dtmf.received":
+                        if event_type == "session.updated":
+                            session_ready = True
+
                             _telemetry(
-                                "realtime.dtmf.received",
+                                "realtime.session.updated",
                                 call_id=call_id,
                             )
-                            await self._handle_dtmf(
-                                websocket,
-                                call_id,
-                                str(event.get("event", "")),
+
+                        elif event_type == "response.created":
+                            active_response = True
+
+                            _telemetry(
+                                "realtime.response.created",
+                                call_id=call_id,
+                                response_id=_value(
+                                    event.get("response", {}),
+                                    "id",
+                                    "",
+                                ),
                             )
 
                         elif event_type == "response.done":
+                            active_response = False
+
                             _telemetry(
                                 "realtime.response.done",
                                 call_id=call_id,
+                                response_id=_value(
+                                    event.get("response", {}),
+                                    "id",
+                                    "",
+                                ),
                             )
+
                             await self._handle_tool_calls(
                                 websocket,
                                 call_id,
                                 event,
                             )
 
-                        elif event_type == "session.updated":
+                        elif event_type in {
+                            "input_audio_buffer.dtmf_event_received",
+                            "transport.dtmf.received",
+                        }:
+                            key = str(event.get("event", ""))
+
                             _telemetry(
-                                "realtime.session.updated",
+                                "realtime.dtmf.received",
                                 call_id=call_id,
+                                event_type=event_type,
+                                has_key=bool(key),
+                            )
+
+                            await self._handle_dtmf(
+                                websocket,
+                                call_id,
+                                key,
                             )
 
                         elif event_type == "error":
                             error_data = event.get("error", {})
+                            error_code = str(
+                                _value(
+                                    error_data,
+                                    "code",
+                                    "",
+                                )
+                            )
+                            error_message = str(
+                                _value(
+                                    error_data,
+                                    "message",
+                                    "",
+                                )
+                            )
+
                             _telemetry(
                                 "realtime.error",
                                 call_id=call_id,
-                                error_type=_value(error_data, "type", ""),
-                                error_code=_value(error_data, "code", ""),
-                                error_message=_value(error_data, "message", ""),
+                                error_type=_value(
+                                    error_data,
+                                    "type",
+                                    "",
+                                ),
+                                error_code=error_code,
+                                error_message=error_message,
                             )
+
                             LOGGER.error(
                                 "Realtime API error call_id=%s event=%s",
                                 call_id,
                                 event,
+                            )
+
+                            # This error is caused by response.create racing an
+                            # already-active response. Track the active response
+                            # and wait for response.done instead of creating yet
+                            # another response.
+                            if error_code == "conversation_already_has_active_response":
+                                active_response = True
+
+                            # A missing call/session is terminal. Reconnecting
+                            # cannot recover it and only creates noisy retries.
+                            if (
+                                error_code
+                                in {
+                                    "call_id_not_found",
+                                    "session_not_found",
+                                }
+                                or "No session found for the provided call_id" in error_message
+                            ):
+                                _telemetry(
+                                    "realtime.sideband.terminal",
+                                    call_id=call_id,
+                                    reason=error_code or "session_not_found",
+                                )
+                                return
+
+                        # Send Izzy's opening exactly once, but only after the
+                        # real session configuration is acknowledged and no
+                        # response is currently active.
+                        if session_ready and not active_response and not opening_sent:
+                            opening_sent = True
+
+                            _telemetry(
+                                "realtime.opening.started",
+                                call_id=call_id,
+                                stage=state.stage.value,
+                                language=state.locale.language,
+                                locale=state.locale.locale,
+                            )
+
+                            await self._speak(
+                                websocket,
+                                self._message_for(
+                                    state,
+                                    "opening",
+                                ),
                             )
 
                     LOGGER.info(
@@ -408,14 +507,39 @@ class SipRealtimeGateway:
 
             except Exception as error:
                 last_error = error
+                error_text = str(error)
+
+                # The Realtime call no longer exists. This is expected after a
+                # normal hangup and must not trigger six reconnect attempts.
+                if "404" in error_text and (
+                    "call_id" in error_text.casefold()
+                    or "session" in error_text.casefold()
+                    or "not found" in error_text.casefold()
+                ):
+                    _telemetry(
+                        "realtime.sideband.terminal",
+                        call_id=call_id,
+                        attempt=attempt,
+                        reason="call_or_session_not_found",
+                        error_type=type(error).__name__,
+                    )
+                    LOGGER.info(
+                        "Realtime call/session no longer exists call_id=%s; not reconnecting",
+                        call_id,
+                    )
+                    return
+
                 _telemetry(
                     "realtime.sideband.connect.failed",
                     call_id=call_id,
                     attempt=attempt,
                     max_attempts=6,
-                    duration_ms=round((time.monotonic() - connect_started) * 1000, 2),
+                    duration_ms=round(
+                        (time.monotonic() - connect_started) * 1000,
+                        2,
+                    ),
                     error_type=type(error).__name__,
-                    error=str(error),
+                    error=error_text,
                 )
 
                 LOGGER.warning(
@@ -606,6 +730,7 @@ class SipRealtimeGateway:
             )
 
     async def _speak(self, websocket: Any, message: str) -> None:
+        """Create one server-directed audio response."""
 
         await websocket.send(
             json.dumps(
