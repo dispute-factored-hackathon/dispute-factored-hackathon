@@ -24,6 +24,145 @@ Then open `http://127.0.0.1:8000`. The current page ends after creating the demo
 
 The service returns country and detected-accent data only from the matched synthetic customer record. It does not expose documents or phone numbers to the conversational model. The language branch consumes this deterministic result and owns the conversation state needed to keep or explicitly change language and accent.
 
+## Test a real phone call through SIP and OpenAI Realtime
+
+The SIP adapter in `dispute_agent.sip_realtime` implements the inbound Realtime flow: it verifies the OpenAI webhook signature, deduplicates retries, accepts the call, and opens a private sideband WebSocket. The SIP provider and OpenAI carry the audio; this backend owns authentication state, language changes, DTMF document entry, and tool results.
+
+The caller number is evaluated before the model speaks. A unique exact normalized match in `customers.mobile_phone` authenticates the synthetic customer and loads language, country, and accent from that customer record. If the complete number is not found or is ambiguous, it does not authenticate: only the international calling code is used as a regional language/accent hint, the caller confirms or changes the language, and authentication continues with keypad-only document entry. An explicit language change updates the active Realtime session instructions for the rest of the call.
+
+This remains a synthetic demonstration. A SIP `From` header can be spoofed and is explicitly treated as untrusted metadata by OpenAI. Even when it uniquely matches the synthetic table, `DEMO_ONLY_PHONE_MATCH` is not production-grade authentication.
+
+### 1. Configure and start the backend
+
+Copy `.env.example` to `.env`, then set `OPENAI_API_KEY`, `OPENAI_WEBHOOK_SECRET`, and the customer table. For a safe first call, use the fixture:
+
+```dotenv
+CUSTOMERS_CSV=tests/fixtures/customers.csv
+OPENAI_REALTIME_MODEL=gpt-realtime-2.1
+OPENAI_REALTIME_VOICE=marin
+PORT=8001
+```
+
+Install and start the service:
+
+```bash
+uv sync --group dev
+uv run dispute-sip-server
+```
+
+Check `http://127.0.0.1:8001/health`. A local HTTPS tunnel remains useful for short development sessions. The AWS deployment below replaces the tunnel with a stable HTTPS Lambda Function URL.
+
+### Cost-conscious AWS deployment
+
+The hackathon deployment intentionally avoids always-on or redundant services. It does **not** create App Runner, ECS/Fargate, EC2, an Application Load Balancer, API Gateway, a NAT Gateway, Route 53, ACM, DynamoDB, or a VPC.
+
+The components are:
+
+- **Lambda Function URL:** free HTTPS endpoint layer; standard Lambda invocation and duration charges still apply. It receives the signed OpenAI webhook.
+- **Lambda ingress invocation:** verifies the signature and accepts the SIP call immediately.
+- **Lambda asynchronous worker invocation:** opens the private Realtime sideband WebSocket for the duration of the call. It stops at 14 minutes, before Lambda's 15-minute limit.
+- **ECR:** stores the immutable Docker image and retains only the three newest images.
+- **One Secrets Manager secret:** stores both `OPENAI_API_KEY` and `OPENAI_WEBHOOK_SECRET`. It is fetched once per Lambda execution environment rather than on every message or keypad event.
+- **CloudWatch Logs:** keeps JSON logs for three days. The application never logs document digits.
+- **Concurrency:** uses the account's unreserved Lambda capacity. The demo account currently has a total concurrency quota of 10, so the stack does not reserve concurrency; AWS requires all 10 executions to remain unreserved at that quota. Use account quotas and OpenAI-side limits as the cost and abuse boundary until the Lambda quota is increased.
+
+The call media does not pass through AWS:
+
+```text
+Caller → SIP provider → OpenAI Realtime
+                           │
+                           ├─ signed webhook → Lambda Function URL
+                           └─ private sideband ↔ Lambda call worker
+```
+
+This arrangement has no continuously running compute. Lambda is billed only while the short webhook and active call worker execute. The Function URL has no separate endpoint charge. One Secrets Manager secret currently has a small recurring charge, and ECR and CloudWatch are usage-based. OpenAI Realtime and the SIP provider are billed separately.
+
+Prerequisites are an AWS account, an AWS CLI profile with deployment permissions, and Docker Buildx. From `visa-dispute-hackathon/`, create the persistent ECR repository and secret:
+
+```bash
+AWS_REGION=sa-east-1 ./infra/aws/deploy.sh bootstrap
+```
+
+Open **AWS Secrets Manager → dispute-factored/openai-realtime** and replace `OPENAI_API_KEY`; the webhook value can remain `replace-me` until the endpoint exists:
+
+```json
+{
+  "OPENAI_API_KEY": "your-project-key",
+  "OPENAI_WEBHOOK_SECRET": "replace-me"
+}
+```
+
+Do not commit this value or pass it as a CloudFormation parameter. Then build the Lambda container for Linux, push it to ECR, and deploy the function:
+
+```bash
+AWS_REGION=sa-east-1 ./infra/aws/deploy.sh application
+```
+
+The command prints an `https://...lambda-url.../webhooks/openai` address. Use that exact value to create the OpenAI project webhook, copy its new signing secret, and replace `OPENAI_WEBHOOK_SECRET` in the same AWS secret **before placing the first call**. No Lambda environment has started yet, so the first call reads the correct value. After a later secret rotation, deploy a new image tag to replace any warm environments.
+
+The infrastructure definitions are split because ECR must exist before Docker can push the image:
+
+- `infra/aws/bootstrap.yaml`: ECR and the retained secret.
+- `infra/aws/application.yaml`: IAM with least-privilege policies, Lambda, Function URL, bounded asynchronous invocation, and log retention.
+- `Dockerfile.aws`: reproducible Python 3.12 Lambda image using the locked `uv` dependencies. BuildKit adds only `data/raw/customers.csv` from the supplied 150,000-row synthetic dataset; it does not upload the other raw tables to Docker.
+- `infra/aws/deploy.sh`: repeatable bootstrap/build/deploy commands.
+
+### Automated deployments from GitHub
+
+`.github/workflows/deploy-aws.yml` validates and deploys the same application flow when:
+
+- a pull request is actually merged into `main` (closing without merging is ignored);
+- a GitHub release is published; or
+- a maintainer starts the workflow manually.
+
+The workflow uses GitHub OIDC to obtain short-lived AWS credentials. It does not store an AWS access key. The one-time role is defined in `infra/aws/github-actions-role.yaml`; deploy that stack and save its `RoleArn` as the repository Actions secret `AWS_DEPLOY_ROLE_ARN`. Its trust policy accepts only this repository's merged-PR event, `main`, and release tags. Manual deployments must be started from `main`.
+
+The complete synthetic customer table is intentionally not committed. On GitHub-hosted runners, the deploy script extracts `customers.csv` from the newest immutable image already present in the project's ECR repository, then embeds it in the new image. Consequently, the first deployment must still be performed locally with `CUSTOMERS_BUILD_CONTEXT` pointing to a directory containing `customers.csv`. Subsequent automated deployments need no additional data service or paid storage.
+
+Each deployment uses the full Git commit SHA as its immutable image tag, runs Ruff and the complete unit-test suite, validates both CloudFormation templates, updates the application stack, and verifies that an unsigned webhook request is rejected with `invalid_webhook_signature`.
+
+To remove active compute and the public endpoint after the demonstration while deliberately retaining the image repository and secret:
+
+```bash
+aws cloudformation delete-stack --stack-name dispute-factored-demo --region sa-east-1
+```
+
+The retained bootstrap resources continue to incur their small storage charges until explicitly emptied/deleted. CloudFormation will not silently destroy the secret.
+
+### Configure the OpenAI project
+
+In the OpenAI platform, open **Settings → Project → Webhooks**. Create a webhook pointing to:
+
+```text
+https://YOUR-LAMBDA-FUNCTION-URL/webhooks/openai
+```
+
+Subscribe to `realtime.call.incoming` and copy its signing secret into the configured secret. Restart the local backend when using `.env`; for AWS, update Secrets Manager before the first call. Use the project ID shown under **Project → General** in the next step; it begins with `proj_`.
+
+### Connect a phone number
+
+In a SIP trunk provider such as Twilio, create an Elastic SIP Trunk, enable secure trunking, associate a telephone number, and set its Origination SIP URI to:
+
+```text
+sip:YOUR_OPENAI_PROJECT_ID@sip.api.openai.com;transport=tls
+```
+
+The provider must send TLS signaling and SRTP media. Then call the number associated with the trunk. A trial provider account may require the calling number to be verified first.
+
+With the local `tests/fixtures/customers.csv`, a real caller number normally will not match the fake phone values. The AWS image instead contains the complete supplied synthetic `customers.csv`; it still normally will not contain the caller's real number. The expected fallback test is therefore:
+
+1. the agent infers a regional opening from the real calling code and asks for English, Spanish, or Portuguese;
+2. say the preferred language;
+3. enter `123456789#` on the keypad to match the fake Colombian customer;
+4. use `*` to clear mistyped digits;
+5. try an unknown number three times to verify simulated human handoff.
+
+The document digits are accumulated and checked only in backend memory. They are not placed in model prompts, tool outputs, responses, or application logs. Automated webhook, signature-failure, duplicate-delivery, locale, DTMF, success, and handoff scenarios run without placing a real call:
+
+```bash
+uv run python -m unittest tests.test_sip_realtime tests.test_voice_call -v
+```
+
 ## Mock customer identification
 
 The default agent is orchestrated with LangGraph. A single OpenAI Structured Output call receives the raw customer turn and returns a Pydantic-generated JSON Schema containing language, one closed intent class, confidence, prompt-abuse class, abuse confidence, grounded name extraction, and an optional scoped answer. No tokenization, label-vector mapping, regex intent preprocessing, or local zero-shot inference is required.
@@ -128,10 +267,10 @@ The graph can directly answer short questions about the agent's identity, role, 
 
 Controls are layered rather than delegated entirely to the model:
 
-- a reusable ingress decorator applies prompt-abuse screening to every non-empty, size-valid customer message before graph execution;
+- every non-empty, size-valid customer message enters the same compiled graph and reaches its explicit abuse-screening node before any business-policy node;
 - customer text is explicitly treated as untrusted data;
 - the structured schema classifies prompt manipulation, hidden-instruction extraction, credential extraction, and unrelated-data access attempts in the same bounded LLM call;
-- abuse blocking requires both a high-confidence abuse class and a minimum probability margin, reducing false positives on legitimate banking questions;
+- abuse blocking requires the `prompt_abuse` class and an abuse-confidence score of at least 0.80, reducing false positives on legitimate banking questions;
 - inputs are limited to 500 characters and sessions default to 20 uncached LLM calls;
 - repeated turns use a phase-and-locale-aware cache;
 - unrelated requests receive a fixed scope response;
@@ -139,7 +278,7 @@ Controls are layered rather than delegated entirely to the model:
 - the model has no customer-database or tool access; and
 - API errors or exhausted limits fail closed to the existing human-handoff path.
 
-LangChain provides `@before_agent` and `@before_model` middleware decorators for agents created with its high-level `create_agent` API. This prototype uses a custom LangGraph `StateGraph`. The public `handle_answer` decorator identifies the shared ingress, while the explicit `screen_abuse` graph node performs the authoritative check exactly once and also protects direct compiled-graph invocation. No caller-provided flag can skip this node. This keeps the safety boundary at every customer-message ingress rather than relying on individual business branches.
+LangChain provides `@before_agent` and `@before_model` middleware decorators for agents created with its high-level `create_agent` API. This prototype uses a custom LangGraph `StateGraph`, so the explicit `screen_abuse` graph node performs the authoritative check exactly once and also protects direct compiled-graph invocation. No caller-provided flag can skip this node. This keeps the safety boundary inside the graph rather than relying on individual business branches or a no-op facade decorator.
 
 The current CLI creates one agent object for one caller. Cross-turn counters, the pending customer, model-call budget, and caches live in that object rather than checkpointed LangGraph state. Do not share one instance between callers or present this build as restart-resumable. Before deploying a web, voice, or concurrent service, move authoritative session data into serializable graph state or a dedicated session store, add an appropriate checkpointer, and use stable opaque thread identifiers.
 

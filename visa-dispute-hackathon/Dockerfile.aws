@@ -1,0 +1,20 @@
+FROM public.ecr.aws/lambda/python:3.12 AS build
+
+COPY --from=ghcr.io/astral-sh/uv:0.12.19 /uv /bin/uv
+WORKDIR /build
+COPY pyproject.toml uv.lock README.md ./
+RUN uv export --frozen --no-dev --no-emit-project --output-file requirements.txt \
+    && uv pip install --target "${LAMBDA_TASK_ROOT}" --requirements requirements.txt
+
+FROM public.ecr.aws/lambda/python:3.12
+COPY --from=build ${LAMBDA_TASK_ROOT} ${LAMBDA_TASK_ROOT}
+COPY dispute_agent ${LAMBDA_TASK_ROOT}/dispute_agent
+COPY --from=synthetic_data customers.csv ${LAMBDA_TASK_ROOT}/demo_data/customers.csv
+
+ENV CUSTOMERS_CSV=/var/task/demo_data/customers.csv \
+    OPENAI_REALTIME_MODEL=gpt-realtime-2.1 \
+    OPENAI_REALTIME_VOICE=marin \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+CMD ["dispute_agent.aws_lambda.lambda_handler"]

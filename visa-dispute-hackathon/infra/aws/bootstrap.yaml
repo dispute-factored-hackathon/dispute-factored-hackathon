@@ -1,0 +1,72 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Minimal persistent resources for the on-demand SIP demonstration.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: dispute-factored
+    AllowedPattern: "[a-z0-9-]+"
+  ExistingOpenAISecretArn:
+    Type: String
+    Default: ""
+    Description: Optional ARN of an existing secret to preserve across stack recovery.
+  ExistingRepositoryUri:
+    Type: String
+    Default: ""
+    Description: Optional URI of an existing ECR repository to preserve across stack recovery.
+
+Conditions:
+  CreateOpenAISecret: !Equals [!Ref ExistingOpenAISecretArn, ""]
+  CreateContainerRepository: !Equals [!Ref ExistingRepositoryUri, ""]
+
+Resources:
+  ContainerRepository:
+    Type: AWS::ECR::Repository
+    Condition: CreateContainerRepository
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RepositoryName: !Sub "${ProjectName}-sip"
+      EmptyOnDelete: false
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: IMMUTABLE
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [{
+              "rulePriority": 1,
+              "description": "Keep only the three newest images",
+              "selection": {
+                "tagStatus": "tagged",
+                "tagPatternList": ["*"],
+                "countType": "imageCountMoreThan",
+                "countNumber": 3
+              },
+              "action": {"type": "expire"}
+            }]
+
+  OpenAISecret:
+    Type: AWS::SecretsManager::Secret
+    Condition: CreateOpenAISecret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Name: !Sub "${ProjectName}/openai-realtime"
+      Description: OpenAI project key and webhook signing secret for the SIP demo.
+      SecretString: >-
+        {"OPENAI_API_KEY":"replace-me","OPENAI_WEBHOOK_SECRET":"replace-me"}
+
+Outputs:
+  RepositoryUri:
+    Value: !If
+      - CreateContainerRepository
+      - !GetAtt ContainerRepository.RepositoryUri
+      - !Ref ExistingRepositoryUri
+  OpenAISecretArn:
+    Value: !If
+      - CreateOpenAISecret
+      - !Ref OpenAISecret
+      - !Ref ExistingOpenAISecretArn

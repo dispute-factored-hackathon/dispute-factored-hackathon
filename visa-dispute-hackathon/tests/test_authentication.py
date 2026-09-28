@@ -30,6 +30,10 @@ class AuthenticationPolicyTests(unittest.TestCase):
         matches = CustomerDirectory(FIXTURE).find_by_full_name("Alex Santos")
         self.assertEqual(len(matches), 2)
 
+    def test_inactive_customer_is_not_searchable_by_name(self):
+        matches = CustomerDirectory(FIXTURE).find_by_full_name("Inactive Person")
+        self.assertEqual(matches, [])
+
     def test_missing_columns_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "customers.csv"

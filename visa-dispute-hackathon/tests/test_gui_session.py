@@ -1,4 +1,5 @@
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -88,6 +89,16 @@ class GuiDemoLoginTests(unittest.TestCase):
             self.service.search("x" * 121)
         with self.assertRaises(ValueError):
             self.service.search(limit=51)
+
+    def test_concurrent_search_tokens_remain_selectable(self):
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            option_batches = list(
+                executor.map(lambda _: self.service.search("ana.silva@"), range(40))
+            )
+        tokens = [batch[0].selection_token for batch in option_batches]
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            contexts = list(executor.map(self.service.select, tokens))
+        self.assertEqual(len({context.session_id for context in contexts}), len(tokens))
 
 
 if __name__ == "__main__":

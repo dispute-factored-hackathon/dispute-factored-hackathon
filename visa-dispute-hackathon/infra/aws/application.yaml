@@ -1,0 +1,123 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: On-demand Lambda webhook and Realtime SIP sideband worker.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: dispute-factored
+    AllowedPattern: "[a-z0-9-]+"
+  EnvironmentName:
+    Type: String
+    Default: demo
+    AllowedPattern: "[a-z0-9-]+"
+  ContainerImageUri:
+    Type: String
+    Description: Immutable ECR image URI including its tag.
+  OpenAISecretArn:
+    Type: String
+    Description: ARN of the JSON secret created by bootstrap.yaml.
+  LogRetentionDays:
+    Type: Number
+    Default: 3
+    AllowedValues: [1, 3, 5, 7, 14, 30]
+
+Resources:
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ReadOnlyOpenAISecret
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref OpenAISecretArn
+        - PolicyName: InvokeCallWorker
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-${EnvironmentName}-sip
+
+  SipFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${EnvironmentName}-sip"
+      Description: Verifies OpenAI webhooks and controls one Realtime SIP call per worker.
+      PackageType: Image
+      Code:
+        ImageUri: !Ref ContainerImageUri
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Architectures: [x86_64]
+      MemorySize: 512
+      Timeout: 900
+      Environment:
+        Variables:
+          OPENAI_SECRET_ARN: !Ref OpenAISecretArn
+          CUSTOMERS_CSV: /var/task/demo_data/customers.csv
+          OPENAI_REALTIME_MODEL: gpt-realtime-2.1
+          OPENAI_REALTIME_VOICE: marin
+      LoggingConfig:
+        LogFormat: JSON
+        ApplicationLogLevel: INFO
+        SystemLogLevel: WARN
+
+  SipFunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt SipFunction.Arn
+      AuthType: NONE
+      InvokeMode: BUFFERED
+
+  PublicFunctionUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SipFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+
+  PublicFunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SipFunction
+      Action: lambda:InvokeFunction
+      Principal: "*"
+      InvokedViaFunctionUrl: true
+
+  WorkerRetryPolicy:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: !Ref SipFunction
+      Qualifier: $LATEST
+      MaximumEventAgeInSeconds: 60
+      MaximumRetryAttempts: 0
+
+  SipLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ProjectName}-${EnvironmentName}-sip"
+      RetentionInDays: !Ref LogRetentionDays
+
+Outputs:
+  FunctionUrl:
+    Value: !GetAtt SipFunctionUrl.FunctionUrl
+  OpenAIWebhookUrl:
+    Value: !Sub "${SipFunctionUrl.FunctionUrl}webhooks/openai"
+  FunctionName:
+    Value: !Ref SipFunction
+  MaximumCallDurationMinutes:
+    Value: "14"
+    Description: Worker closes the call before Lambda's hard 15-minute timeout.

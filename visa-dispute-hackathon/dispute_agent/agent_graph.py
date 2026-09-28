@@ -16,7 +16,6 @@ from .openai_interpreter import (
     TurnAnalysis,
     TurnIntent,
 )
-from .safety import screen_prompt_abuse
 
 
 class AuthenticationGraphState(TypedDict, total=False):
@@ -169,6 +168,14 @@ class LangGraphAuthenticationAgent:
         if "result" in state:
             return "done"
         analysis = state["analysis"]
+        if analysis.confidence < self.MIN_CLASSIFICATION_CONFIDENCE:
+            return "policy"
+        if analysis.intent in {
+            TurnIntent.REQUESTS_HUMAN,
+            TurnIntent.CANCELS,
+            TurnIntent.RESTARTS,
+        }:
+            return "policy"
         if self.policy.language == "auto":
             return "policy"
         if analysis.extracted_name:
@@ -208,11 +215,7 @@ class LangGraphAuthenticationAgent:
 
     def _apply_policy(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
         analysis = state["analysis"]
-        if (
-            self.policy.language != "auto"
-            and analysis.confidence < self.MIN_CLASSIFICATION_CONFIDENCE
-            and not analysis.extracted_name
-        ):
+        if analysis.confidence < self.MIN_CLASSIFICATION_CONFIDENCE:
             return {"result": self.policy.handle_unclear_classification()}
         return {"result": self.policy.apply_llm_classification(analysis)}
 
@@ -246,7 +249,6 @@ class LangGraphAuthenticationAgent:
         self.policy.last_agent_message = result.message
         return result
 
-    @screen_prompt_abuse
     @traceable(name="handle-customer-turn", run_type="chain")
     def handle_answer(self, answer: str | None) -> AuthenticationResult:
         self.policy.last_customer_utterance = (answer or "").strip() or None

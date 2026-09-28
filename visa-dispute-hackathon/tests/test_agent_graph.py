@@ -122,6 +122,58 @@ class LLMClassificationGraphTests(unittest.TestCase):
                 agent, _ = make_agent({utterance: analysis(intent)})
                 self.assertEqual(agent.handle_answer(utterance).status, expected)
 
+    def test_global_controls_take_priority_over_inconsistent_direct_answer(self):
+        cases = (
+            ("humano", TurnIntent.REQUESTS_HUMAN, AuthStatus.HUMAN_HANDOFF),
+            ("cancelar", TurnIntent.CANCELS, AuthStatus.CANCELLED),
+            ("recomeçar", TurnIntent.RESTARTS, AuthStatus.NEEDS_NAME),
+        )
+        for utterance, intent, expected in cases:
+            with self.subTest(utterance=utterance):
+                agent, _ = make_agent(
+                    {utterance: analysis(intent, answer="This field must not override the intent.")}
+                )
+                result = agent.handle_answer(utterance)
+                self.assertEqual(result.status, expected)
+                self.assertNotIn("This field must not override", result.message)
+
+    def test_global_controls_work_before_auto_language_selection(self):
+        cases = (
+            ("human", TurnIntent.REQUESTS_HUMAN, AuthStatus.HUMAN_HANDOFF),
+            ("cancel", TurnIntent.CANCELS, AuthStatus.CANCELLED),
+            ("restart", TurnIntent.RESTARTS, AuthStatus.NEEDS_NAME),
+        )
+        for utterance, intent, expected in cases:
+            with self.subTest(utterance=utterance):
+                agent, _ = make_agent(
+                    {utterance: analysis(intent, language="unknown")},
+                    language="auto",
+                )
+                result = agent.handle_answer(utterance)
+                self.assertEqual(result.status, expected)
+                self.assertNotIn("English, Portuguese, or Spanish", result.message)
+
+    def test_restart_after_authentication_clears_identity(self):
+        agent, _ = make_agent(
+            {
+                "Ana Silva": analysis(TurnIntent.PROVIDES_NAME, name="Ana Silva"),
+                "sim": analysis(TurnIntent.CONFIRMS),
+                "recomeçar": analysis(TurnIntent.RESTARTS),
+                "José María Pérez López": analysis(
+                    TurnIntent.PROVIDES_NAME, name="José María Pérez López"
+                ),
+            }
+        )
+        agent.handle_answer("Ana Silva")
+        self.assertTrue(agent.handle_answer("sim").authenticated)
+        restarted = agent.handle_answer("recomeçar")
+        self.assertEqual(restarted.status, AuthStatus.NEEDS_NAME)
+        self.assertIsNone(agent.policy.current_customer)
+
+        next_customer = agent.handle_answer("José María Pérez López")
+        self.assertEqual(next_customer.status, AuthStatus.NEEDS_CONFIRMATION)
+        self.assertIn("José María Pérez López", next_customer.message)
+
     def test_avoidance_reprompts_then_hands_off(self):
         agent, _ = make_agent(
             {
@@ -136,6 +188,26 @@ class LLMClassificationGraphTests(unittest.TestCase):
         agent, _ = make_agent({"talvez": analysis(TurnIntent.CONFIRMS, confidence=0.40)})
         result = agent.handle_answer("talvez")
         self.assertEqual(result.status, AuthStatus.NEEDS_NAME)
+        self.assertIsNone(agent.policy.current_customer)
+
+    def test_low_confidence_grounded_name_does_not_advance(self):
+        agent, _ = make_agent(
+            {"Ana Silva": analysis(TurnIntent.PROVIDES_NAME, confidence=0.10, name="Ana Silva")}
+        )
+        result = agent.handle_answer("Ana Silva")
+        self.assertEqual(result.status, AuthStatus.NEEDS_NAME)
+        self.assertIsNone(agent.policy.pending_customer)
+
+    def test_low_confidence_confirmation_with_name_does_not_authenticate(self):
+        agent, _ = make_agent(
+            {
+                "Ana Silva": analysis(TurnIntent.PROVIDES_NAME, name="Ana Silva"),
+                "sim, Ana Silva": analysis(TurnIntent.CONFIRMS, confidence=0.10, name="Ana Silva"),
+            }
+        )
+        agent.handle_answer("Ana Silva")
+        result = agent.handle_answer("sim, Ana Silva")
+        self.assertEqual(result.status, AuthStatus.NEEDS_CONFIRMATION)
         self.assertIsNone(agent.policy.current_customer)
 
     def test_allowed_question_returns_to_active_task(self):
@@ -213,6 +285,24 @@ class LLMClassificationGraphTests(unittest.TestCase):
         self.assertEqual(agent.language, "auto")
         self.assertIn("Não reconheci o idioma", result.message)
         self.assertIn("English, Portuguese, or Spanish", result.message)
+
+    def test_low_confidence_auto_language_does_not_select_or_keep_name(self):
+        utterance = "meu nome é Ana Silva"
+        agent, _ = make_agent(
+            {
+                utterance: analysis(
+                    TurnIntent.PROVIDES_NAME,
+                    language="pt",
+                    confidence=0.10,
+                    name="Ana Silva",
+                )
+            },
+            language="auto",
+        )
+        result = agent.handle_answer(utterance)
+        self.assertEqual(result.status, AuthStatus.NEEDS_NAME)
+        self.assertEqual(agent.language, "auto")
+        self.assertIsNone(agent.policy.pending_customer)
 
     def test_substantive_portuguese_turn_selects_language_and_keeps_the_name(self):
         utterance = "meu nome é Ana Silva"

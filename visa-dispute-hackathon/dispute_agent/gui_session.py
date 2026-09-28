@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import RLock
 
 
 class DemoLoginError(ValueError):
@@ -76,6 +77,7 @@ class GuiDemoLoginService:
         self._records_by_id = {record.customer_id: record for record in self._records}
         self._pending: dict[str, _PendingSelection] = {}
         self._sessions: dict[str, AuthenticatedCustomerContext] = {}
+        self._state_lock = RLock()
 
     def _load_records(self) -> tuple[_CustomerRecord, ...]:
         if not self.customers_csv.is_file():
@@ -124,62 +126,66 @@ class GuiDemoLoginService:
             counts[record.email] = counts.get(record.email, 0) + 1
 
         now = self._now()
-        self._discard_expired(now)
         options: list[CustomerOption] = []
-        for record in matches:
-            token = secrets.token_urlsafe(24)
-            self._pending[token] = _PendingSelection(
-                customer_id=record.customer_id,
-                expires_at=now + self.selection_ttl,
-            )
-            location = " · ".join(value for value in (record.country, record.city) if value)
-            disambiguation = location or "Synthetic customer"
-            if counts[record.email] == 1:
-                disambiguation = record.country
-            options.append(
-                CustomerOption(
-                    selection_token=token,
-                    email=record.email,
-                    disambiguation=disambiguation,
+        with self._state_lock:
+            self._discard_expired(now)
+            for record in matches:
+                token = secrets.token_urlsafe(24)
+                self._pending[token] = _PendingSelection(
+                    customer_id=record.customer_id,
+                    expires_at=now + self.selection_ttl,
                 )
-            )
+                location = " · ".join(value for value in (record.country, record.city) if value)
+                disambiguation = location or "Synthetic customer"
+                if counts[record.email] == 1:
+                    disambiguation = record.country
+                options.append(
+                    CustomerOption(
+                        selection_token=token,
+                        email=record.email,
+                        disambiguation=disambiguation,
+                    )
+                )
         return options
 
     def select(self, selection_token: str) -> AuthenticatedCustomerContext:
         """Create a session only from a live server-issued dropdown option."""
 
         now = self._now()
-        self._discard_expired(now)
-        pending = self._pending.pop(selection_token, None)
-        if pending is None:
-            raise DemoLoginError("selection is missing, expired, already used, or invalid")
-        record = self._records_by_id.get(pending.customer_id)
-        if record is None:
-            raise DemoLoginError("selected customer is no longer available")
-        session_id = secrets.token_urlsafe(32)
-        context = AuthenticatedCustomerContext(
-            session_id=session_id,
-            customer_id=record.customer_id,
-            display_name=record.display_name,
-            country=record.country,
-            assurance_level="DEMO_GUI_CUSTOMER_SELECTED",
-            expires_at=now + self.session_ttl,
-        )
-        self._sessions[session_id] = context
-        return context
+        with self._state_lock:
+            self._discard_expired(now)
+            pending = self._pending.pop(selection_token, None)
+            if pending is None:
+                raise DemoLoginError("selection is missing, expired, already used, or invalid")
+            record = self._records_by_id.get(pending.customer_id)
+            if record is None:
+                raise DemoLoginError("selected customer is no longer available")
+            session_id = secrets.token_urlsafe(32)
+            context = AuthenticatedCustomerContext(
+                session_id=session_id,
+                customer_id=record.customer_id,
+                display_name=record.display_name,
+                country=record.country,
+                assurance_level="DEMO_GUI_CUSTOMER_SELECTED",
+                expires_at=now + self.session_ttl,
+            )
+            self._sessions[session_id] = context
+            return context
 
     def resolve_session(self, session_id: str) -> AuthenticatedCustomerContext:
         """Return the server-side customer context for a live session."""
 
         now = self._now()
-        self._discard_expired(now)
-        context = self._sessions.get(session_id)
-        if context is None:
-            raise DemoLoginError("session is missing, expired, logged out, or invalid")
-        return context
+        with self._state_lock:
+            self._discard_expired(now)
+            context = self._sessions.get(session_id)
+            if context is None:
+                raise DemoLoginError("session is missing, expired, logged out, or invalid")
+            return context
 
     def logout(self, session_id: str) -> None:
-        self._sessions.pop(session_id, None)
+        with self._state_lock:
+            self._sessions.pop(session_id, None)
 
     def _discard_expired(self, now: datetime) -> None:
         self._pending = {
