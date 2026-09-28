@@ -47,10 +47,30 @@ class FakeRealtimeCalls:
 class FakeGateway:
     def __init__(self):
         self.accepted = []
+        self.controlled = []
         self.client = SimpleNamespace(realtime=SimpleNamespace(calls=FakeRealtimeCalls()))
 
-    async def accept_and_control(self, call_id, caller_phone):
+    async def accept_call(
+        self,
+        call_id: str,
+        caller_phone: str,
+    ) -> None:
         self.accepted.append((call_id, caller_phone))
+
+    async def control_call(
+        self,
+        call_id: str,
+        caller_phone: str,
+        *,
+        max_duration_seconds: int | None = None,
+    ) -> None:
+        self.controlled.append(
+            (
+                call_id,
+                caller_phone,
+                max_duration_seconds,
+            )
+        )
 
 
 class SipWebhookTests(unittest.TestCase):
@@ -181,8 +201,25 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             event for event in websocket.sent if event.get("type") == "session.update"
         ]
         self.assertEqual(len(tool_outputs), 1)
-        self.assertEqual(len(session_updates), 1)
-        self.assertIn("es-CO", session_updates[0]["session"]["instructions"])
+        self.assertEqual(len(session_updates), 2)
+
+        for update in session_updates:
+            self.assertEqual(
+                update["session"]["type"],
+                "realtime",
+            )
+
+        self.assertIn(
+            "es-CO",
+            session_updates[0]["session"]["instructions"],
+        )
+        self.assertIn(
+            "es-CO",
+            session_updates[-1]["session"]["instructions"],
+        )
+
+        # DTMF digits are server-owned authentication data and must not be
+        # echoed into messages sent back over the Realtime sideband.
         self.assertNotIn("123456789", json.dumps(websocket.sent))
 
 

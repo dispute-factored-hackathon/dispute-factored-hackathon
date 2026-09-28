@@ -27,18 +27,36 @@ class FakeCalls:
 
 class FakeGateway:
     def __init__(self, event=None, *, invalid=False):
-        self.client = SimpleNamespace(
-            webhooks=FakeWebhooks(event, invalid=invalid),
-            realtime=SimpleNamespace(calls=FakeCalls()),
-        )
         self.accepted = []
         self.controlled = []
 
-    async def accept_call(self, call_id, phone):
-        self.accepted.append((call_id, phone))
+        self.calls = FakeCalls()
+        self.client = SimpleNamespace(
+            webhooks=FakeWebhooks(event, invalid=invalid),
+            realtime=SimpleNamespace(calls=self.calls),
+        )
 
-    async def control_call(self, call_id, phone, *, max_duration_seconds):
-        self.controlled.append((call_id, phone, max_duration_seconds))
+    async def accept_call(
+        self,
+        call_id: str,
+        caller_phone: str,
+    ) -> None:
+        self.accepted.append((call_id, caller_phone))
+
+    async def control_call(
+        self,
+        call_id: str,
+        caller_phone: str,
+        *,
+        max_duration_seconds: int | None = None,
+    ) -> None:
+        self.controlled.append(
+            (
+                call_id,
+                caller_phone,
+                max_duration_seconds,
+            )
+        )
 
 
 def incoming_event(include_phone=True):
