@@ -7,12 +7,23 @@ import base64
 import json
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any
 
 from .sip_realtime import SipRealtimeGateway, _value, extract_caller_phone
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _telemetry(event: str, *, call_id: str | None = None, **fields: Any) -> None:
+    """Emit one structured JSON application event to CloudWatch."""
+    payload: dict[str, Any] = {"event": event}
+    if call_id is not None:
+        payload["call_id"] = call_id
+    payload.update(fields)
+    LOGGER.info(json.dumps(payload, ensure_ascii=False, default=str))
+
 
 DEFAULT_CUSTOMERS = Path(__file__).parents[1] / "demo_data" / "customers.csv"
 
@@ -26,28 +37,88 @@ MAX_CALL_SECONDS = 840
 _gateway: SipRealtimeGateway | None = None
 
 
-def _load_secret() -> dict[str, str]:
-    """Load the OpenAI API key and webhook secret from AWS Secrets Manager."""
+def _load_json_secret(
+    secret_arn_env: str,
+    *,
+    required_keys: set[str],
+    secret_name: str,
+) -> dict[str, str]:
+    """Load and validate one JSON secret from AWS Secrets Manager."""
 
     import boto3
 
-    secret_arn = os.environ["OPENAI_SECRET_ARN"]
+    secret_arn = os.environ.get(secret_arn_env, "").strip()
 
-    response = boto3.client("secretsmanager").get_secret_value(SecretId=secret_arn)
+    if not secret_arn:
+        raise RuntimeError(f"{secret_arn_env} is not configured")
 
-    secret = json.loads(response["SecretString"])
+    started = time.monotonic()
 
-    required = {
-        "OPENAI_API_KEY",
-        "OPENAI_WEBHOOK_SECRET",
-    }
+    response = boto3.client("secretsmanager").get_secret_value(
+        SecretId=secret_arn,
+    )
 
-    missing = required.difference(secret)
+    _telemetry(
+        "aws.secret.loaded",
+        secret_name=secret_name,
+        duration_ms=round((time.monotonic() - started) * 1000, 2),
+    )
+
+    try:
+        secret = json.loads(response["SecretString"])
+    except (KeyError, json.JSONDecodeError, TypeError) as error:
+        raise RuntimeError(f"{secret_name} secret is not valid JSON") from error
+
+    if not isinstance(secret, dict):
+        raise RuntimeError(f"{secret_name} secret must contain a JSON object")
+
+    missing = required_keys.difference(secret)
 
     if missing:
-        raise RuntimeError(f"OpenAI secret is missing keys: {sorted(missing)}")
+        raise RuntimeError(f"{secret_name} secret is missing keys: {sorted(missing)}")
 
-    return secret
+    return {str(key): str(value) for key, value in secret.items()}
+
+
+def _load_openai_secret() -> dict[str, str]:
+    """Load OpenAI API and webhook signing credentials."""
+
+    return _load_json_secret(
+        "OPENAI_SECRET_ARN",
+        required_keys={
+            "OPENAI_API_KEY",
+            "OPENAI_WEBHOOK_SECRET",
+        },
+        secret_name="openai",
+    )
+
+
+def _configure_langsmith() -> None:
+    """Load the LangSmith API key once per Lambda execution environment."""
+
+    if os.environ.get("LANGSMITH_API_KEY", "").strip():
+        return
+
+    secret = _load_json_secret(
+        "LANGSMITH_SECRET_ARN",
+        required_keys={"LANGSMITH_API_KEY"},
+        secret_name="langsmith",
+    )
+
+    os.environ["LANGSMITH_API_KEY"] = secret["LANGSMITH_API_KEY"]
+
+    _telemetry(
+        "langsmith.configured",
+        tracing_enabled=os.environ.get(
+            "LANGSMITH_TRACING",
+            "",
+        )
+        .strip()
+        .casefold()
+        in {"1", "true", "yes", "on"},
+        project=os.environ.get("LANGSMITH_PROJECT", ""),
+        endpoint=os.environ.get("LANGSMITH_ENDPOINT", ""),
+    )
 
 
 def _get_gateway() -> SipRealtimeGateway:
@@ -56,7 +127,12 @@ def _get_gateway() -> SipRealtimeGateway:
     global _gateway
 
     if _gateway is None:
-        secret = _load_secret()
+        started = time.monotonic()
+
+        # Configure LangSmith before application code begins creating traced runs.
+        _configure_langsmith()
+
+        secret = _load_openai_secret()
 
         _gateway = SipRealtimeGateway(
             os.getenv(
@@ -65,6 +141,19 @@ def _get_gateway() -> SipRealtimeGateway:
             ),
             api_key=secret["OPENAI_API_KEY"],
             webhook_secret=secret["OPENAI_WEBHOOK_SECRET"],
+        )
+
+        _telemetry(
+            "sip.gateway.initialized",
+            duration_ms=round((time.monotonic() - started) * 1000, 2),
+            langsmith_tracing=os.environ.get(
+                "LANGSMITH_TRACING",
+                "",
+            )
+            .strip()
+            .casefold()
+            in {"1", "true", "yes", "on"},
+            langsmith_project=os.environ.get("LANGSMITH_PROJECT", ""),
         )
 
     return _gateway
@@ -115,11 +204,8 @@ def _invoke_worker(
         "caller_phone": caller_phone,
     }
 
-    LOGGER.info(
-        "Invoking Realtime worker call_id=%s caller=%s",
-        call_id,
-        caller_phone,
-    )
+    invoke_started = time.monotonic()
+    _telemetry("worker.invoke.started", call_id=call_id)
 
     response = boto3.client("lambda").invoke(
         FunctionName=context.invoked_function_arn,
@@ -134,10 +220,11 @@ def _invoke_worker(
             f"Failed to invoke Realtime worker for call {call_id}: Lambda status {status_code}"
         )
 
-    LOGGER.info(
-        "Realtime worker invocation queued call_id=%s lambda_status=%s",
-        call_id,
-        status_code,
+    _telemetry(
+        "worker.invoke.completed",
+        call_id=call_id,
+        lambda_status=status_code,
+        duration_ms=round((time.monotonic() - invoke_started) * 1000, 2),
     )
 
 
@@ -162,11 +249,8 @@ def _run_worker(event: dict[str, Any]) -> dict[str, Any]:
             "status": "missing_caller_phone",
         }
 
-    LOGGER.info(
-        "Starting Realtime sideband worker call_id=%s caller=%s",
-        call_id,
-        caller_phone,
-    )
+    worker_started = time.monotonic()
+    _telemetry("worker.started", call_id=call_id)
 
     try:
         asyncio.run(
@@ -176,16 +260,24 @@ def _run_worker(event: dict[str, Any]) -> dict[str, Any]:
                 max_duration_seconds=MAX_CALL_SECONDS,
             )
         )
-    except Exception:
+    except Exception as error:
+        _telemetry(
+            "worker.failed",
+            call_id=call_id,
+            duration_ms=round((time.monotonic() - worker_started) * 1000, 2),
+            error_type=type(error).__name__,
+            error=str(error),
+        )
         LOGGER.exception(
             "Realtime worker crashed call_id=%s",
             call_id,
         )
         raise
 
-    LOGGER.info(
-        "Realtime sideband worker finished call_id=%s",
-        call_id,
+    _telemetry(
+        "worker.completed",
+        call_id=call_id,
+        duration_ms=round((time.monotonic() - worker_started) * 1000, 2),
     )
 
     return {
@@ -212,12 +304,15 @@ def _safe_reject(
             )
         )
 
-        LOGGER.info(
-            "Rejected incoming SIP call call_id=%s",
-            call_id,
-        )
+        _telemetry("sip.reject.completed", call_id=call_id)
 
-    except Exception:
+    except Exception as error:
+        _telemetry(
+            "sip.reject.failed",
+            call_id=call_id,
+            error_type=type(error).__name__,
+            error=str(error),
+        )
         LOGGER.exception(
             "Could not reject SIP call call_id=%s; "
             "the call may already be unavailable or the event may be synthetic",
@@ -231,11 +326,20 @@ def lambda_handler(
 ) -> dict[str, Any]:
     """Verify the webhook, accept the SIP call, and launch its sideband worker."""
 
+    started = time.monotonic()
+
     # Internal asynchronous invocation used for the long-running call worker.
     if event.get("mode") == WORKER_MODE:
         return _run_worker(event)
 
+    _telemetry("webhook.handler.started")
+
     gateway = _get_gateway()
+
+    _telemetry(
+        "webhook.gateway.ready",
+        duration_ms=round((time.monotonic() - started) * 1000, 2),
+    )
 
     # ------------------------------------------------------------------
     # 1. Verify the OpenAI webhook signature.
@@ -256,6 +360,11 @@ def lambda_handler(
                 "status": "invalid_webhook_signature",
             },
         )
+
+    _telemetry(
+        "webhook.verified",
+        duration_ms=round((time.monotonic() - started) * 1000, 2),
+    )
 
     event_type = str(
         _value(
@@ -307,6 +416,10 @@ def lambda_handler(
     )
 
     if not call_id:
+        _telemetry(
+            "sip.incoming.missing_call_id",
+            event_id=event_id,
+        )
         LOGGER.warning(
             "Incoming Realtime SIP webhook has no call_id event_id=%s",
             event_id,
@@ -352,6 +465,13 @@ def lambda_handler(
         caller_phone,
     )
 
+    _telemetry(
+        "sip.caller.extracted",
+        call_id=call_id,
+        event_id=event_id,
+        duration_ms=round((time.monotonic() - started) * 1000, 2),
+    )
+
     # ------------------------------------------------------------------
     # 4. Accept the call synchronously.
     #
@@ -361,6 +481,15 @@ def lambda_handler(
     # NOT start another worker in that case.
     # ------------------------------------------------------------------
 
+    _telemetry(
+        "sip.accept.started",
+        call_id=call_id,
+        event_id=event_id,
+        duration_from_handler_start_ms=round((time.monotonic() - started) * 1000, 2),
+    )
+
+    accept_started = time.monotonic()
+
     try:
         asyncio.run(
             gateway.accept_call(
@@ -369,7 +498,15 @@ def lambda_handler(
             )
         )
 
-    except Exception:
+    except Exception as error:
+        _telemetry(
+            "sip.accept.failed",
+            call_id=call_id,
+            event_id=event_id,
+            duration_ms=round((time.monotonic() - accept_started) * 1000, 2),
+            error_type=type(error).__name__,
+            error=str(error),
+        )
         LOGGER.exception(
             "SIP call could not be accepted; "
             "it may already have been decided or become unavailable "
@@ -393,6 +530,14 @@ def lambda_handler(
         call_id,
     )
 
+    _telemetry(
+        "sip.accept.completed",
+        call_id=call_id,
+        event_id=event_id,
+        duration_ms=round((time.monotonic() - accept_started) * 1000, 2),
+        duration_from_handler_start_ms=round((time.monotonic() - started) * 1000, 2),
+    )
+
     # ------------------------------------------------------------------
     # 5. Start a separate asynchronous Lambda invocation for the
     # long-running sideband WebSocket.
@@ -405,7 +550,13 @@ def lambda_handler(
             caller_phone=caller_phone,
         )
 
-    except Exception:
+    except Exception as error:
+        _telemetry(
+            "worker.invoke.failed",
+            call_id=call_id,
+            error_type=type(error).__name__,
+            error=str(error),
+        )
         LOGGER.exception(
             "Call was accepted but Realtime worker could not be started call_id=%s",
             call_id,
@@ -421,6 +572,14 @@ def lambda_handler(
                 "status": "accepted_worker_start_failed",
             },
         )
+
+    _telemetry(
+        "webhook.handler.completed",
+        call_id=call_id,
+        event_id=event_id,
+        status="accepted",
+        duration_ms=round((time.monotonic() - started) * 1000, 2),
+    )
 
     return _response(
         202,

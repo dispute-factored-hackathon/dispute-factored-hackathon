@@ -3,13 +3,28 @@
 from __future__ import annotations
 
 import csv
+import json
+import logging
+import time
 import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .openai_interpreter import TurnIntent
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _telemetry(event: str, *, correlation_id: str | None = None, **fields: Any) -> None:
+    """Emit structured policy telemetry without customer names or utterances."""
+    payload: dict[str, Any] = {"event": event}
+    if correlation_id is not None:
+        payload["correlation_id"] = correlation_id
+    payload.update(fields)
+    LOGGER.info(json.dumps(payload, ensure_ascii=False, default=str))
+
 
 if TYPE_CHECKING:
     from .openai_interpreter import CallOpening, TurnAnalysis
@@ -209,7 +224,14 @@ class CustomerDirectory:
 
     def __init__(self, customers_csv: str | Path):
         self.customers_csv = Path(customers_csv)
+        started = time.perf_counter()
         self._customers_by_name = self._load()
+        _telemetry(
+            "authentication.directory.loaded",
+            duration_ms=round((time.perf_counter() - started) * 1000, 2),
+            unique_names=len(self._customers_by_name),
+            customer_records=sum(len(matches) for matches in self._customers_by_name.values()),
+        )
 
     def _load(self) -> dict[str, list[CustomerMatch]]:
         if not self.customers_csv.is_file():
@@ -249,8 +271,13 @@ class AuthenticationAgent:
         max_unclear_attempts: int = 2,
         language: str = "en",
         country_code: str | None = None,
+        correlation_id: str | None = None,
+        channel: str = "unknown",
     ):
+        started = time.perf_counter()
         self.directory = CustomerDirectory(customers_csv)
+        self.correlation_id = correlation_id
+        self.channel = channel
         self.max_failed_attempts = max_failed_attempts
         self.max_avoidance_attempts = max_avoidance_attempts
         self.max_no_response_attempts = max_no_response_attempts
@@ -272,6 +299,20 @@ class AuthenticationAgent:
         self.inferred_language: str | None = None
         self.inferred_locale: str | None = None
 
+        _telemetry(
+            "authentication.policy.initialized",
+            correlation_id=self.correlation_id,
+            channel=self.channel,
+            language=self.language,
+            locale=self.locale,
+            has_country_code=bool(self.country_code),
+            max_failed_attempts=self.max_failed_attempts,
+            max_avoidance_attempts=self.max_avoidance_attempts,
+            max_no_response_attempts=self.max_no_response_attempts,
+            max_unclear_attempts=self.max_unclear_attempts,
+            duration_ms=round((time.perf_counter() - started) * 1000, 2),
+        )
+
     def apply_opening(self, opening: CallOpening) -> AuthenticationResult:
         """Store inferred regional context while leaving the customer's choice open."""
 
@@ -279,12 +320,38 @@ class AuthenticationAgent:
         self.inferred_language = opening.primary_language
         self.inferred_locale = opening.locale
         self.locale = opening.locale
+
+        _telemetry(
+            "authentication.opening.applied",
+            correlation_id=self.correlation_id,
+            channel=self.channel,
+            inferred_language=opening.primary_language,
+            inferred_locale=opening.locale,
+            country_is_ambiguous=opening.country_is_ambiguous,
+        )
+
         return AuthenticationResult(AuthStatus.NEEDS_NAME, opening.welcome_message)
 
     def _message(self, key: str, **values: str) -> str:
         return MESSAGES[self.locale][key].format(**values)
 
     def _handoff(self, key: str, reason: str) -> AuthenticationResult:
+        _telemetry(
+            "authentication.handoff",
+            correlation_id=self.correlation_id,
+            channel=self.channel,
+            reason=reason,
+            language="en" if self.language == "auto" else self.language,
+            locale=self.locale,
+            failed_name_attempts=self.failed_attempts,
+            no_response_attempts=self.no_response_attempts,
+            avoidance_attempts=self.avoidance_attempts,
+            unclear_attempts=self.unclear_attempts,
+            phase="name_confirmation" if self.pending_customer else "name_collection",
+            has_pending_candidate=self.pending_customer is not None,
+            questions_answered=self.questions_answered,
+        )
+
         return AuthenticationResult(
             AuthStatus.HUMAN_HANDOFF,
             self._message(key),
@@ -313,6 +380,12 @@ class AuthenticationAgent:
         )
 
     def _reset_identification(self) -> AuthenticationResult:
+        _telemetry(
+            "authentication.restarted",
+            correlation_id=self.correlation_id,
+            channel=self.channel,
+        )
+
         self.current_customer = None
         self.pending_customer = None
         self.last_claimed_name = None
@@ -323,7 +396,17 @@ class AuthenticationAgent:
         return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("restarted"))
 
     def _match_claimed_name(self, claimed_name: str) -> AuthenticationResult | None:
+        started = time.perf_counter()
         matches = self.directory.find_by_full_name(claimed_name)
+
+        _telemetry(
+            "authentication.name_lookup.completed",
+            correlation_id=self.correlation_id,
+            channel=self.channel,
+            match_count=len(matches),
+            duration_ms=round((time.perf_counter() - started) * 1000, 2),
+        )
+
         if len(matches) == 1:
             self.pending_customer = matches[0]
             return AuthenticationResult(
@@ -338,6 +421,18 @@ class AuthenticationAgent:
     def _authenticate(self, customer: CustomerMatch) -> AuthenticationResult:
         self.current_customer = customer
         self.pending_customer = None
+
+        _telemetry(
+            "authentication.succeeded",
+            correlation_id=self.correlation_id,
+            channel=self.channel,
+            method="name_match_confirmed",
+            language=self.language,
+            locale=self.locale,
+            failed_name_attempts=self.failed_attempts,
+            questions_answered=self.questions_answered,
+        )
+
         return AuthenticationResult(
             AuthStatus.AUTHENTICATED,
             self._message("success", name=customer.full_name),
@@ -348,6 +443,15 @@ class AuthenticationAgent:
     def _name_not_found(self, claimed_name: str) -> AuthenticationResult:
         self.last_claimed_name = claimed_name
         self.failed_attempts += 1
+
+        _telemetry(
+            "authentication.name_not_found",
+            correlation_id=self.correlation_id,
+            channel=self.channel,
+            failed_attempts=self.failed_attempts,
+            max_failed_attempts=self.max_failed_attempts,
+        )
+
         if self.failed_attempts >= self.max_failed_attempts:
             return self._handoff("handoff_not_found", "name_not_found_after_retries")
         return AuthenticationResult(
@@ -359,6 +463,16 @@ class AuthenticationAgent:
         """Handle silence without sending it to the hosted classifier."""
 
         self.no_response_attempts += 1
+
+        _telemetry(
+            "authentication.no_response",
+            correlation_id=self.correlation_id,
+            channel=self.channel,
+            no_response_attempts=self.no_response_attempts,
+            max_no_response_attempts=self.max_no_response_attempts,
+            has_pending_candidate=self.pending_customer is not None,
+        )
+
         if self.no_response_attempts >= self.max_no_response_attempts:
             return self._handoff("handoff_no_response", "repeated_no_response")
         key = "silence_1" if self.no_response_attempts == 1 else "silence_2"
@@ -376,12 +490,38 @@ class AuthenticationAgent:
                 self._message("confirmation_unclear", name=self.pending_customer.full_name),
             )
         self.unclear_attempts += 1
+
+        _telemetry(
+            "authentication.unclear",
+            correlation_id=self.correlation_id,
+            channel=self.channel,
+            unclear_attempts=self.unclear_attempts,
+            max_unclear_attempts=self.max_unclear_attempts,
+        )
+
         if self.unclear_attempts >= self.max_unclear_attempts:
             return self._handoff("handoff_unclear", "repeated_unclear_response")
         return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("unclear"))
 
     def apply_llm_classification(self, analysis: TurnAnalysis) -> AuthenticationResult:
         """Apply a validated schema decision without reclassification."""
+
+        _telemetry(
+            "authentication.classification.applied",
+            correlation_id=self.correlation_id,
+            channel=self.channel,
+            intent=analysis.intent.value,
+            confidence=analysis.confidence,
+            detected_language=analysis.language,
+            abuse=analysis.abuse.value,
+            abuse_confidence=analysis.abuse_confidence,
+            has_extracted_name=bool(analysis.extracted_name),
+            has_direct_answer=bool(analysis.direct_answer),
+            language_state=self.language,
+            locale=self.locale,
+            has_pending_candidate=self.pending_customer is not None,
+            already_authenticated=self.current_customer is not None,
+        )
 
         global_result = self._handle_global_intent(analysis.intent)
         if global_result:
@@ -414,6 +554,19 @@ class AuthenticationAgent:
             if self.language == self.inferred_language and self.inferred_locale
             else DEFAULT_LOCALES[self.language]
         )
+
+        _telemetry(
+            "authentication.language.selected",
+            correlation_id=self.correlation_id,
+            channel=self.channel,
+            language=self.language,
+            locale=self.locale,
+            explicit_selection=explicit_selection,
+            used_inferred_locale=(
+                self.language == self.inferred_language and self.inferred_locale is not None
+            ),
+        )
+
         if explicit_selection:
             return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("start"))
         return None
@@ -423,6 +576,11 @@ class AuthenticationAgent:
             return self._handoff("handoff_requested", "customer_requested_human")
         if intent is TurnIntent.CANCELS:
             self.pending_customer = None
+            _telemetry(
+                "authentication.cancelled",
+                correlation_id=self.correlation_id,
+                channel=self.channel,
+            )
             return AuthenticationResult(AuthStatus.CANCELLED, self._message("cancelled"))
         if intent is TurnIntent.RESTARTS:
             return self._reset_identification()
@@ -436,8 +594,21 @@ class AuthenticationAgent:
             self.pending_customer = None
             return self._match_claimed_name(claimed_name) or self._name_not_found(claimed_name)
         if analysis.intent is TurnIntent.CONFIRMS:
+            _telemetry(
+                "authentication.name_confirmation",
+                correlation_id=self.correlation_id,
+                channel=self.channel,
+                confirmed=True,
+            )
             return self._authenticate(customer)
+
         if analysis.intent is TurnIntent.DENIES:
+            _telemetry(
+                "authentication.name_confirmation",
+                correlation_id=self.correlation_id,
+                channel=self.channel,
+                confirmed=False,
+            )
             self.pending_customer = None
             return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("name_denied"))
         return AuthenticationResult(
@@ -450,6 +621,15 @@ class AuthenticationAgent:
             return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("why"))
         if analysis.intent is TurnIntent.AVOIDS_ANSWER:
             self.avoidance_attempts += 1
+
+            _telemetry(
+                "authentication.answer_avoided",
+                correlation_id=self.correlation_id,
+                channel=self.channel,
+                avoidance_attempts=self.avoidance_attempts,
+                max_avoidance_attempts=self.max_avoidance_attempts,
+            )
+
             if self.avoidance_attempts >= self.max_avoidance_attempts:
                 return self._handoff("handoff_refusal", "name_not_provided")
             return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("refusal"))
@@ -460,6 +640,16 @@ class AuthenticationAgent:
         return self.handle_unclear_classification()
 
     def start(self) -> AuthenticationResult:
+        _telemetry(
+            "authentication.started",
+            correlation_id=self.correlation_id,
+            channel=self.channel,
+            language=self.language,
+            locale=self.locale,
+            automatic_language_selection=self.language == "auto",
+        )
+
         if self.language == "auto":
             return AuthenticationResult(AuthStatus.NEEDS_NAME, AUTO_LANGUAGE_PROMPT)
+
         return AuthenticationResult(AuthStatus.NEEDS_NAME, self._message("start"))

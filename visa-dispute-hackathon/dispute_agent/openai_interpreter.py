@@ -2,13 +2,24 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import os
+import time
 import unicodedata
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 from langsmith import traceable
 from pydantic import BaseModel, Field
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _telemetry(event: str, **fields: Any) -> None:
+    """Emit structured LLM telemetry without raw customer text or names."""
+    payload: dict[str, Any] = {"event": event, **fields}
+    LOGGER.info(json.dumps(payload, ensure_ascii=False, default=str))
 
 
 class ClassificationError(RuntimeError):
@@ -131,10 +142,20 @@ country_is_ambiguous=true, do not invent a specific country, describe the callin
 use English/en-US. Never claim that location is verified; make clear it is inferred from the calling
 code. Return only the requested schema."""
 
-    def __init__(self, *, model: str | None = None, structured_model=None, opening_model=None):
+    def __init__(
+        self,
+        *,
+        model: str | None = None,
+        structured_model=None,
+        opening_model=None,
+        correlation_id: str | None = None,
+        channel: str = "unknown",
+    ):
         self.model = model or os.getenv("OPENAI_AGENT_MODEL", self.DEFAULT_MODEL)
         self.phase = "name_collection"
         self.locale = "en-US"
+        self.correlation_id = correlation_id
+        self.channel = channel
         self._structured_model = structured_model
         self._opening_model = opening_model
         self._cache: dict[tuple[str, str, str], TurnAnalysis] = {}
@@ -142,68 +163,210 @@ code. Return only the requested schema."""
         self.api_calls = 0
         self.max_api_calls = int(os.getenv("MAX_LLM_CALLS_PER_SESSION", "20"))
 
+        _telemetry(
+            "llm.interpreter.initialized",
+            correlation_id=self.correlation_id,
+            channel=self.channel,
+            model=self.model,
+            max_api_calls=self.max_api_calls,
+        )
+
     def set_context(self, *, phase: str, locale: str) -> None:
         self.phase = phase
         self.locale = locale
+        _telemetry(
+            "llm.context.updated",
+            correlation_id=self.correlation_id,
+            channel=self.channel,
+            phase=phase,
+            locale=locale,
+        )
 
     def _get_model(self):
         if self._structured_model is None:
+            started = time.perf_counter()
             try:
                 from langchain_openai import ChatOpenAI
 
                 self._structured_model = ChatOpenAI(
                     model=self.model, temperature=0, max_retries=2
                 ).with_structured_output(TurnAnalysis, method="json_schema")
+
+                _telemetry(
+                    "llm.classifier.initialized",
+                    correlation_id=self.correlation_id,
+                    channel=self.channel,
+                    model=self.model,
+                    duration_ms=round((time.perf_counter() - started) * 1000, 2),
+                )
             except Exception as exc:
+                _telemetry(
+                    "llm.classifier.initialization_failed",
+                    correlation_id=self.correlation_id,
+                    channel=self.channel,
+                    model=self.model,
+                    duration_ms=round((time.perf_counter() - started) * 1000, 2),
+                    error_type=type(exc).__name__,
+                )
                 raise ClassificationError(f"Could not initialize OpenAI model: {exc}") from exc
         return self._structured_model
 
     def _get_opening_model(self):
         if self._opening_model is None:
+            started = time.perf_counter()
             try:
                 from langchain_openai import ChatOpenAI
 
                 self._opening_model = ChatOpenAI(
                     model=self.model, temperature=0, max_retries=2
                 ).with_structured_output(CallOpening, method="json_schema")
+
+                _telemetry(
+                    "llm.opening_model.initialized",
+                    correlation_id=self.correlation_id,
+                    channel=self.channel,
+                    model=self.model,
+                    duration_ms=round((time.perf_counter() - started) * 1000, 2),
+                )
             except Exception as exc:
+                _telemetry(
+                    "llm.opening_model.initialization_failed",
+                    correlation_id=self.correlation_id,
+                    channel=self.channel,
+                    model=self.model,
+                    duration_ms=round((time.perf_counter() - started) * 1000, 2),
+                    error_type=type(exc).__name__,
+                )
                 raise ClassificationError(f"Could not initialize OpenAI model: {exc}") from exc
         return self._opening_model
 
-    @traceable(name="infer-call-context", run_type="chain")
+    @traceable(
+        name="infer-call-context",
+        run_type="chain",
+        metadata={"component": "openai_turn_interpreter"},
+    )
     def generate_opening(self, country_code: str) -> CallOpening:
         """Infer regional context and generate the first message from a calling code."""
 
         if country_code in self._opening_cache:
+            _telemetry(
+                "llm.opening.cache_hit",
+                correlation_id=self.correlation_id,
+                channel=self.channel,
+                model=self.model,
+            )
             return self._opening_cache[country_code]
+
         if self.api_calls >= self.max_api_calls:
+            _telemetry(
+                "llm.call_budget.exhausted",
+                correlation_id=self.correlation_id,
+                channel=self.channel,
+                operation="opening",
+                api_calls=self.api_calls,
+                max_api_calls=self.max_api_calls,
+            )
             raise ClassificationError("Per-session LLM call limit reached")
+
+        started = time.perf_counter()
+
         try:
             self.api_calls += 1
+
+            _telemetry(
+                "llm.opening.started",
+                correlation_id=self.correlation_id,
+                channel=self.channel,
+                model=self.model,
+                api_call_number=self.api_calls,
+            )
+
             result = self._get_opening_model().invoke(
                 [
                     ("system", self.OPENING_SYSTEM_PROMPT),
                     ("user", f"Telephone country calling code: {country_code}"),
                 ]
             )
+
             parsed = (
                 result if isinstance(result, CallOpening) else CallOpening.model_validate(result)
             )
+
             self._opening_cache[country_code] = parsed
+
+            _telemetry(
+                "llm.opening.completed",
+                correlation_id=self.correlation_id,
+                channel=self.channel,
+                model=self.model,
+                duration_ms=round((time.perf_counter() - started) * 1000, 2),
+                api_calls=self.api_calls,
+                inferred_language=parsed.primary_language,
+                inferred_locale=parsed.locale,
+                country_is_ambiguous=parsed.country_is_ambiguous,
+            )
+
             return parsed
+
         except ClassificationError:
             raise
+
         except Exception as exc:
+            _telemetry(
+                "llm.opening.failed",
+                correlation_id=self.correlation_id,
+                channel=self.channel,
+                model=self.model,
+                duration_ms=round((time.perf_counter() - started) * 1000, 2),
+                error_type=type(exc).__name__,
+            )
             raise ClassificationError(f"OpenAI opening generation failed: {exc}") from exc
 
     def _analyze_cached(self, phase: str, locale: str, text: str) -> TurnAnalysis:
         key = (phase, locale, text)
+
         if key in self._cache:
-            return self._cache[key]
+            cached = self._cache[key]
+            _telemetry(
+                "llm.classification.cache_hit",
+                correlation_id=self.correlation_id,
+                channel=self.channel,
+                model=self.model,
+                phase=phase,
+                locale=locale,
+                input_length=len(text),
+                intent=cached.intent.value,
+                confidence=cached.confidence,
+            )
+            return cached
+
         if self.api_calls >= self.max_api_calls:
+            _telemetry(
+                "llm.call_budget.exhausted",
+                correlation_id=self.correlation_id,
+                channel=self.channel,
+                operation="classification",
+                api_calls=self.api_calls,
+                max_api_calls=self.max_api_calls,
+            )
             raise ClassificationError("Per-session LLM call limit reached")
+
+        started = time.perf_counter()
+
         try:
             self.api_calls += 1
+
+            _telemetry(
+                "llm.classification.started",
+                correlation_id=self.correlation_id,
+                channel=self.channel,
+                model=self.model,
+                phase=phase,
+                locale=locale,
+                input_length=len(text),
+                api_call_number=self.api_calls,
+            )
+
             result = self._get_model().invoke(
                 [
                     ("system", self.SYSTEM_PROMPT),
@@ -216,25 +379,83 @@ code. Return only the requested schema."""
                     ),
                 ]
             )
+
             parsed = (
                 result if isinstance(result, TurnAnalysis) else TurnAnalysis.model_validate(result)
             )
+
             if len(self._cache) >= 128:
                 self._cache.pop(next(iter(self._cache)))
+
             self._cache[key] = parsed
+
+            _telemetry(
+                "llm.classification.completed",
+                correlation_id=self.correlation_id,
+                channel=self.channel,
+                model=self.model,
+                phase=phase,
+                locale=locale,
+                duration_ms=round((time.perf_counter() - started) * 1000, 2),
+                api_calls=self.api_calls,
+                intent=parsed.intent.value,
+                confidence=parsed.confidence,
+                detected_language=parsed.language,
+                abuse=parsed.abuse.value,
+                abuse_confidence=parsed.abuse_confidence,
+                has_extracted_name=bool(parsed.extracted_name),
+                has_direct_answer=bool(parsed.direct_answer),
+            )
+
             return parsed
+
         except ClassificationError:
             raise
+
         except Exception as exc:
+            _telemetry(
+                "llm.classification.failed",
+                correlation_id=self.correlation_id,
+                channel=self.channel,
+                model=self.model,
+                phase=phase,
+                locale=locale,
+                duration_ms=round((time.perf_counter() - started) * 1000, 2),
+                input_length=len(text),
+                error_type=type(exc).__name__,
+            )
             raise ClassificationError(f"OpenAI turn classification failed: {exc}") from exc
 
-    @traceable(name="classify-customer-turn", run_type="chain")
+    @traceable(
+        name="classify-customer-turn",
+        run_type="chain",
+        metadata={"component": "openai_turn_interpreter"},
+    )
     def analyze(self, text: str) -> TurnAnalysis:
-        result = self._analyze_cached(self.phase, self.locale, text)
+        result = self._analyze_cached(
+            self.phase,
+            self.locale,
+            text,
+        )
+
         if result.extracted_name:
-            grounded = self._ground_name(result.extracted_name, text)
+            grounded = self._ground_name(
+                result.extracted_name,
+                text,
+            )
+
             if grounded != result.extracted_name:
+                _telemetry(
+                    "llm.name_grounding.adjusted",
+                    correlation_id=self.correlation_id,
+                    channel=self.channel,
+                    phase=self.phase,
+                    locale=self.locale,
+                    candidate_present=True,
+                    grounded=grounded is not None,
+                )
                 result = result.model_copy(update={"extracted_name": grounded})
+
         return result
 
     @staticmethod

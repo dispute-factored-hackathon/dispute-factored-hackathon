@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Any, TypedDict
 from uuid import uuid4
 
 from langgraph.graph import END, START, StateGraph
@@ -66,10 +66,21 @@ class LangGraphAuthenticationAgent:
         "https://",
     )
 
-    def __init__(self, policy: AuthenticationAgent, interpreter: OpenAITurnInterpreter):
+    def __init__(
+        self,
+        policy: AuthenticationAgent,
+        interpreter: OpenAITurnInterpreter,
+        *,
+        correlation_id: str | None = None,
+        channel: str = "cli",
+        trace_metadata: dict[str, Any] | None = None,
+    ):
         self.policy = policy
         self.interpreter = interpreter
         self.session_id = uuid4().hex
+        self.correlation_id = correlation_id or self.session_id
+        self.channel = channel
+        self.trace_metadata = dict(trace_metadata or {})
         self.llm_failures = 0
         builder = StateGraph(AuthenticationGraphState)
         builder.add_node("prepare_turn", self._prepare_turn)
@@ -108,10 +119,40 @@ class LangGraphAuthenticationAgent:
         builder.add_edge("validate_response", END)
         self.graph = builder.compile()
 
+    def _trace_metadata(self, **extra: Any) -> dict[str, Any]:
+        """Return non-sensitive correlation metadata shared by LangSmith runs."""
+
+        metadata: dict[str, Any] = {
+            "thread_id": self.session_id,
+            "correlation_id": self.correlation_id,
+            "channel": self.channel,
+            "locale": self.policy.locale,
+            "language": self.policy.language,
+            "synthetic_data": True,
+            **self.trace_metadata,
+        }
+        metadata.update(extra)
+        return metadata
+
+    @staticmethod
+    def _analysis_metadata(analysis: TurnAnalysis) -> dict[str, Any]:
+        """Expose classifier decisions without raw utterances or extracted names."""
+
+        return {
+            "intent": analysis.intent.value,
+            "confidence": analysis.confidence,
+            "language": analysis.language,
+            "abuse": analysis.abuse.value,
+            "abuse_confidence": analysis.abuse_confidence,
+            "has_extracted_name": bool(analysis.extracted_name),
+            "has_direct_answer": bool(analysis.direct_answer),
+        }
+
     def _text(self, key: str) -> str:
         language = self.policy.language if self.policy.language in MESSAGES else "en"
         return MESSAGES[language][key]
 
+    @traceable(name="prepare-authentication-turn", run_type="chain")
     def _prepare_turn(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
         if self.policy.language == "auto":
             phase = "language_selection"
@@ -130,6 +171,7 @@ class LangGraphAuthenticationAgent:
             }
         return {}
 
+    @traceable(name="classify-authentication-turn", run_type="chain")
     def _classify_raw_turn(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
         try:
             analysis = self.interpreter.analyze(state.get("answer") or "")
@@ -149,6 +191,7 @@ class LangGraphAuthenticationAgent:
                 )
             }
 
+    @traceable(name="screen-authentication-abuse", run_type="chain")
     def _screen_abuse(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
         analysis = state["analysis"]
         if (
@@ -186,6 +229,7 @@ class LangGraphAuthenticationAgent:
             return "out_of_scope"
         return "policy"
 
+    @traceable(name="answer-authentication-question", run_type="chain")
     def _answer_question(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
         answer = (state["analysis"].direct_answer or "").strip()
         normalized = answer.casefold()
@@ -207,12 +251,14 @@ class LangGraphAuthenticationAgent:
             "result": AuthenticationResult(self._continuation_status(), f"{answer} {continuation}")
         }
 
+    @traceable(name="refuse-authentication-out-of-scope", run_type="chain")
     def _refuse_out_of_scope(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
         del state
         return {
             "result": AuthenticationResult(self._continuation_status(), self._text("out_of_scope"))
         }
 
+    @traceable(name="apply-authentication-policy", run_type="chain")
     def _apply_policy(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
         analysis = state["analysis"]
         if analysis.confidence < self.MIN_CLASSIFICATION_CONFIDENCE:
@@ -230,7 +276,11 @@ class LangGraphAuthenticationAgent:
             raise RuntimeError("Conversation policy returned an empty customer response")
         return {}
 
-    @traceable(name="start-dispute-call", run_type="chain")
+    @traceable(
+        name="start-dispute-call",
+        run_type="chain",
+        metadata={"component": "authentication_graph"},
+    )
     def start(self) -> AuthenticationResult:
         if self.policy.language == "auto" and self.policy.country_code:
             try:
@@ -249,20 +299,45 @@ class LangGraphAuthenticationAgent:
         self.policy.last_agent_message = result.message
         return result
 
-    @traceable(name="handle-customer-turn", run_type="chain")
+    @traceable(
+        name="handle-customer-turn",
+        run_type="chain",
+        metadata={"component": "authentication_graph"},
+    )
     def handle_answer(self, answer: str | None) -> AuthenticationResult:
         self.policy.last_customer_utterance = (answer or "").strip() or None
+
+        phase = (
+            "language_selection"
+            if self.policy.language == "auto"
+            else "name_confirmation"
+            if self.policy.pending_customer
+            else "name_collection"
+        )
+
         config = {
             "run_name": "card-dispute-authentication-turn",
-            "tags": ["call-center", "synthetic-data", "llm-classifier", self.policy.locale],
-            "metadata": {
-                "thread_id": self.session_id,
-                "phase": "name_confirmation" if self.policy.pending_customer else "name_collection",
-                "channel": "cli",
-                "synthetic_data": True,
-            },
+            "tags": [
+                "call-center",
+                "synthetic-data",
+                "llm-classifier",
+                self.channel,
+                self.policy.locale,
+            ],
+            "metadata": self._trace_metadata(
+                phase=phase,
+                input_present=bool((answer or "").strip()),
+                input_length=len(answer or ""),
+                llm_failures_before=self.llm_failures,
+            ),
         }
-        result = self.graph.invoke({"answer": answer}, config=config)["result"]
+
+        final_state = self.graph.invoke(
+            {"answer": answer},
+            config=config,
+        )
+
+        result = final_state["result"]
         self.policy.last_agent_message = result.message
         return result
 

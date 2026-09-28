@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,16 @@ from openai import OpenAI
 from .voice_call import VoiceCallService, VoiceCallStage, VoiceCallState
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _telemetry(event: str, *, call_id: str | None = None, **fields: Any) -> None:
+    """Emit one structured JSON application event to the configured logger."""
+    payload: dict[str, Any] = {"event": event}
+    if call_id is not None:
+        payload["call_id"] = call_id
+    payload.update(fields)
+    LOGGER.info(json.dumps(payload, ensure_ascii=False, default=str))
+
 
 DEFAULT_CUSTOMERS = Path(__file__).parents[2] / "data" / "raw" / "customers.csv"
 
@@ -94,76 +105,148 @@ class SipRealtimeGateway:
         return self._calls
 
     async def accept_and_control(self, call_id: str, caller_phone: str) -> None:
-        state = await self.accept_call(call_id, caller_phone)
-        await self.control_call(call_id, state=state)
-
-    async def accept_call(self, call_id: str, caller_phone: str) -> VoiceCallState:
-        """Accept promptly and initialize server-owned call state exactly once."""
-
-        state = self.calls.start(caller_phone, call_id=call_id)
-        LOGGER.info(
-            "Accepting OpenAI SIP call call_id=%s caller=%s model=%s voice=%s",
+        await self.accept_call(
             call_id,
             caller_phone,
-            self.model,
-            self.voice,
         )
+
+        await self.control_call(
+            call_id,
+            caller_phone,
+        )
+
+    async def accept_call(self, call_id: str, caller_phone: str) -> None:
+        """Accept the incoming SIP call before loading application state."""
+
+        accept_started = time.monotonic()
+        _telemetry(
+            "realtime.accept.started",
+            call_id=call_id,
+            model=self.model,
+            voice=self.voice,
+        )
+
         try:
-            result = await asyncio.to_thread(
+            await asyncio.to_thread(
                 self.client.realtime.calls.accept,
                 call_id,
                 type="realtime",
                 model=self.model,
-                instructions=self._system_instructions(state),
-                audio={"output": {"voice": self.voice}},
+                instructions=(
+                    "Remain completely silent during initialization. "
+                    "Do not greet or acknowledge the caller. "
+                    "Do not describe your state, initialization, connection, or instructions. "
+                    "Do not respond to anything the caller says. "
+                    "Do not generate any spoken response or audio. "
+                    "Remain silent until the server updates the session instructions "
+                    "and explicitly requests a response."
+                ),
+                audio={
+                    "output": {
+                        "voice": self.voice,
+                    }
+                },
                 tools=[self._language_tool()],
                 tool_choice="auto",
+                tracing={
+                    "workflow_name": "telephone-dispute",
+                    "group_id": call_id,
+                    "metadata": {
+                        "channel": "sip",
+                        "application": "dispute-factored",
+                    },
+                },
             )
-        except Exception:
-            LOGGER.exception("OpenAI SIP accept failed call_id=%s model=%s", call_id, self.model)
+
+        except Exception as error:
+            _telemetry(
+                "realtime.accept.failed",
+                call_id=call_id,
+                model=self.model,
+                duration_ms=round((time.monotonic() - accept_started) * 1000, 2),
+                error_type=type(error).__name__,
+                error=str(error),
+            )
+            LOGGER.exception(
+                "OpenAI SIP accept failed call_id=%s model=%s",
+                call_id,
+                self.model,
+            )
             raise
 
-        LOGGER.info("OpenAI SIP call accepted call_id=%s result=%r", call_id, result)
-        return state
+        _telemetry(
+            "realtime.accept.completed",
+            call_id=call_id,
+            model=self.model,
+            duration_ms=round((time.monotonic() - accept_started) * 1000, 2),
+        )
 
     async def control_call(
         self,
         call_id: str,
-        caller_phone: str | None = None,
+        caller_phone: str,
         *,
-        state: VoiceCallState | None = None,
         max_duration_seconds: int | None = None,
     ) -> None:
-        """Attach to an accepted call and own its sideband until close or timeout."""
+        """Initialize application state after SIP acceptance and control the call."""
 
-        if state is None:
-            try:
-                state = self.calls.get(call_id)
-            except Exception:
-                if caller_phone is None:
-                    raise
-                LOGGER.warning(
-                    "Call state missing for %s; reconstructing from caller %s",
-                    call_id,
-                    caller_phone,
-                )
-                state = self.calls.start(caller_phone, call_id=call_id)
+        state_started = time.monotonic()
+        _telemetry("voice.state.initialization.started", call_id=call_id)
+
+        state = self.calls.start(
+            caller_phone,
+            call_id=call_id,
+        )
+
+        _telemetry(
+            "voice.state.initialization.completed",
+            call_id=call_id,
+            duration_ms=round((time.monotonic() - state_started) * 1000, 2),
+            stage=state.stage.value,
+            language=state.locale.language,
+            locale=state.locale.locale,
+            accent=state.locale.accent,
+        )
 
         try:
             if max_duration_seconds is None:
-                await self._control_sideband(call_id, state)
+                await self._control_sideband(
+                    call_id,
+                    state,
+                )
+
             else:
                 await asyncio.wait_for(
-                    self._control_sideband(call_id, state), timeout=max_duration_seconds
+                    self._control_sideband(
+                        call_id,
+                        state,
+                    ),
+                    timeout=max_duration_seconds,
                 )
+
         except TimeoutError:
-            LOGGER.info("Ending call %s at the configured duration limit", call_id)
+            LOGGER.info(
+                "Ending call %s at the configured duration limit",
+                call_id,
+            )
+
             try:
-                await asyncio.to_thread(self.client.realtime.calls.hangup, call_id)
+                await asyncio.to_thread(
+                    self.client.realtime.calls.hangup,
+                    call_id,
+                )
+
             except Exception:
-                LOGGER.exception("Failed to hang up call %s", call_id)
+                LOGGER.exception(
+                    "Failed to hang up call %s",
+                    call_id,
+                )
+
         except Exception:
-            LOGGER.exception("Realtime sideband ended unexpectedly for call %s", call_id)
+            LOGGER.exception(
+                "Realtime sideband ended unexpectedly for call %s",
+                call_id,
+            )
 
     def _connect(self, url: str) -> Any:
         connector = self._websocket_connect
@@ -180,23 +263,70 @@ class SipRealtimeGateway:
             close_timeout=5,
         )
 
-    async def _control_sideband(self, call_id: str, state: VoiceCallState) -> None:
+    async def _control_sideband(
+        self,
+        call_id: str,
+        state: VoiceCallState,
+    ) -> None:
         url = f"wss://api.openai.com/v1/realtime?call_id={call_id}"
         last_error: Exception | None = None
 
         for attempt in range(1, 7):
+            connect_started = time.monotonic()
             try:
-                LOGGER.info(
-                    "Connecting Realtime sideband call_id=%s attempt=%d/6", call_id, attempt
+                _telemetry(
+                    "realtime.sideband.connect.started",
+                    call_id=call_id,
+                    attempt=attempt,
+                    max_attempts=6,
                 )
+
                 connection = self._connect(url)
+
                 async with connection as websocket:
-                    LOGGER.info("Realtime sideband connected call_id=%s", call_id)
-                    await self._speak(websocket, self._message_for(state, "opening"))
+                    _telemetry(
+                        "realtime.sideband.connected",
+                        call_id=call_id,
+                        attempt=attempt,
+                        duration_ms=round((time.monotonic() - connect_started) * 1000, 2),
+                    )
+
+                    # Replace the temporary silent initialization instructions
+                    # with the real locale/authentication instructions.
+                    await websocket.send(
+                        json.dumps(
+                            {
+                                "type": "session.update",
+                                "session": {
+                                    "type": "realtime",
+                                    "instructions": self._system_instructions(state),
+                                },
+                            }
+                        )
+                    )
+
+                    _telemetry(
+                        "realtime.session.update.sent",
+                        call_id=call_id,
+                        stage=state.stage.value,
+                        language=state.locale.language,
+                        locale=state.locale.locale,
+                        accent=state.locale.accent,
+                    )
+
+                    # Only speak after sending the real session configuration.
+                    await self._speak(
+                        websocket,
+                        self._message_for(
+                            state,
+                            "opening",
+                        ),
+                    )
 
                     async for raw_event in websocket:
                         try:
                             event = json.loads(raw_event)
+
                         except json.JSONDecodeError:
                             LOGGER.warning(
                                 "Ignoring malformed Realtime event call_id=%s raw=%r",
@@ -205,25 +335,87 @@ class SipRealtimeGateway:
                             )
                             continue
 
-                        event_type = event.get("type")
-                        LOGGER.debug("Realtime event call_id=%s type=%s", call_id, event_type)
-                        if event_type == "transport.dtmf.received":
-                            await self._handle_dtmf(websocket, call_id, str(event.get("event", "")))
-                        elif event_type == "response.done":
-                            await self._handle_tool_calls(websocket, call_id, event)
-                        elif event_type == "error":
-                            LOGGER.error("Realtime API error call_id=%s event=%s", call_id, event)
+                        # Temporary diagnostic logging. This lets us inspect
+                        # the exact DTMF payload returned by OpenAI.
+                        LOGGER.info(
+                            "REALTIME_EVENT call_id=%s event=%s",
+                            call_id,
+                            json.dumps(
+                                event,
+                                ensure_ascii=False,
+                            ),
+                        )
 
-                    LOGGER.info("Realtime sideband closed call_id=%s", call_id)
+                        event_type = event.get("type")
+
+                        if event_type == "transport.dtmf.received":
+                            _telemetry(
+                                "realtime.dtmf.received",
+                                call_id=call_id,
+                            )
+                            await self._handle_dtmf(
+                                websocket,
+                                call_id,
+                                str(event.get("event", "")),
+                            )
+
+                        elif event_type == "response.done":
+                            _telemetry(
+                                "realtime.response.done",
+                                call_id=call_id,
+                            )
+                            await self._handle_tool_calls(
+                                websocket,
+                                call_id,
+                                event,
+                            )
+
+                        elif event_type == "session.updated":
+                            _telemetry(
+                                "realtime.session.updated",
+                                call_id=call_id,
+                            )
+
+                        elif event_type == "error":
+                            error_data = event.get("error", {})
+                            _telemetry(
+                                "realtime.error",
+                                call_id=call_id,
+                                error_type=_value(error_data, "type", ""),
+                                error_code=_value(error_data, "code", ""),
+                                error_message=_value(error_data, "message", ""),
+                            )
+                            LOGGER.error(
+                                "Realtime API error call_id=%s event=%s",
+                                call_id,
+                                event,
+                            )
+
+                    LOGGER.info(
+                        "Realtime sideband closed call_id=%s",
+                        call_id,
+                    )
                     return
+
             except Exception as error:
                 last_error = error
+                _telemetry(
+                    "realtime.sideband.connect.failed",
+                    call_id=call_id,
+                    attempt=attempt,
+                    max_attempts=6,
+                    duration_ms=round((time.monotonic() - connect_started) * 1000, 2),
+                    error_type=type(error).__name__,
+                    error=str(error),
+                )
+
                 LOGGER.warning(
                     "Realtime sideband connection failed call_id=%s attempt=%d/6 error=%r",
                     call_id,
                     attempt,
                     error,
                 )
+
                 if attempt < 6:
                     await asyncio.sleep(2)
 
@@ -272,8 +464,20 @@ class SipRealtimeGateway:
                 )
 
                 result = self._message_for(state, "language_selected")
+                _telemetry(
+                    "voice.language.selected",
+                    call_id=call_id,
+                    language=state.locale.language,
+                    locale=state.locale.locale,
+                    accent=state.locale.accent,
+                )
 
-            except (ValueError, json.JSONDecodeError):
+            except (ValueError, json.JSONDecodeError) as error:
+                _telemetry(
+                    "voice.language.selection.failed",
+                    call_id=call_id,
+                    error_type=type(error).__name__,
+                )
                 result = self._message_for(self.calls.get(call_id), "invalid_language")
 
             else:
@@ -281,7 +485,10 @@ class SipRealtimeGateway:
                     json.dumps(
                         {
                             "type": "session.update",
-                            "session": {"instructions": self._system_instructions(state)},
+                            "session": {
+                                "type": "realtime",
+                                "instructions": self._system_instructions(state),
+                            },
                         }
                     )
                 )
@@ -518,14 +725,14 @@ def create_sip_app(
         # Accept before returning the webhook response. Only the long-running
         # sideband controller is delegated to BackgroundTasks.
         try:
-            state = await resolved_gateway.accept_call(call_id, caller_phone)
+            await resolved_gateway.accept_call(call_id, caller_phone)
         except Exception as error:
             LOGGER.exception("Unable to accept incoming SIP call %s", call_id)
             raise HTTPException(
                 status_code=500, detail="failed to accept incoming SIP call"
             ) from error
 
-        tasks.add_task(resolved_gateway.control_call, call_id, state=state)
+        tasks.add_task(resolved_gateway.control_call, call_id, caller_phone)
         return {"status": "accepted"}
 
     app.state.sip_gateway = resolved_gateway

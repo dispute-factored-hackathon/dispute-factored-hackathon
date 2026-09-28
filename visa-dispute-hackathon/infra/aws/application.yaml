@@ -6,19 +6,32 @@ Parameters:
     Type: String
     Default: dispute-factored
     AllowedPattern: "[a-z0-9-]+"
+
   EnvironmentName:
     Type: String
     Default: demo
     AllowedPattern: "[a-z0-9-]+"
+
   ContainerImageUri:
     Type: String
     Description: Immutable ECR image URI including its tag.
+
   OpenAISecretArn:
     Type: String
-    Description: ARN of the JSON secret created by bootstrap.yaml.
+    Description: ARN of the JSON secret containing OpenAI credentials.
+
+  LangSmithSecretArn:
+    Type: String
+    Description: ARN of the JSON secret containing LANGSMITH_API_KEY.
+
+  LangSmithProject:
+    Type: String
+    Default: dispute-factored
+    Description: LangSmith project used for runtime agent traces.
+
   LogRetentionDays:
     Type: Number
-    Default: 3
+    Default: 7
     AllowedValues: [1, 3, 5, 7, 14, 30]
 
 Resources:
@@ -32,16 +45,21 @@ Resources:
             Principal:
               Service: lambda.amazonaws.com
             Action: sts:AssumeRole
+
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
       Policies:
-        - PolicyName: ReadOnlyOpenAISecret
+        - PolicyName: ReadObservabilitySecrets
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
               - Effect: Allow
                 Action: secretsmanager:GetSecretValue
-                Resource: !Ref OpenAISecretArn
+                Resource:
+                  - !Ref OpenAISecretArn
+                  - !Ref LangSmithSecretArn
+
         - PolicyName: InvokeCallWorker
           PolicyDocument:
             Version: "2012-10-17"
@@ -57,18 +75,31 @@ Resources:
       FunctionName: !Sub "${ProjectName}-${EnvironmentName}-sip"
       Description: Verifies OpenAI webhooks and controls one Realtime SIP call per worker.
       PackageType: Image
+
       Code:
         ImageUri: !Ref ContainerImageUri
+
       Role: !GetAtt LambdaExecutionRole.Arn
       Architectures: [x86_64]
       MemorySize: 512
       Timeout: 900
+
       Environment:
         Variables:
           OPENAI_SECRET_ARN: !Ref OpenAISecretArn
+          LANGSMITH_SECRET_ARN: !Ref LangSmithSecretArn
+
           CUSTOMERS_CSV: /var/task/demo_data/customers.csv
+
           OPENAI_REALTIME_MODEL: gpt-realtime-2.1
           OPENAI_REALTIME_VOICE: marin
+
+          LANGSMITH_TRACING: "true"
+          LANGSMITH_PROJECT: !Ref LangSmithProject
+
+          OBSERVABILITY_SERVICE_NAME: dispute-factored-sip
+          OBSERVABILITY_ENVIRONMENT: !Ref EnvironmentName
+
       LoggingConfig:
         LogFormat: JSON
         ApplicationLogLevel: INFO
@@ -114,10 +145,17 @@ Resources:
 Outputs:
   FunctionUrl:
     Value: !GetAtt SipFunctionUrl.FunctionUrl
+
   OpenAIWebhookUrl:
     Value: !Sub "${SipFunctionUrl.FunctionUrl}webhooks/openai"
+
   FunctionName:
     Value: !Ref SipFunction
+
   MaximumCallDurationMinutes:
     Value: "14"
     Description: Worker closes the call before Lambda's hard 15-minute timeout.
+
+  LangSmithProject:
+    Value: !Ref LangSmithProject
+    Description: LangSmith project receiving runtime agent traces.
