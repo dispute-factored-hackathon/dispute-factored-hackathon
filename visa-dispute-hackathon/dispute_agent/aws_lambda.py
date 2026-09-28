@@ -71,7 +71,7 @@ def _invoke_worker(context: Any, *, call_id: str, caller_phone: str) -> None:
 
 def _run_worker(event: dict[str, Any]) -> dict[str, Any]:
     asyncio.run(
-        _get_gateway().accept_and_control(
+        _get_gateway().control_call(
             event["call_id"],
             event["caller_phone"],
             max_duration_seconds=MAX_CALL_SECONDS,
@@ -102,6 +102,13 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     except ValueError:
         asyncio.run(asyncio.to_thread(gateway.client.realtime.calls.reject, call_id))
         return _response(422, {"status": "missing_caller_phone"})
+
+    # The pending SIP decision has a short lifetime. Accept in the synchronous
+    # webhook invocation; asynchronous Lambda delivery is not latency-bounded.
+    try:
+        asyncio.run(gateway.accept_call(call_id, caller_phone))
+    except Exception:
+        return _response(502, {"status": "call_accept_failed"})
 
     _invoke_worker(context, call_id=call_id, caller_phone=caller_phone)
     return _response(202, {"status": "scheduled"})
