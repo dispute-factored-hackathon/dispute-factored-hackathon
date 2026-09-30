@@ -1,47 +1,8 @@
-# macOS
-.DS_Store
-**/.DS_Store
-
-# Python
 __pycache__/
 *.py[cod]
-*.pyo
 .pytest_cache/
-.ruff_cache/
-.coverage
-coverage.xml
-htmlcov/
-
-# Virtual environments
 .venv/
-venv/
-env/
-
-# Environment / secrets
 .env
-.env.*
-!.env.example
-
-# Logs
-*.log
-call-debug*.log
-call-live*.log
-realtime-events*.log
-successful-call*.log
-
-# IDE
-.vscode/
-.idea/
-
-# Jupyter
-.ipynb_checkpoints/
-
-# Python build artifacts
-build/
 dist/
+build/
 *.egg-info/
-
-# Temporary files
-*.tmp
-*.swp
-*~
