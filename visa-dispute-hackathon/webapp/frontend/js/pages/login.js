@@ -128,27 +128,49 @@ function normalizeFactoredId() {
 }
 
 
+function redirectCustomer(
+    customer,
+) {
+    if (
+        customer.onboarding_completed
+        === false
+    ) {
+        window.location.replace(
+            "/onboarding",
+        );
+
+        return;
+    }
+
+    window.location.replace(
+        "/home",
+    );
+}
+
+
 async function redirectIfAuthenticated() {
     try {
         const customer =
             await getCurrentCustomer();
 
-        if (customer) {
-            window.location.replace(
-                "/home",
-            );
-
-            return true;
+        if (!customer) {
+            return false;
         }
+
+        redirectCustomer(
+            customer,
+        );
+
+        return true;
 
     } catch (error) {
         console.error(
             "Unable to check current session:",
             error,
         );
-    }
 
-    return false;
+        return false;
+    }
 }
 
 
@@ -173,20 +195,21 @@ async function submitLogin(event) {
     setSubmitting(true);
 
     try {
-        await apiRequest(
-            "/auth/login",
-            {
-                method: "POST",
-                body:
-                    JSON.stringify({
-                        factored_id:
-                            factoredId,
-                    }),
-            },
-        );
+        const response =
+            await apiRequest(
+                "/auth/login",
+                {
+                    method: "POST",
+                    body:
+                        JSON.stringify({
+                            factored_id:
+                                factoredId,
+                        }),
+                },
+            );
 
-        window.location.replace(
-            "/home",
+        redirectCustomer(
+            response.customer,
         );
 
     } catch (error) {
@@ -213,11 +236,6 @@ async function submitLogin(event) {
 
 
 async function initializeLogin() {
-    /*
-     * Prefill before checking the session so the
-     * remembered identity is immediately available
-     * when this page actually needs to be shown.
-     */
     prefillFactoredId();
 
     await redirectIfAuthenticated();

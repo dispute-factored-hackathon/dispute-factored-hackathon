@@ -1,0 +1,394 @@
+.onboarding-page {
+    min-height: 100vh;
+
+    display: flex;
+    flex-direction: column;
+
+    background: var(--color-background);
+}
+
+.onboarding-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+
+    gap: var(--space-4);
+
+    padding: var(--space-4);
+
+    background: var(--color-surface);
+
+    border-bottom:
+        1px
+        solid
+        var(--color-border);
+}
+
+.brand-name {
+    color: var(--color-text);
+
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: -0.025em;
+
+    text-decoration: none;
+}
+
+.skip-button {
+    padding:
+        var(--space-2)
+        var(--space-3);
+
+    color: var(--color-text-secondary);
+    background: transparent;
+
+    border: 0;
+
+    font: inherit;
+    font-weight: 700;
+
+    cursor: pointer;
+}
+
+.skip-button:hover {
+    color: var(--color-text);
+}
+
+.tutorial-shell {
+    width: 100%;
+    max-width: 42rem;
+
+    flex: 1;
+
+    display: flex;
+    flex-direction: column;
+
+    margin: 0 auto;
+
+    padding:
+        var(--space-5)
+        var(--space-4)
+        var(--space-6);
+}
+
+.progress-header {
+    margin-bottom: var(--space-8);
+}
+
+#step-counter {
+    display: block;
+
+    margin-bottom: var(--space-2);
+
+    color: var(--color-text-secondary);
+
+    font-size: 0.75rem;
+    font-weight: 700;
+}
+
+.progress-track {
+    overflow: hidden;
+
+    width: 100%;
+    height: 0.35rem;
+
+    background: var(--color-border);
+
+    border-radius: 999px;
+}
+
+.progress-bar {
+    width: 10%;
+    height: 100%;
+
+    background: var(--color-primary);
+
+    border-radius: inherit;
+
+    transition:
+        width 180ms ease;
+}
+
+.tutorial-content {
+    flex: 1;
+
+    display: flex;
+    flex-direction: column;
+
+    padding-bottom: var(--space-8);
+}
+
+.step-eyebrow {
+    margin:
+        0
+        0
+        var(--space-3);
+
+    color: var(--color-success);
+
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+}
+
+.tutorial-content h1 {
+    max-width: 36rem;
+
+    margin:
+        0
+        0
+        var(--space-4);
+
+    font-family: var(--font-display);
+
+    font-size:
+        clamp(
+            2.4rem,
+            12vw,
+            4.5rem
+        );
+
+    line-height: 0.95;
+    letter-spacing: -0.055em;
+}
+
+.step-body {
+    max-width: 34rem;
+
+    margin-bottom: var(--space-6);
+
+    color: var(--color-text-secondary);
+
+    font-size: 1rem;
+    line-height: 1.6;
+}
+
+.step-highlight {
+    display: grid;
+    gap: var(--space-2);
+
+    margin-bottom: var(--space-5);
+    padding: var(--space-5);
+
+    color: #ffffff;
+    background: var(--color-primary);
+
+    border-radius: var(--radius-lg);
+
+    box-shadow: var(--shadow-card);
+}
+
+.step-highlight[hidden] {
+    display: none;
+}
+
+.step-highlight span {
+    color:
+        rgba(
+            255,
+            255,
+            255,
+            0.64
+        );
+
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+}
+
+.step-highlight strong {
+    font-family: var(--font-display);
+
+    font-size:
+        clamp(
+            1.7rem,
+            9vw,
+            2.75rem
+        );
+
+    line-height: 1;
+    letter-spacing: 0.04em;
+}
+
+.highlight-phone {
+    width: fit-content;
+
+    color: #ffffff;
+
+    font-family: var(--font-display);
+
+    font-size:
+        clamp(
+            1.7rem,
+            9vw,
+            2.75rem
+        );
+
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0.02em;
+
+    text-decoration: none;
+}
+
+.highlight-phone:hover {
+    text-decoration: underline;
+}
+
+.tutorial-link {
+    align-self: flex-start;
+
+    margin-top: auto;
+}
+
+.tutorial-link[hidden] {
+    display: none;
+}
+
+.tutorial-controls {
+    display: grid;
+    grid-template-columns:
+        minmax(0, 1fr)
+        minmax(0, 1fr);
+
+    gap: var(--space-3);
+
+    padding-top: var(--space-4);
+
+    border-top:
+        1px
+        solid
+        var(--color-border);
+}
+
+.tutorial-controls .button {
+    width: 100%;
+}
+
+.tutorial-controls button:disabled {
+    cursor: default;
+    opacity: 0.4;
+}
+
+
+/* Skip dialog */
+
+.skip-dialog {
+    width:
+        min(
+            calc(100% - 2rem),
+            28rem
+        );
+
+    padding: 0;
+
+    color: var(--color-text);
+    background: var(--color-surface);
+
+    border: 0;
+    border-radius: var(--radius-lg);
+
+    box-shadow:
+        0 1.5rem 4rem
+        rgba(0, 0, 0, 0.2);
+}
+
+.skip-dialog::backdrop {
+    background:
+        rgba(
+            15,
+            24,
+            21,
+            0.55
+        );
+
+    backdrop-filter: blur(2px);
+}
+
+.skip-dialog-content {
+    padding: var(--space-6);
+}
+
+.dialog-eyebrow {
+    margin:
+        0
+        0
+        var(--space-2);
+
+    color: var(--color-success);
+
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+}
+
+.skip-dialog h2 {
+    margin:
+        0
+        0
+        var(--space-3);
+
+    font-family: var(--font-display);
+
+    font-size: 1.75rem;
+    letter-spacing: -0.035em;
+}
+
+.skip-dialog-content > p:not(.dialog-eyebrow) {
+    margin:
+        0
+        0
+        var(--space-6);
+
+    color: var(--color-text-secondary);
+
+    line-height: 1.5;
+}
+
+.dialog-actions {
+    display: grid;
+    grid-template-columns:
+        minmax(0, 1fr)
+        minmax(0, 1fr);
+
+    gap: var(--space-3);
+}
+
+@media (min-width: 700px) {
+    .onboarding-header {
+        padding:
+            var(--space-4)
+            var(--space-8);
+    }
+
+    .tutorial-shell {
+        padding:
+            var(--space-8)
+            var(--space-8);
+    }
+
+    .progress-header {
+        margin-bottom: var(--space-10);
+    }
+
+    .tutorial-content {
+        min-height: 32rem;
+    }
+
+    .step-highlight {
+        max-width: 30rem;
+        padding: var(--space-6);
+    }
+
+    .tutorial-controls {
+        grid-template-columns:
+            auto
+            auto;
+
+        justify-content: end;
+    }
+
+    .tutorial-controls .button {
+        min-width: 9rem;
+    }
+}
