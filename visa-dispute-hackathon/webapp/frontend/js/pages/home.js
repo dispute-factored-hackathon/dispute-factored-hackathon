@@ -3,6 +3,10 @@ import {
     requireCustomer,
 } from "../auth.js";
 
+import {
+    renderBottomNavigation,
+} from "../components/bottom-nav.js";
+
 
 const homePage =
     document.querySelector("#home-page");
@@ -10,8 +14,47 @@ const homePage =
 const customerName =
     document.querySelector("#customer-name");
 
+const profileInitial =
+    document.querySelector("#profile-initial");
+
+const greeting =
+    document.querySelector("#greeting");
+
 const logoutButton =
     document.querySelector("#logout-button");
+
+const bottomNav =
+    document.querySelector("#bottom-nav");
+
+
+function greetingForCurrentTime() {
+    const hour =
+        new Date().getHours();
+
+    if (hour < 12) {
+        return "GOOD MORNING";
+    }
+
+    if (hour < 18) {
+        return "GOOD AFTERNOON";
+    }
+
+    return "GOOD EVENING";
+}
+
+
+function displayCustomer(customer) {
+    customerName.textContent =
+        customer.first_name;
+
+    profileInitial.textContent =
+        customer.first_name
+            .charAt(0)
+            .toUpperCase();
+
+    greeting.textContent =
+        greetingForCurrentTime();
+}
 
 
 async function initializeHome() {
@@ -23,8 +66,12 @@ async function initializeHome() {
             return;
         }
 
-        customerName.textContent =
-            customer.first_name;
+        displayCustomer(customer);
+
+        renderBottomNavigation(
+            bottomNav,
+            "home",
+        );
 
         homePage.hidden = false;
 

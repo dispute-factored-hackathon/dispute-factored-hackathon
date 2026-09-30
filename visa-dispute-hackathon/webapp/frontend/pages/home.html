@@ -27,6 +27,11 @@
 
     <link
         rel="stylesheet"
+        href="/static/css/components.css"
+    >
+
+    <link
+        rel="stylesheet"
         href="/static/css/pages/home.css"
     >
 </head>
@@ -38,25 +43,36 @@
         hidden
     >
         <header class="app-header">
-            <div>
-                <p class="brand-name">
-                    FACTORED BANK
-                </p>
-            </div>
-
-            <button
-                id="logout-button"
-                class="logout-button"
-                type="button"
+            <a
+                class="brand-name"
+                href="/home"
+                aria-label="Factored Bank home"
             >
-                Sign out
-            </button>
+                FACTORED BANK
+            </a>
+
+            <a
+                class="profile-button"
+                href="/profile"
+                aria-label="Open profile"
+            >
+                <span
+                    id="profile-initial"
+                    aria-hidden="true"
+                >
+                    F
+                </span>
+            </a>
         </header>
 
-        <section class="home-content">
-            <div class="welcome">
-                <p class="eyebrow">
-                    YOUR ACCOUNT
+        <div class="home-content">
+
+            <section class="welcome">
+                <p
+                    id="greeting"
+                    class="eyebrow"
+                >
+                    WELCOME BACK
                 </p>
 
                 <h1>
@@ -65,104 +81,261 @@
                 </h1>
 
                 <p>
-                    Your Factored Bank demo account
-                    is ready.
+                    What would you like to do today?
                 </p>
-            </div>
+            </section>
 
+            <!-- Izzy -->
             <section
-                class="demo-notice"
-                aria-label="Demo environment"
+                class="izzy-hero"
+                aria-labelledby="izzy-title"
             >
-                <strong>
-                    Demo environment
-                </strong>
+                <div class="izzy-wordmark">
+                    IZZY
+                </div>
 
-                <p>
-                    This account uses synthetic banking
-                    data created for the Factored
-                    Hackathon.
-                </p>
+                <div class="izzy-content">
+                    <p class="izzy-eyebrow">
+                        YOUR DISPUTE ASSISTANT
+                    </p>
+
+                    <h2 id="izzy-title">
+                        Something wrong
+                        with a payment?
+                    </h2>
+
+                    <p>
+                        Izzy can help you find a
+                        transaction, understand what
+                        happened and start a complaint.
+                    </p>
+
+                    <a
+                        class="
+                            button
+                            izzy-primary-action
+                        "
+                        href="/agent"
+                    >
+                        Talk to Izzy
+                        <span aria-hidden="true">
+                            →
+                        </span>
+                    </a>
+                </div>
+
+                <div class="phone-option">
+                    <div>
+                        <span class="phone-label">
+                            PREFER TO CALL?
+                        </span>
+
+                        <a
+                            class="phone-number"
+                            href="tel:+16615779964"
+                        >
+                            +1 661 577 9964
+                        </a>
+                    </div>
+
+                    <a
+                        class="call-button"
+                        href="tel:+16615779964"
+                        aria-label="Call Izzy"
+                    >
+                        Call
+                    </a>
+                </div>
             </section>
 
-            <section class="hub-grid">
-                <article class="hub-card">
-                    <span class="hub-card-label">
-                        CARDS
-                    </span>
+            <!-- Banking -->
+            <section
+                class="banking-section"
+                aria-labelledby="banking-title"
+            >
+                <div class="section-heading">
+                    <div>
+                        <p class="section-eyebrow">
+                            FACTORED BANK
+                        </p>
 
-                    <h2>
-                        Your cards
-                    </h2>
+                        <h2 id="banking-title">
+                            Your banking
+                        </h2>
+                    </div>
+                </div>
 
-                    <p>
-                        View and manage your Factored
-                        Bank cards.
-                    </p>
+                <div class="hub-grid">
+                    <a
+                        class="hub-card"
+                        href="/cards"
+                    >
+                        <span
+                            class="hub-icon"
+                            aria-hidden="true"
+                        >
+                            ◫
+                        </span>
 
-                    <span class="coming-soon">
-                        Coming next
-                    </span>
-                </article>
+                        <div>
+                            <h3>
+                                Cards
+                            </h3>
 
-                <article class="hub-card">
-                    <span class="hub-card-label">
-                        ACTIVITY
-                    </span>
+                            <p>
+                                View, block and manage
+                                your cards.
+                            </p>
+                        </div>
 
-                    <h2>
-                        Transactions
-                    </h2>
+                        <span
+                            class="hub-arrow"
+                            aria-hidden="true"
+                        >
+                            →
+                        </span>
+                    </a>
 
-                    <p>
-                        Review purchases and report
-                        something you don't recognize.
-                    </p>
+                    <a
+                        class="hub-card"
+                        href="/transactions"
+                    >
+                        <span
+                            class="hub-icon"
+                            aria-hidden="true"
+                        >
+                            ↕
+                        </span>
 
-                    <span class="coming-soon">
-                        Coming next
-                    </span>
-                </article>
+                        <div>
+                            <h3>
+                                Transactions
+                            </h3>
 
-                <article class="hub-card">
-                    <span class="hub-card-label">
-                        DISPUTES
-                    </span>
+                            <p>
+                                Review purchases and
+                                payment activity.
+                            </p>
+                        </div>
 
-                    <h2>
-                        Complaints
-                    </h2>
+                        <span
+                            class="hub-arrow"
+                            aria-hidden="true"
+                        >
+                            →
+                        </span>
+                    </a>
 
-                    <p>
-                        Follow your complaints and
-                        dispute cases.
-                    </p>
+                    <a
+                        class="hub-card"
+                        href="/complaints"
+                    >
+                        <span
+                            class="hub-icon"
+                            aria-hidden="true"
+                        >
+                            ◇
+                        </span>
 
-                    <span class="coming-soon">
-                        Coming next
-                    </span>
-                </article>
+                        <div>
+                            <h3>
+                                Complaints
+                            </h3>
 
-                <article class="hub-card izzy-card">
-                    <span class="hub-card-label">
-                        IZZY
-                    </span>
+                            <p>
+                                Follow your disputes
+                                and complaints.
+                            </p>
+                        </div>
 
-                    <h2>
-                        Need help?
-                    </h2>
+                        <span
+                            class="hub-arrow"
+                            aria-hidden="true"
+                        >
+                            →
+                        </span>
+                    </a>
 
-                    <p>
-                        Talk to Izzy about a transaction
-                        or payment problem.
-                    </p>
+                    <a
+                        class="hub-card"
+                        href="/profile"
+                    >
+                        <span
+                            class="hub-icon"
+                            aria-hidden="true"
+                        >
+                            ○
+                        </span>
 
-                    <span class="coming-soon">
-                        Coming next
-                    </span>
-                </article>
+                        <div>
+                            <h3>
+                                Profile
+                            </h3>
+
+                            <p>
+                                Review your personal
+                                information.
+                            </p>
+                        </div>
+
+                        <span
+                            class="hub-arrow"
+                            aria-hidden="true"
+                        >
+                            →
+                        </span>
+                    </a>
+                </div>
             </section>
-        </section>
+
+            <!-- Scam shop -->
+            <section
+                class="shady-business"
+                aria-labelledby="shady-title"
+            >
+                <div>
+                    <p class="shady-eyebrow">
+                        DEMO EXPERIENCE
+                    </p>
+
+                    <h2 id="shady-title">
+                        Shady Business
+                    </h2>
+
+                    <p>
+                        Visit our suspicious little shop,
+                        make a demo purchase and see if
+                        everything on your statement is
+                        what you expected.
+                    </p>
+                </div>
+
+                <a
+                    class="shady-link"
+                    href="/shop"
+                >
+                    Visit Shady Business
+                    <span aria-hidden="true">
+                        →
+                    </span>
+                </a>
+            </section>
+
+            <button
+                id="logout-button"
+                class="sign-out-button"
+                type="button"
+            >
+                Sign out
+            </button>
+
+        </div>
+
+        <nav
+            id="bottom-nav"
+            class="bottom-nav"
+            aria-label="Primary navigation"
+        ></nav>
     </main>
 
     <script
