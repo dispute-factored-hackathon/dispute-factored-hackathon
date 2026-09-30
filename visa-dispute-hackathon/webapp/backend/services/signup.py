@@ -1,11 +1,13 @@
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from webapp.backend.models.customer import Customer
 from webapp.backend.models.product import Product
+from webapp.backend.models.transaction import Transaction
 from webapp.backend.repositories.interfaces import (
     CustomerRepository,
     ProductRepository,
+    TransactionRepository,
 )
 from webapp.backend.schemas.customer import (
     CustomerSignupRequest,
@@ -19,9 +21,11 @@ class SignupService:
         self,
         customers: CustomerRepository,
         products: ProductRepository,
+        transactions: TransactionRepository,
     ) -> None:
         self.customers = customers
         self.products = products
+        self.transactions = transactions
 
     def signup(
         self,
@@ -79,6 +83,12 @@ class SignupService:
 
         self.products.create(product)
 
+        self._create_demo_transactions(
+            customer=customer,
+            product=product,
+            now=now,
+        )
+
         return CustomerSignupResponse(
             customer_id=customer.customer_id,
             first_name=customer.first_name,
@@ -95,6 +105,94 @@ class SignupService:
                 product_status=product.product_status,
             ),
         )
+
+    def _create_demo_transactions(
+        self,
+        *,
+        customer: Customer,
+        product: Product,
+        now: datetime,
+    ) -> None:
+        demo_transactions = (
+            {
+                "days_ago": 1,
+                "merchant_name": "Factored Coffee",
+                "merchant_category": "Coffee Shop",
+                "transaction_category": "Food & Drink",
+                "amount": 8.75,
+                "channel": "POS",
+                "country": "Factoredland",
+                "city": "Factored Village",
+                "is_fraud": False,
+                "fraud_score": 0.03,
+            },
+            {
+                "days_ago": 3,
+                "merchant_name": "StreamBox",
+                "merchant_category": "Digital Services",
+                "transaction_category": "Entertainment",
+                "amount": 14.99,
+                "channel": "Web",
+                "country": "Factoredland",
+                "city": "Factored Village",
+                "is_fraud": False,
+                "fraud_score": 0.08,
+            },
+            {
+                "days_ago": 5,
+                "merchant_name": "Mercado Central",
+                "merchant_category": "Grocery Store",
+                "transaction_category": "Groceries",
+                "amount": 73.42,
+                "channel": "POS",
+                "country": "Factoredland",
+                "city": "Factored Village",
+                "is_fraud": False,
+                "fraud_score": 0.05,
+            },
+            {
+                "days_ago": 7,
+                "merchant_name": "Shady Business",
+                "merchant_category": "Online Retail",
+                "transaction_category": "Suspicious Purchase",
+                "amount": 129.90,
+                "channel": "Web",
+                "country": "Unknown",
+                "city": "Unknown",
+                "is_fraud": True,
+                "fraud_score": 0.94,
+            },
+        )
+
+        for data in demo_transactions:
+            transaction_date = now - timedelta(days=data["days_ago"])
+
+            transaction = Transaction(
+                transaction_id=("TRX-DEMO-" + secrets.token_hex(6).upper()),
+                transaction_date=transaction_date,
+                process_date=transaction_date.date(),
+                product_id=product.product_id,
+                customer_id=customer.customer_id,
+                transaction_type="Purchase",
+                transaction_category=(data["transaction_category"]),
+                amount=data["amount"],
+                currency="USD",
+                amount_usd=data["amount"],
+                channel=data["channel"],
+                branch_id=None,
+                merchant_name=data["merchant_name"],
+                merchant_category=(data["merchant_category"]),
+                transaction_country=data["country"],
+                transaction_city=data["city"],
+                transaction_status="Approved",
+                response_code="00",
+                is_fraud=data["is_fraud"],
+                fraud_score=data["fraud_score"],
+                latitude=None,
+                longitude=None,
+            )
+
+            self.transactions.create(transaction)
 
     @staticmethod
     def _generate_card_number() -> str:

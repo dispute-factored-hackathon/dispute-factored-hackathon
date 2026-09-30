@@ -3,6 +3,7 @@ from threading import Lock
 from webapp.backend.models.customer import Customer
 from webapp.backend.models.product import Product
 from webapp.backend.models.session import CustomerSession
+from webapp.backend.models.transaction import Transaction
 
 
 class MockCustomerRepository:
@@ -99,6 +100,59 @@ class MockProductRepository:
         return product
 
 
+class MockTransactionRepository:
+    def __init__(self) -> None:
+        self._transactions: dict[
+            str,
+            Transaction,
+        ] = {}
+
+        self._lock = Lock()
+
+    def create(
+        self,
+        transaction: Transaction,
+    ) -> Transaction:
+        with self._lock:
+            self._transactions[transaction.transaction_id] = transaction
+
+        return transaction
+
+    def get_by_id(
+        self,
+        transaction_id: str,
+    ) -> Transaction | None:
+        return self._transactions.get(transaction_id)
+
+    def list_by_customer(
+        self,
+        customer_id: str,
+    ) -> list[Transaction]:
+        transactions = [
+            transaction
+            for transaction in self._transactions.values()
+            if transaction.customer_id == customer_id
+        ]
+
+        return sorted(
+            transactions,
+            key=lambda transaction: transaction.transaction_date,
+            reverse=True,
+        )
+
+    def update(
+        self,
+        transaction: Transaction,
+    ) -> Transaction:
+        with self._lock:
+            if transaction.transaction_id not in self._transactions:
+                raise ValueError("Transaction does not exist.")
+
+            self._transactions[transaction.transaction_id] = transaction
+
+        return transaction
+
+
 class MockSessionRepository:
     def __init__(self) -> None:
         self._sessions: dict[
@@ -137,5 +191,7 @@ class MockSessionRepository:
 customer_repository = MockCustomerRepository()
 
 product_repository = MockProductRepository()
+
+transaction_repository = MockTransactionRepository()
 
 session_repository = MockSessionRepository()

@@ -5,12 +5,14 @@ from webapp.backend.repositories.mock import (
     customer_repository,
     product_repository,
     session_repository,
+    transaction_repository,
 )
 
 
 def clear_repositories() -> None:
     customer_repository._customers.clear()
     product_repository._products.clear()
+    transaction_repository._transactions.clear()
     session_repository._sessions.clear()
 
 
@@ -109,22 +111,15 @@ def test_authenticated_customer_context() -> None:
     assert body["first_name"] == "Gabriel"
 
 
-def test_placeholder_routes_are_available() -> None:
+def test_transactions_route_uses_real_page() -> None:
     client = TestClient(app)
 
-    routes = (
-        "/transactions",
-        "/complaints",
-        "/profile",
-        "/agent",
-        "/shop",
-    )
+    response = client.get("/transactions")
 
-    for route in routes:
-        response = client.get(route)
-
-        assert response.status_code == 200
-        assert "Coming soon" in response.text
+    assert response.status_code == 200
+    assert "Transaction history" in response.text
+    assert "transactions.js" in response.text
+    assert "Coming soon" not in response.text
 
 
 def test_cards_route_uses_real_cards_page() -> None:
@@ -136,6 +131,23 @@ def test_cards_route_uses_real_cards_page() -> None:
     assert "Manage your Factored Bank cards" in response.text
     assert "cards.js" in response.text
     assert "Coming soon" not in response.text
+
+
+def test_placeholder_routes_are_available() -> None:
+    client = TestClient(app)
+
+    routes = (
+        "/complaints",
+        "/profile",
+        "/agent",
+        "/shop",
+    )
+
+    for route in routes:
+        response = client.get(route)
+
+        assert response.status_code == 200
+        assert "Coming soon" in response.text
 
 
 def test_api_me_remains_protected() -> None:

@@ -21,55 +21,68 @@ const bottomNav =
 
 
 const FEATURES = {
-    "/cards": {
-        title: "Your cards",
-        description:
-            "View your Factored Bank cards, check their status, " +
-            "and block or unblock them when needed.",
-        navigationKey: "cards",
-    },
-
-    "/transactions": {
-        title: "Transactions",
-        description:
-            "Review your purchases and payment activity, " +
-            "and report a transaction you don't recognize.",
-        navigationKey: "transactions",
-    },
-
     "/complaints": {
         title: "Complaints",
         description:
-            "Follow complaints and disputes you have opened " +
-            "with Factored Bank.",
+            "Follow complaints and disputes you have opened "
+            + "with Factored Bank.",
         navigationKey: null,
     },
 
     "/profile": {
         title: "Your profile",
         description:
-            "Review your Factored Bank demo identity and " +
-            "personal preferences.",
+            "Review your Factored Bank demo identity and "
+            + "personal preferences.",
         navigationKey: null,
     },
 
     "/agent": {
         title: "Izzy",
         description:
-            "Chat with Izzy about a payment, transaction, " +
-            "or dispute.",
+            "Chat with Izzy about a payment, transaction, "
+            + "or dispute.",
         navigationKey: "agent",
     },
 
     "/shop": {
         title: "Shady Business",
         description:
-            "The suspicious demo shop is being prepared. " +
-            "Soon you'll be able to make purchases here " +
-            "and generate transactions to dispute.",
+            "The suspicious demo shop is being prepared. "
+            + "Soon you'll be able to make purchases here "
+            + "and generate transactions to dispute.",
         navigationKey: null,
     },
 };
+
+
+function applyTransactionContext() {
+    if (
+        window.location.pathname
+        !== "/agent"
+    ) {
+        return;
+    }
+
+    const parameters =
+        new URLSearchParams(
+            window.location.search,
+        );
+
+    const transactionId =
+        parameters.get(
+            "transaction_id",
+        );
+
+    if (!transactionId) {
+        return;
+    }
+
+    featureDescription.textContent =
+        "Izzy received the transaction you selected "
+        + `(${transactionId}). The chat experience will `
+        + "use this transaction as its starting context.";
+}
 
 
 async function initializePage() {
@@ -82,7 +95,9 @@ async function initializePage() {
         }
 
         const feature =
-            FEATURES[window.location.pathname];
+            FEATURES[
+                window.location.pathname
+            ];
 
         if (feature) {
             featureTitle.textContent =
@@ -102,6 +117,8 @@ async function initializePage() {
             );
         }
 
+        applyTransactionContext();
+
         page.hidden = false;
 
     } catch (error) {
@@ -110,7 +127,9 @@ async function initializePage() {
             error,
         );
 
-        window.location.replace("/login");
+        window.location.replace(
+            "/login",
+        );
     }
 }
 

@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+    >
+
+    <meta
+        name="description"
+        content="Factored Bank transaction details."
+    >
+
+    <title>Transaction · Factored Bank</title>
+
+    <link
+        rel="stylesheet"
+        href="/static/css/tokens.css"
+    >
+
+    <link
+        rel="stylesheet"
+        href="/static/css/global.css"
+    >
+
+    <link
+        rel="stylesheet"
+        href="/static/css/components.css"
+    >
+
+    <link
+        rel="stylesheet"
+        href="/static/css/pages/transaction-detail.css"
+    >
+</head>
+
+<body>
+    <main
+        id="transaction-page"
+        class="transaction-page"
+        hidden
+    >
+        <header class="app-header">
+            <a
+                class="back-link"
+                href="/transactions"
+                aria-label="Back to transactions"
+            >
+                ←
+            </a>
+
+            <a
+                class="brand-name"
+                href="/home"
+            >
+                FACTORED BANK
+            </a>
+
+            <a
+                class="profile-button"
+                href="/profile"
+                aria-label="Open profile"
+            >
+                <span
+                    id="profile-initial"
+                    aria-hidden="true"
+                >
+                    F
+                </span>
+            </a>
+        </header>
+
+        <div class="transaction-content">
+            <div
+                id="page-error"
+                class="page-error"
+                role="alert"
+                hidden
+            ></div>
+
+            <section
+                id="transaction-detail"
+                hidden
+            >
+                <header class="transaction-heading">
+                    <p class="eyebrow">
+                        TRANSACTION
+                    </p>
+
+                    <h1 id="merchant-name">
+                        Merchant
+                    </h1>
+
+                    <p
+                        id="transaction-amount"
+                        class="transaction-amount"
+                    ></p>
+                </header>
+
+                <div
+                    id="fraud-warning"
+                    class="fraud-warning"
+                    hidden
+                >
+                    <strong>
+                        Suspicious activity indicator
+                    </strong>
+
+                    <p>
+                        This transaction is marked as
+                        suspicious in the demo data.
+                        If you don't recognize it,
+                        Izzy can help you review it.
+                    </p>
+                </div>
+
+                <section
+                    class="detail-card"
+                    aria-label="Transaction details"
+                >
+                    <dl class="detail-list">
+                        <div>
+                            <dt>Date</dt>
+                            <dd id="transaction-date"></dd>
+                        </div>
+
+                        <div>
+                            <dt>Status</dt>
+                            <dd id="transaction-status"></dd>
+                        </div>
+
+                        <div>
+                            <dt>Card</dt>
+                            <dd id="transaction-card"></dd>
+                        </div>
+
+                        <div>
+                            <dt>Type</dt>
+                            <dd id="transaction-type"></dd>
+                        </div>
+
+                        <div>
+                            <dt>Category</dt>
+                            <dd id="transaction-category"></dd>
+                        </div>
+
+                        <div>
+                            <dt>Channel</dt>
+                            <dd id="transaction-channel"></dd>
+                        </div>
+
+                        <div>
+                            <dt>Merchant category</dt>
+                            <dd id="merchant-category"></dd>
+                        </div>
+
+                        <div>
+                            <dt>Location</dt>
+                            <dd id="transaction-location"></dd>
+                        </div>
+                    </dl>
+                </section>
+
+                <section
+                    class="report-card"
+                    aria-labelledby="report-title"
+                >
+                    <p class="report-eyebrow">
+                        NEED HELP?
+                    </p>
+
+                    <h2 id="report-title">
+                        Don't recognize this transaction?
+                    </h2>
+
+                    <p>
+                        Start a conversation with Izzy.
+                        We'll pass this transaction into
+                        the conversation so you don't
+                        have to find it again.
+                    </p>
+
+                    <a
+                        id="report-button"
+                        class="
+                            button
+                            button-primary
+                            report-button
+                        "
+                        href="/agent"
+                    >
+                        Report this transaction
+                        <span aria-hidden="true">
+                            →
+                        </span>
+                    </a>
+                </section>
+            </section>
+        </div>
+
+        <nav
+            id="bottom-nav"
+            class="bottom-nav"
+            aria-label="Primary navigation"
+        ></nav>
+    </main>
+
+    <script
+        type="module"
+        src="/static/js/pages/transaction-detail.js"
+    ></script>
+</body>
+</html>
