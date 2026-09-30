@@ -16,6 +16,7 @@ settings = get_settings()
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 FRONTEND_DIR = BASE_DIR / "frontend"
+PAGES_DIR = FRONTEND_DIR / "pages"
 
 
 app = FastAPI(
@@ -35,6 +36,10 @@ app.mount(
 )
 
 
+def page(filename: str) -> FileResponse:
+    return FileResponse(PAGES_DIR / filename)
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {
@@ -45,19 +50,49 @@ def health() -> dict[str, str]:
 
 @app.get("/")
 def index() -> FileResponse:
-    return FileResponse(FRONTEND_DIR / "pages" / "login.html")
+    return page("login.html")
 
 
 @app.get("/login")
 def login_page() -> FileResponse:
-    return FileResponse(FRONTEND_DIR / "pages" / "login.html")
+    return page("login.html")
 
 
 @app.get("/signup")
 def signup_page() -> FileResponse:
-    return FileResponse(FRONTEND_DIR / "pages" / "signup.html")
+    return page("signup.html")
 
 
 @app.get("/home")
 def home_page() -> FileResponse:
-    return FileResponse(FRONTEND_DIR / "pages" / "home.html")
+    return page("home.html")
+
+
+@app.get("/cards")
+def cards_page() -> FileResponse:
+    return page("coming-soon.html")
+
+
+@app.get("/transactions")
+def transactions_page() -> FileResponse:
+    return page("coming-soon.html")
+
+
+@app.get("/complaints")
+def complaints_page() -> FileResponse:
+    return page("coming-soon.html")
+
+
+@app.get("/profile")
+def profile_page() -> FileResponse:
+    return page("coming-soon.html")
+
+
+@app.get("/agent")
+def agent_page() -> FileResponse:
+    return page("coming-soon.html")
+
+
+@app.get("/shop")
+def shop_page() -> FileResponse:
+    return page("coming-soon.html")

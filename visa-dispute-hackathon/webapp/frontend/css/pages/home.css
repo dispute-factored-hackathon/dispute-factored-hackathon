@@ -1,5 +1,6 @@
 .home-page {
     min-height: 100vh;
+    padding-bottom: 6rem;
     background: var(--color-background);
 }
 
@@ -22,34 +23,32 @@
 }
 
 .brand-name {
-    margin: 0;
+    color: var(--color-text);
 
     font-family: var(--font-display);
     font-weight: 700;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.025em;
+
+    text-decoration: none;
 }
 
-.logout-button {
-    padding:
-        var(--space-2)
-        var(--space-3);
+.profile-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
 
-    color: var(--color-primary);
-    background: transparent;
+    width: 2.75rem;
+    height: 2.75rem;
 
-    border:
-        1px
-        solid
-        var(--color-border);
+    color: #ffffff;
+    background: var(--color-primary);
 
-    border-radius: var(--radius-md);
+    border-radius: 50%;
 
-    font-weight: 600;
-    cursor: pointer;
-}
+    font-family: var(--font-display);
+    font-weight: 700;
 
-.logout-button:hover {
-    border-color: var(--color-primary);
+    text-decoration: none;
 }
 
 .home-content {
@@ -68,6 +67,16 @@
     margin-bottom: var(--space-6);
 }
 
+.eyebrow,
+.section-eyebrow,
+.izzy-eyebrow,
+.shady-eyebrow,
+.phone-label {
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+}
+
 .eyebrow {
     margin:
         0
@@ -75,10 +84,6 @@
         var(--space-2);
 
     color: var(--color-success);
-
-    font-size: 0.75rem;
-    font-weight: 800;
-    letter-spacing: 0.12em;
 }
 
 .welcome h1 {
@@ -89,17 +94,18 @@
 
     font-family: var(--font-display);
 
-    font-size: clamp(
-        2.2rem,
-        10vw,
-        4rem
-    );
+    font-size:
+        clamp(
+            2.25rem,
+            11vw,
+            4rem
+        );
 
-    line-height: 1;
-    letter-spacing: -0.05em;
+    line-height: 0.98;
+    letter-spacing: -0.055em;
 }
 
-.welcome p:last-child {
+.welcome > p:last-child {
     margin: 0;
 
     color: var(--color-text-secondary);
@@ -107,40 +113,245 @@
     line-height: 1.5;
 }
 
-.demo-notice {
-    margin-bottom: var(--space-6);
-    padding: var(--space-4);
 
-    background: var(--color-surface);
+/* Izzy */
 
-    border:
-        1px
-        solid
-        var(--color-border);
+.izzy-hero {
+    overflow: hidden;
 
-    border-radius: var(--radius-md);
+    margin-bottom: var(--space-8);
+
+    color: #ffffff;
+    background: var(--color-primary);
+
+    border-radius: var(--radius-lg);
+
+    box-shadow: var(--shadow-card);
 }
 
-.demo-notice p {
-    margin:
-        var(--space-2)
-        0
+.izzy-wordmark {
+    padding:
+        var(--space-5)
+        var(--space-5)
         0;
 
-    color: var(--color-text-secondary);
+    font-family: var(--font-display);
+
+    font-size:
+        clamp(
+            3.5rem,
+            18vw,
+            7rem
+        );
+
+    font-weight: 700;
+
+    line-height: 0.85;
+    letter-spacing: -0.08em;
+
+    opacity: 0.12;
+}
+
+.izzy-content {
+    padding: var(--space-5);
+}
+
+.izzy-eyebrow {
+    margin:
+        0
+        0
+        var(--space-3);
+
+    color:
+        rgba(
+            255,
+            255,
+            255,
+            0.68
+        );
+}
+
+.izzy-content h2 {
+    max-width: 28rem;
+
+    margin:
+        0
+        0
+        var(--space-3);
+
+    font-family: var(--font-display);
+
+    font-size:
+        clamp(
+            2rem,
+            9vw,
+            3.4rem
+        );
+
+    line-height: 1;
+    letter-spacing: -0.05em;
+}
+
+.izzy-content > p {
+    max-width: 32rem;
+
+    margin:
+        0
+        0
+        var(--space-5);
+
+    color:
+        rgba(
+            255,
+            255,
+            255,
+            0.76
+        );
+
     line-height: 1.5;
+}
+
+.izzy-primary-action {
+    color: var(--color-primary);
+    background: #ffffff;
+}
+
+.izzy-primary-action:hover {
+    background:
+        rgba(
+            255,
+            255,
+            255,
+            0.9
+        );
+}
+
+.phone-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+
+    gap: var(--space-4);
+
+    padding:
+        var(--space-4)
+        var(--space-5);
+
+    background:
+        rgba(
+            255,
+            255,
+            255,
+            0.08
+        );
+
+    border-top:
+        1px
+        solid
+        rgba(
+            255,
+            255,
+            255,
+            0.12
+        );
+}
+
+.phone-label {
+    display: block;
+
+    margin-bottom: var(--space-1);
+
+    color:
+        rgba(
+            255,
+            255,
+            255,
+            0.58
+        );
+}
+
+.phone-number {
+    color: #ffffff;
+
+    font-family: var(--font-display);
+    font-size: 1rem;
+    font-weight: 600;
+
+    text-decoration: none;
+}
+
+.call-button {
+    flex: 0 0 auto;
+
+    padding:
+        var(--space-2)
+        var(--space-4);
+
+    color: var(--color-primary);
+    background: #ffffff;
+
+    border-radius: 999px;
+
+    font-size: 0.85rem;
+    font-weight: 800;
+
+    text-decoration: none;
+}
+
+
+/* Banking */
+
+.banking-section {
+    margin-bottom: var(--space-8);
+}
+
+.section-heading {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+
+    gap: var(--space-4);
+
+    margin-bottom: var(--space-4);
+}
+
+.section-eyebrow {
+    margin:
+        0
+        0
+        var(--space-1);
+
+    color: var(--color-text-secondary);
+}
+
+.section-heading h2 {
+    margin: 0;
+
+    font-family: var(--font-display);
+
+    font-size: 1.6rem;
+    letter-spacing: -0.035em;
 }
 
 .hub-grid {
     display: grid;
-    gap: var(--space-4);
+    grid-template-columns:
+        repeat(2, minmax(0, 1fr));
+
+    gap: var(--space-3);
 }
 
 .hub-card {
-    min-height: 13rem;
+    position: relative;
 
-    padding: var(--space-5);
+    display: flex;
+    flex-direction: column;
 
+    min-height: 11rem;
+
+    padding: var(--space-4);
+
+    color: var(--color-text);
     background: var(--color-surface);
 
     border:
@@ -151,68 +362,186 @@
     border-radius: var(--radius-lg);
 
     box-shadow: var(--shadow-card);
+
+    text-decoration: none;
+
+    transition:
+        transform 120ms ease,
+        border-color 120ms ease;
 }
 
-.hub-card-label {
+.hub-card:hover {
+    border-color: var(--color-accent);
+    transform: translateY(-2px);
+}
+
+.hub-card:active {
+    transform: translateY(0);
+}
+
+.hub-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    width: 2.5rem;
+    height: 2.5rem;
+
+    margin-bottom: var(--space-4);
+
+    color: var(--color-primary);
+    background: var(--color-background);
+
+    border-radius: var(--radius-md);
+
+    font-size: 1.15rem;
+}
+
+.hub-card h3 {
+    margin:
+        0
+        0
+        var(--space-1);
+
+    font-family: var(--font-display);
+
+    font-size: 1.05rem;
+    letter-spacing: -0.02em;
+}
+
+.hub-card p {
+    margin: 0;
+
     color: var(--color-text-secondary);
 
-    font-size: 0.7rem;
-    font-weight: 800;
-    letter-spacing: 0.12em;
+    font-size: 0.8rem;
+    line-height: 1.4;
 }
 
-.hub-card h2 {
+.hub-arrow {
+    position: absolute;
+
+    right: var(--space-4);
+    bottom: var(--space-4);
+
+    color: var(--color-primary);
+
+    font-size: 1.15rem;
+}
+
+
+/* Shady Business */
+
+.shady-business {
+    display: grid;
+    gap: var(--space-5);
+
+    margin-bottom: var(--space-8);
+    padding: var(--space-5);
+
+    color: #f8f5e9;
+    background: #171815;
+
+    border-radius: var(--radius-lg);
+}
+
+.shady-eyebrow {
     margin:
-        var(--space-3)
+        0
+        0
+        var(--space-2);
+
+    color: #d4c86c;
+}
+
+.shady-business h2 {
+    margin:
+        0
         0
         var(--space-2);
 
     font-family: var(--font-display);
 
-    font-size: 1.5rem;
-    letter-spacing: -0.03em;
+    font-size: 1.8rem;
+    letter-spacing: -0.04em;
 }
 
-.hub-card p {
-    margin: 0 0 var(--space-5);
+.shady-business p {
+    max-width: 35rem;
 
-    color: var(--color-text-secondary);
+    margin: 0;
+
+    color:
+        rgba(
+            248,
+            245,
+            233,
+            0.68
+        );
 
     line-height: 1.5;
 }
 
-.izzy-card {
-    color: #ffffff;
-    background: var(--color-primary);
-    border-color: var(--color-primary);
-}
+.shady-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
 
-.izzy-card .hub-card-label,
-.izzy-card p {
-    color: rgba(255, 255, 255, 0.72);
-}
+    gap: var(--space-3);
 
-.coming-soon {
-    display: inline-block;
+    width: 100%;
 
     padding:
-        var(--space-2)
-        var(--space-3);
+        var(--space-3)
+        var(--space-4);
+
+    color: #171815;
+    background: #d4c86c;
+
+    border-radius: var(--radius-md);
+
+    font-weight: 800;
+
+    text-decoration: none;
+}
+
+.shady-link:hover {
+    background: #e0d474;
+}
+
+
+/* Sign out */
+
+.sign-out-button {
+    display: block;
+
+    width: 100%;
+
+    padding: var(--space-4);
 
     color: var(--color-text-secondary);
+    background: transparent;
 
-    background: var(--color-background);
+    border:
+        1px
+        solid
+        var(--color-border);
 
-    border-radius: 999px;
+    border-radius: var(--radius-md);
 
-    font-size: 0.75rem;
-    font-weight: 700;
+    font: inherit;
+    font-weight: 600;
+
+    cursor: pointer;
 }
 
-.izzy-card .coming-soon {
-    color: #ffffff;
-    background: rgba(255, 255, 255, 0.14);
+.sign-out-button:hover {
+    color: var(--color-text);
+    border-color: var(--color-text-secondary);
 }
+
+
+/* Tablet/Desktop */
 
 @media (min-width: 700px) {
     .app-header {
@@ -224,11 +553,61 @@
     .home-content {
         padding:
             var(--space-10)
+            var(--space-8)
+            8rem;
+    }
+
+    .izzy-content {
+        padding:
+            var(--space-6)
+            var(--space-8);
+    }
+
+    .izzy-wordmark {
+        padding:
+            var(--space-8)
+            var(--space-8)
+            0;
+    }
+
+    .phone-option {
+        padding:
+            var(--space-5)
             var(--space-8);
     }
 
     .hub-grid {
+        gap: var(--space-4);
+    }
+
+    .hub-card {
+        min-height: 13rem;
+        padding: var(--space-5);
+    }
+
+    .shady-business {
         grid-template-columns:
-            repeat(2, 1fr);
+            minmax(0, 1fr)
+            auto;
+
+        align-items: end;
+
+        padding: var(--space-6);
+    }
+
+    .shady-link {
+        width: auto;
+        min-width: 14rem;
+    }
+}
+
+@media (min-width: 1000px) {
+    .hub-grid {
+        grid-template-columns:
+            repeat(4, minmax(0, 1fr));
+    }
+
+    .hub-card {
+        min-height: 14rem;
     }
 }

@@ -1,0 +1,141 @@
+.button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+
+    min-height: 3rem;
+    padding:
+        0
+        var(--space-4);
+
+    border: 0;
+    border-radius: var(--radius-md);
+
+    font: inherit;
+    font-weight: 700;
+
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.button-primary {
+    color: #ffffff;
+    background: var(--color-primary);
+}
+
+.button-primary:hover {
+    background: var(--color-primary-hover);
+}
+
+.button-secondary {
+    color: var(--color-primary);
+    background: transparent;
+
+    border:
+        1px
+        solid
+        var(--color-border);
+}
+
+.icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    width: 2.75rem;
+    height: 2.75rem;
+
+    color: var(--color-text);
+    background: var(--color-surface);
+
+    border:
+        1px
+        solid
+        var(--color-border);
+
+    border-radius: 50%;
+
+    text-decoration: none;
+}
+
+.bottom-nav {
+    position: fixed;
+
+    right: 0;
+    bottom: 0;
+    left: 0;
+
+    z-index: 10;
+
+    display: grid;
+    grid-template-columns:
+        repeat(4, 1fr);
+
+    min-height: 4.5rem;
+
+    padding:
+        var(--space-2)
+        var(--space-2)
+        max(
+            var(--space-2),
+            env(safe-area-inset-bottom)
+        );
+
+    background:
+        rgba(255, 255, 255, 0.96);
+
+    border-top:
+        1px
+        solid
+        var(--color-border);
+}
+
+.bottom-nav-link {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+
+    gap: var(--space-1);
+
+    color: var(--color-text-secondary);
+
+    border-radius: var(--radius-md);
+
+    font-size: 0.72rem;
+    font-weight: 600;
+
+    text-decoration: none;
+}
+
+.bottom-nav-link[aria-current="page"] {
+    color: var(--color-primary);
+    background: var(--color-background);
+}
+
+.bottom-nav-icon {
+    font-size: 1.15rem;
+}
+
+@media (min-width: 800px) {
+    .bottom-nav {
+        right: auto;
+        left: 50%;
+
+        width: min(36rem, calc(100% - 2rem));
+
+        transform: translateX(-50%);
+
+        margin-bottom: var(--space-4);
+
+        border:
+            1px
+            solid
+            var(--color-border);
+
+        border-radius: var(--radius-lg);
+
+        box-shadow: var(--shadow-card);
+    }
+}
