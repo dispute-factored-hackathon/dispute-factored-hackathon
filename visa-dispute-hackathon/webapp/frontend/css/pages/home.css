@@ -1,0 +1,234 @@
+.home-page {
+    min-height: 100vh;
+    background: var(--color-background);
+}
+
+.app-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+
+    padding:
+        var(--space-4)
+        var(--space-4);
+
+    background: var(--color-surface);
+
+    border-bottom:
+        1px
+        solid
+        var(--color-border);
+}
+
+.brand-name {
+    margin: 0;
+
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+
+.logout-button {
+    padding:
+        var(--space-2)
+        var(--space-3);
+
+    color: var(--color-primary);
+    background: transparent;
+
+    border:
+        1px
+        solid
+        var(--color-border);
+
+    border-radius: var(--radius-md);
+
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.logout-button:hover {
+    border-color: var(--color-primary);
+}
+
+.home-content {
+    width: 100%;
+    max-width: 64rem;
+
+    margin: 0 auto;
+
+    padding:
+        var(--space-8)
+        var(--space-4)
+        var(--space-10);
+}
+
+.welcome {
+    margin-bottom: var(--space-6);
+}
+
+.eyebrow {
+    margin:
+        0
+        0
+        var(--space-2);
+
+    color: var(--color-success);
+
+    font-size: 0.75rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+}
+
+.welcome h1 {
+    margin:
+        0
+        0
+        var(--space-2);
+
+    font-family: var(--font-display);
+
+    font-size: clamp(
+        2.2rem,
+        10vw,
+        4rem
+    );
+
+    line-height: 1;
+    letter-spacing: -0.05em;
+}
+
+.welcome p:last-child {
+    margin: 0;
+
+    color: var(--color-text-secondary);
+
+    line-height: 1.5;
+}
+
+.demo-notice {
+    margin-bottom: var(--space-6);
+    padding: var(--space-4);
+
+    background: var(--color-surface);
+
+    border:
+        1px
+        solid
+        var(--color-border);
+
+    border-radius: var(--radius-md);
+}
+
+.demo-notice p {
+    margin:
+        var(--space-2)
+        0
+        0;
+
+    color: var(--color-text-secondary);
+    line-height: 1.5;
+}
+
+.hub-grid {
+    display: grid;
+    gap: var(--space-4);
+}
+
+.hub-card {
+    min-height: 13rem;
+
+    padding: var(--space-5);
+
+    background: var(--color-surface);
+
+    border:
+        1px
+        solid
+        var(--color-border);
+
+    border-radius: var(--radius-lg);
+
+    box-shadow: var(--shadow-card);
+}
+
+.hub-card-label {
+    color: var(--color-text-secondary);
+
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+}
+
+.hub-card h2 {
+    margin:
+        var(--space-3)
+        0
+        var(--space-2);
+
+    font-family: var(--font-display);
+
+    font-size: 1.5rem;
+    letter-spacing: -0.03em;
+}
+
+.hub-card p {
+    margin: 0 0 var(--space-5);
+
+    color: var(--color-text-secondary);
+
+    line-height: 1.5;
+}
+
+.izzy-card {
+    color: #ffffff;
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+}
+
+.izzy-card .hub-card-label,
+.izzy-card p {
+    color: rgba(255, 255, 255, 0.72);
+}
+
+.coming-soon {
+    display: inline-block;
+
+    padding:
+        var(--space-2)
+        var(--space-3);
+
+    color: var(--color-text-secondary);
+
+    background: var(--color-background);
+
+    border-radius: 999px;
+
+    font-size: 0.75rem;
+    font-weight: 700;
+}
+
+.izzy-card .coming-soon {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.14);
+}
+
+@media (min-width: 700px) {
+    .app-header {
+        padding:
+            var(--space-4)
+            var(--space-8);
+    }
+
+    .home-content {
+        padding:
+            var(--space-10)
+            var(--space-8);
+    }
+
+    .hub-grid {
+        grid-template-columns:
+            repeat(2, 1fr);
+    }
+}
