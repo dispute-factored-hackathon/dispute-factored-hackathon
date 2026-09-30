@@ -1,5 +1,6 @@
 from threading import Lock
 
+from webapp.backend.models.complaint import Complaint
 from webapp.backend.models.customer import Customer
 from webapp.backend.models.product import Product
 from webapp.backend.models.session import CustomerSession
@@ -153,6 +154,59 @@ class MockTransactionRepository:
         return transaction
 
 
+class MockComplaintRepository:
+    def __init__(self) -> None:
+        self._complaints: dict[
+            str,
+            Complaint,
+        ] = {}
+
+        self._lock = Lock()
+
+    def create(
+        self,
+        complaint: Complaint,
+    ) -> Complaint:
+        with self._lock:
+            self._complaints[complaint.complaint_id] = complaint
+
+        return complaint
+
+    def get_by_id(
+        self,
+        complaint_id: str,
+    ) -> Complaint | None:
+        return self._complaints.get(complaint_id)
+
+    def list_by_customer(
+        self,
+        customer_id: str,
+    ) -> list[Complaint]:
+        complaints = [
+            complaint
+            for complaint in self._complaints.values()
+            if complaint.customer_id == customer_id
+        ]
+
+        return sorted(
+            complaints,
+            key=lambda complaint: complaint.creation_date,
+            reverse=True,
+        )
+
+    def update(
+        self,
+        complaint: Complaint,
+    ) -> Complaint:
+        with self._lock:
+            if complaint.complaint_id not in self._complaints:
+                raise ValueError("Complaint does not exist.")
+
+            self._complaints[complaint.complaint_id] = complaint
+
+        return complaint
+
+
 class MockSessionRepository:
     def __init__(self) -> None:
         self._sessions: dict[
@@ -193,5 +247,7 @@ customer_repository = MockCustomerRepository()
 product_repository = MockProductRepository()
 
 transaction_repository = MockTransactionRepository()
+
+complaint_repository = MockComplaintRepository()
 
 session_repository = MockSessionRepository()

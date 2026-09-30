@@ -1,0 +1,416 @@
+.complaint-page {
+    min-height: 100vh;
+    padding-bottom: 6rem;
+    background: var(--color-background);
+}
+
+.app-header {
+    display: grid;
+    grid-template-columns:
+        2.75rem
+        1fr
+        2.75rem;
+
+    align-items: center;
+    gap: var(--space-3);
+
+    padding: var(--space-4);
+
+    background: var(--color-surface);
+
+    border-bottom:
+        1px
+        solid
+        var(--color-border);
+}
+
+.brand-name {
+    justify-self: center;
+
+    color: var(--color-text);
+
+    font-family: var(--font-display);
+    font-weight: 700;
+
+    text-decoration: none;
+}
+
+.back-link,
+.profile-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    width: 2.75rem;
+    height: 2.75rem;
+
+    text-decoration: none;
+}
+
+.back-link {
+    color: var(--color-text);
+    background: var(--color-surface);
+
+    border:
+        1px
+        solid
+        var(--color-border);
+
+    border-radius: 50%;
+
+    font-size: 1.25rem;
+}
+
+.profile-button {
+    color: #ffffff;
+    background: var(--color-primary);
+
+    border-radius: 50%;
+
+    font-family: var(--font-display);
+    font-weight: 700;
+}
+
+.complaint-content {
+    width: 100%;
+    max-width: 42rem;
+
+    margin: 0 auto;
+
+    padding:
+        var(--space-8)
+        var(--space-4)
+        var(--space-10);
+}
+
+.complaint-heading {
+    margin-bottom: var(--space-6);
+}
+
+.heading-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+
+    gap: var(--space-3);
+
+    margin-bottom: var(--space-2);
+}
+
+.eyebrow,
+.section-eyebrow,
+.izzy-eyebrow {
+    margin: 0;
+
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+}
+
+.eyebrow,
+.section-eyebrow {
+    color: var(--color-success);
+}
+
+.complaint-heading h1 {
+    margin:
+        0
+        0
+        var(--space-2);
+
+    font-family: var(--font-display);
+
+    font-size:
+        clamp(
+            2.25rem,
+            11vw,
+            4rem
+        );
+
+    line-height: 0.95;
+    letter-spacing: -0.055em;
+}
+
+.complaint-subcategory {
+    margin:
+        0
+        0
+        var(--space-4);
+
+    color: var(--color-text-secondary);
+}
+
+.claimed-amount {
+    margin: 0;
+
+    font-family: var(--font-display);
+
+    font-size:
+        clamp(
+            1.75rem,
+            8vw,
+            2.75rem
+        );
+
+    font-weight: 700;
+    letter-spacing: -0.04em;
+}
+
+.status-badge {
+    display: inline-block;
+
+    padding:
+        var(--space-1)
+        var(--space-3);
+
+    border-radius: 999px;
+
+    font-size: 0.7rem;
+    font-weight: 800;
+}
+
+.status-resolved {
+    color: #126149;
+    background: #e5f8f1;
+}
+
+.status-open {
+    color: #815000;
+    background: #fff1d6;
+}
+
+.status-default {
+    color: var(--color-text-secondary);
+    background: var(--color-surface);
+}
+
+.description-card,
+.detail-card,
+.resolution-card {
+    margin-bottom: var(--space-5);
+    padding: var(--space-5);
+
+    background: var(--color-surface);
+
+    border:
+        1px
+        solid
+        var(--color-border);
+
+    border-radius: var(--radius-lg);
+
+    box-shadow: var(--shadow-card);
+}
+
+.description-card h2,
+.resolution-card h2 {
+    margin:
+        var(--space-2)
+        0
+        var(--space-3);
+
+    font-family: var(--font-display);
+    letter-spacing: -0.03em;
+}
+
+.description-card > p:last-child,
+.resolution-text,
+.resolution-status {
+    color: var(--color-text-secondary);
+    line-height: 1.55;
+}
+
+.description-card > p:last-child {
+    margin: 0;
+}
+
+.detail-card {
+    padding-top: 0;
+    padding-bottom: 0;
+}
+
+.detail-list,
+.resolution-details {
+    margin: 0;
+}
+
+.detail-list > div,
+.resolution-details > div {
+    display: grid;
+    grid-template-columns:
+        minmax(7rem, 0.8fr)
+        minmax(0, 1.2fr);
+
+    gap: var(--space-4);
+
+    padding:
+        var(--space-4)
+        0;
+
+    border-bottom:
+        1px
+        solid
+        var(--color-border);
+}
+
+.detail-list > div:last-child,
+.resolution-details > div:last-child {
+    border-bottom: 0;
+}
+
+.detail-list dt,
+.resolution-details dt {
+    color: var(--color-text-secondary);
+    font-size: 0.85rem;
+}
+
+.detail-list dd,
+.resolution-details dd {
+    margin: 0;
+
+    font-weight: 600;
+    text-align: right;
+
+    overflow-wrap: anywhere;
+}
+
+.resolution-status {
+    margin:
+        0
+        0
+        var(--space-2);
+
+    font-weight: 700;
+}
+
+.resolution-text {
+    margin:
+        0
+        var(--space-4)
+        var(--space-4)
+        0;
+}
+
+.izzy-card {
+    padding: var(--space-5);
+
+    color: #ffffff;
+    background: var(--color-primary);
+
+    border-radius: var(--radius-lg);
+
+    box-shadow: var(--shadow-card);
+}
+
+.izzy-eyebrow {
+    margin-bottom: var(--space-2);
+
+    color:
+        rgba(
+            255,
+            255,
+            255,
+            0.62
+        );
+}
+
+.izzy-card h2 {
+    margin:
+        0
+        0
+        var(--space-2);
+
+    font-family: var(--font-display);
+
+    font-size: 1.75rem;
+    letter-spacing: -0.04em;
+}
+
+.izzy-card > p:not(.izzy-eyebrow) {
+    margin:
+        0
+        0
+        var(--space-5);
+
+    color:
+        rgba(
+            255,
+            255,
+            255,
+            0.74
+        );
+
+    line-height: 1.5;
+}
+
+.izzy-button {
+    width: 100%;
+
+    color: var(--color-primary);
+    background: #ffffff;
+}
+
+.page-error {
+    margin-bottom: var(--space-5);
+    padding: var(--space-4);
+
+    color: var(--color-error);
+
+    background:
+        rgba(
+            180,
+            35,
+            24,
+            0.06
+        );
+
+    border:
+        1px
+        solid
+        rgba(
+            180,
+            35,
+            24,
+            0.2
+        );
+
+    border-radius: var(--radius-md);
+}
+
+.page-error[hidden] {
+    display: none;
+}
+
+@media (max-width: 420px) {
+    .detail-list > div,
+    .resolution-details > div {
+        grid-template-columns: 1fr;
+        gap: var(--space-1);
+    }
+
+    .detail-list dd,
+    .resolution-details dd {
+        text-align: left;
+    }
+}
+
+@media (min-width: 700px) {
+    .app-header {
+        padding:
+            var(--space-4)
+            var(--space-8);
+    }
+
+    .complaint-content {
+        padding:
+            var(--space-10)
+            var(--space-8)
+            8rem;
+    }
+
+    .description-card,
+    .resolution-card,
+    .izzy-card {
+        padding: var(--space-6);
+    }
+}

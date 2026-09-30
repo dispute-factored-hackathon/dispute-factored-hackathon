@@ -5,6 +5,7 @@ from fastapi import (
 )
 
 from webapp.backend.repositories.mock import (
+    complaint_repository,
     customer_repository,
     product_repository,
     transaction_repository,
@@ -27,6 +28,7 @@ signup_service = SignupService(
     customer_repository,
     product_repository,
     transaction_repository,
+    complaint_repository,
 )
 
 

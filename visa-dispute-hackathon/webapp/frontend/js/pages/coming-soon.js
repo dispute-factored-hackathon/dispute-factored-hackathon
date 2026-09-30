@@ -55,8 +55,7 @@ const FEATURES = {
     },
 };
 
-
-function applyTransactionContext() {
+function applyAgentContext() {
     if (
         window.location.pathname
         !== "/agent"
@@ -74,14 +73,26 @@ function applyTransactionContext() {
             "transaction_id",
         );
 
-    if (!transactionId) {
+    const intent =
+        parameters.get(
+            "intent",
+        );
+
+    if (transactionId) {
+        featureDescription.textContent =
+            "Izzy received the transaction you selected "
+            + `(${transactionId}). The chat experience will `
+            + "use this transaction as its starting context.";
+
         return;
     }
 
-    featureDescription.textContent =
-        "Izzy received the transaction you selected "
-        + `(${transactionId}). The chat experience will `
-        + "use this transaction as its starting context.";
+    if (intent === "new_complaint") {
+        featureDescription.textContent =
+            "Izzy is ready to help you start a new complaint. "
+            + "The chat experience will begin in the "
+            + "complaint workflow.";
+    }
 }
 
 
@@ -117,7 +128,7 @@ async function initializePage() {
             );
         }
 
-        applyTransactionContext();
+        applyAgentContext();
 
         page.hidden = false;
 

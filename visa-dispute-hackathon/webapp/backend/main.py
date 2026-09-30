@@ -7,6 +7,9 @@ from fastapi.staticfiles import StaticFiles
 from webapp.backend.api.routes.auth import (
     router as auth_router,
 )
+from webapp.backend.api.routes.complaints import (
+    router as complaints_router,
+)
 from webapp.backend.api.routes.customers import (
     router as customers_router,
 )
@@ -29,11 +32,17 @@ app = FastAPI(
     title=settings.app_name,
 )
 
+
+# API routes
+
 app.include_router(auth_router)
 app.include_router(customers_router)
 app.include_router(products_router)
 app.include_router(transactions_router)
+app.include_router(complaints_router)
 
+
+# Static frontend assets
 
 app.mount(
     "/static",
@@ -44,8 +53,13 @@ app.mount(
 )
 
 
-def page(filename: str) -> FileResponse:
+def page(
+    filename: str,
+) -> FileResponse:
     return FileResponse(PAGES_DIR / filename)
+
+
+# Health
 
 
 @app.get("/health")
@@ -54,6 +68,9 @@ def health() -> dict[str, str]:
         "status": "ok",
         "environment": settings.app_env,
     }
+
+
+# Authentication / onboarding
 
 
 @app.get("/")
@@ -71,14 +88,23 @@ def signup_page() -> FileResponse:
     return page("signup.html")
 
 
+# Customer hub
+
+
 @app.get("/home")
 def home_page() -> FileResponse:
     return page("home.html")
 
 
+# Cards
+
+
 @app.get("/cards")
 def cards_page() -> FileResponse:
     return page("cards.html")
+
+
+# Transactions
 
 
 @app.get("/transactions")
@@ -95,9 +121,24 @@ def transaction_detail_page(
     return page("transaction-detail.html")
 
 
+# Complaints
+
+
 @app.get("/complaints")
 def complaints_page() -> FileResponse:
-    return page("coming-soon.html")
+    return page("complaints.html")
+
+
+@app.get("/complaints/{complaint_id}")
+def complaint_detail_page(
+    complaint_id: str,
+) -> FileResponse:
+    del complaint_id
+
+    return page("complaint-detail.html")
+
+
+# Profile
 
 
 @app.get("/profile")
@@ -105,9 +146,15 @@ def profile_page() -> FileResponse:
     return page("coming-soon.html")
 
 
+# Izzy
+
+
 @app.get("/agent")
 def agent_page() -> FileResponse:
     return page("coming-soon.html")
+
+
+# Shady Business
 
 
 @app.get("/shop")
