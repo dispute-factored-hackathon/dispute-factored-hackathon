@@ -33,10 +33,20 @@ class ProductRepository(Protocol):
         product: Product,
     ) -> Product: ...
 
+    def get_by_id(
+        self,
+        product_id: str,
+    ) -> Product | None: ...
+
     def list_by_customer(
         self,
         customer_id: str,
     ) -> list[Product]: ...
+
+    def update(
+        self,
+        product: Product,
+    ) -> Product: ...
 
 
 class SessionRepository(Protocol):
