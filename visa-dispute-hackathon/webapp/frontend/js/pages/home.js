@@ -66,7 +66,20 @@ async function initializeHome() {
             return;
         }
 
-        displayCustomer(customer);
+        if (
+            customer.onboarding_completed
+            === false
+        ) {
+            window.location.replace(
+                "/onboarding",
+            );
+
+            return;
+        }
+
+        displayCustomer(
+            customer,
+        );
 
         renderBottomNavigation(
             bottomNav,
@@ -81,7 +94,9 @@ async function initializeHome() {
             error,
         );
 
-        window.location.replace("/login");
+        window.location.replace(
+            "/login",
+        );
     }
 }
 

@@ -69,6 +69,7 @@ def test_home_page_is_available() -> None:
     response = client.get("/home")
 
     assert response.status_code == 200
+
     assert "FACTORED BANK" in response.text
     assert "IZZY" in response.text
     assert "Shady Business" in response.text
@@ -96,6 +97,18 @@ def test_home_contains_required_navigation() -> None:
         assert expected_link in response.text
 
 
+def test_home_contains_replay_tutorial() -> None:
+    client = TestClient(app)
+
+    response = client.get("/home")
+
+    assert response.status_code == 200
+
+    assert 'href="/onboarding?replay=true"' in response.text
+
+    assert "Replay tutorial" in response.text
+
+
 def test_authenticated_customer_context() -> None:
     client = TestClient(app)
 
@@ -112,16 +125,7 @@ def test_authenticated_customer_context() -> None:
 
     assert body["first_name"] == "Gabriel"
 
-
-def test_transactions_route_uses_real_page() -> None:
-    client = TestClient(app)
-
-    response = client.get("/transactions")
-
-    assert response.status_code == 200
-    assert "Transaction history" in response.text
-    assert "transactions.js" in response.text
-    assert "Coming soon" not in response.text
+    assert body["onboarding_completed"] is False
 
 
 def test_cards_route_uses_real_cards_page() -> None:
@@ -130,8 +134,23 @@ def test_cards_route_uses_real_cards_page() -> None:
     response = client.get("/cards")
 
     assert response.status_code == 200
+
     assert "Manage your Factored Bank cards" in response.text
+
     assert "cards.js" in response.text
+    assert "Coming soon" not in response.text
+
+
+def test_transactions_route_uses_real_page() -> None:
+    client = TestClient(app)
+
+    response = client.get("/transactions")
+
+    assert response.status_code == 200
+
+    assert "Transaction history" in response.text
+
+    assert "transactions.js" in response.text
     assert "Coming soon" not in response.text
 
 
@@ -141,9 +160,21 @@ def test_complaints_route_uses_real_page() -> None:
     response = client.get("/complaints")
 
     assert response.status_code == 200
+
     assert "Complaint history" in response.text
+
     assert "complaints.js" in response.text
     assert "Coming soon" not in response.text
+
+
+def test_onboarding_route_is_available() -> None:
+    client = TestClient(app)
+
+    response = client.get("/onboarding")
+
+    assert response.status_code == 200
+
+    assert "onboarding.js" in response.text
 
 
 def test_placeholder_routes_are_available() -> None:

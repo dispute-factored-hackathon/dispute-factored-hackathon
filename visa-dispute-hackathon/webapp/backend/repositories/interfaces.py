@@ -28,6 +28,11 @@ class CustomerRepository(Protocol):
         mobile_phone: str,
     ) -> Customer | None: ...
 
+    def update(
+        self,
+        customer: Customer,
+    ) -> Customer: ...
+
 
 class ProductRepository(Protocol):
     def create(

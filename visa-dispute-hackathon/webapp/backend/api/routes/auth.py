@@ -39,9 +39,11 @@ def customer_response(
 ) -> AuthenticatedCustomerResponse:
     return AuthenticatedCustomerResponse(
         customer_id=customer.customer_id,
+        factored_id=customer.document_number,
         first_name=customer.first_name,
         last_name=customer.last_name,
         preferred_accent=(customer.detected_accent.value),
+        onboarding_completed=(customer.onboarding_completed),
     )
 
 

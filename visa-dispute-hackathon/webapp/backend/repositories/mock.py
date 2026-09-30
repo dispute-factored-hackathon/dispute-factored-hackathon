@@ -59,6 +59,18 @@ class MockCustomerRepository:
             None,
         )
 
+    def update(
+        self,
+        customer: Customer,
+    ) -> Customer:
+        with self._lock:
+            if customer.customer_id not in self._customers:
+                raise ValueError("Customer does not exist.")
+
+            self._customers[customer.customer_id] = customer
+
+        return customer
+
 
 class MockProductRepository:
     def __init__(self) -> None:
