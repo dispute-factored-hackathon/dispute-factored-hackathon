@@ -50,21 +50,35 @@ const continueButton =
     document.querySelector("#continue-button");
 
 
+const FACTORED_ID_COOKIE =
+    "factored_id";
+
+const FACTORED_ID_COOKIE_MAX_AGE =
+    60 * 60 * 24 * 30;
+
+
 function generateFactoredId() {
-    const values = new Uint32Array(1);
+    const values =
+        new Uint32Array(1);
 
     crypto.getRandomValues(values);
 
     const number =
-        100000 + (values[0] % 900000);
+        100000
+        + (values[0] % 900000);
 
     return String(number);
 }
 
 
-function displayFactoredId(factoredId) {
-    factoredIdInput.value = factoredId;
-    factoredIdDisplay.textContent = factoredId;
+function displayFactoredId(
+    factoredId,
+) {
+    factoredIdInput.value =
+        factoredId;
+
+    factoredIdDisplay.textContent =
+        factoredId;
 
     factoredIdDisplay.classList.remove(
         "factored-id-placeholder",
@@ -72,14 +86,31 @@ function displayFactoredId(factoredId) {
 }
 
 
+function rememberFactoredId(
+    factoredId,
+) {
+    document.cookie =
+        `${FACTORED_ID_COOKIE}=`
+        + `${encodeURIComponent(factoredId)}; `
+        + `Max-Age=${FACTORED_ID_COOKIE_MAX_AGE}; `
+        + "Path=/; "
+        + "SameSite=Lax";
+}
+
+
 function normalizePhone(value) {
-    const trimmed = value.trim();
+    const trimmed =
+        value.trim();
 
     if (!trimmed) {
         return "";
     }
 
-    const digits = trimmed.replace(/\D/g, "");
+    const digits =
+        trimmed.replace(
+            /\D/g,
+            "",
+        );
 
     if (!digits) {
         return "";
@@ -91,14 +122,19 @@ function normalizePhone(value) {
 
 function formatPhoneInput() {
     const normalized =
-        normalizePhone(phoneInput.value);
+        normalizePhone(
+            phoneInput.value,
+        );
 
-    phoneInput.value = normalized;
+    phoneInput.value =
+        normalized;
 }
 
 
 function showError(message) {
-    formError.textContent = message;
+    formError.textContent =
+        message;
+
     formError.hidden = false;
 
     formError.scrollIntoView({
@@ -114,9 +150,14 @@ function clearError() {
 }
 
 
-function setSubmitting(isSubmitting) {
-    submitButton.disabled = isSubmitting;
-    generateIdButton.disabled = isSubmitting;
+function setSubmitting(
+    isSubmitting,
+) {
+    submitButton.disabled =
+        isSubmitting;
+
+    generateIdButton.disabled =
+        isSubmitting;
 
     submitButton.textContent =
         isSubmitting
@@ -127,7 +168,9 @@ function setSubmitting(isSubmitting) {
 
 function validateBirthDate() {
     const birthDateInput =
-        document.querySelector("#date-of-birth");
+        document.querySelector(
+            "#date-of-birth",
+        );
 
     if (!birthDateInput.value) {
         return true;
@@ -138,7 +181,8 @@ function validateBirthDate() {
             `${birthDateInput.value}T00:00:00`,
         );
 
-    const today = new Date();
+    const today =
+        new Date();
 
     if (selectedDate >= today) {
         showError(
@@ -156,7 +200,9 @@ function validateBirthDate() {
 
 function validatePhone() {
     const phone =
-        normalizePhone(phoneInput.value);
+        normalizePhone(
+            phoneInput.value,
+        );
 
     if (!phone) {
         phoneInput.value = "";
@@ -165,13 +211,13 @@ function validatePhone() {
 
     phoneInput.value = phone;
 
-    const internationalPhonePattern =
+    const pattern =
         /^\+[1-9]\d{7,14}$/;
 
-    if (!internationalPhonePattern.test(phone)) {
+    if (!pattern.test(phone)) {
         showError(
-            "Enter the country code and phone number. " +
-            "For example: +5511123456890.",
+            "Enter the country code and phone number. "
+            + "For example: +5511981020050.",
         );
 
         phoneInput.focus();
@@ -200,8 +246,8 @@ function validateForm() {
 
     if (!factoredIdInput.value) {
         showError(
-            "Generate your Factored ID before " +
-            "creating the account.",
+            "Generate your Factored ID before "
+            + "creating the account.",
         );
 
         generateIdButton.focus();
@@ -216,67 +262,58 @@ function validateForm() {
 function buildSignupRequest() {
     const firstName =
         document
-            .querySelector("#first-name")
+            .querySelector(
+                "#first-name",
+            )
             .value
             .trim();
 
     const lastName =
         document
-            .querySelector("#last-name")
+            .querySelector(
+                "#last-name",
+            )
             .value
             .trim();
 
     const dateOfBirth =
         document
-            .querySelector("#date-of-birth")
+            .querySelector(
+                "#date-of-birth",
+            )
             .value;
 
     const gender =
         document
-            .querySelector("#gender")
+            .querySelector(
+                "#gender",
+            )
             .value;
 
     const mobilePhone =
-        normalizePhone(phoneInput.value);
+        normalizePhone(
+            phoneInput.value,
+        );
 
     const preferredAccent =
         document
-            .querySelector("#preferred-accent")
+            .querySelector(
+                "#preferred-accent",
+            )
             .value;
 
-    const payload = {
+    return {
         first_name: firstName,
         last_name: lastName,
         date_of_birth: dateOfBirth,
         gender,
-        mobile_phone: mobilePhone || null,
-        preferred_accent: preferredAccent,
-        factored_id: factoredIdInput.value,
+        mobile_phone:
+            mobilePhone || null,
+        preferred_accent:
+            preferredAccent,
+        factored_id:
+            factoredIdInput.value,
     };
-
-    /*
-     * Temporary development logging.
-     *
-     * This intentionally avoids logging the phone
-     * number or other sensitive authentication values.
-     */
-    console.debug(
-        "Submitting signup",
-        {
-            first_name: payload.first_name,
-            last_name: payload.last_name,
-            date_of_birth: payload.date_of_birth,
-            gender: payload.gender,
-            has_mobile_phone:
-                payload.mobile_phone !== null,
-            preferred_accent:
-                payload.preferred_accent,
-            has_factored_id:
-                Boolean(payload.factored_id),
-        },
-    );
-
-    return payload;
 }
 
 
@@ -294,17 +331,19 @@ function showSuccess(customer) {
         customer.demo_card.last_four;
 
     cardStatus.textContent =
-        customer.demo_card.product_status;
+        customer
+            .demo_card
+            .product_status;
 
     if (customer.mobile_phone) {
         phoneAuthMessage.textContent =
-            "When calling Izzy, you can authenticate " +
-            "using either your registered phone number " +
-            "or your six-digit Factored ID.";
+            "When calling Izzy, you can authenticate "
+            + "using either your registered phone number "
+            + "or your six-digit Factored ID.";
     } else {
         phoneAuthMessage.textContent =
-            "When calling Izzy, use your six-digit " +
-            "Factored ID to authenticate.";
+            "When calling Izzy, use your six-digit "
+            + "Factored ID to authenticate.";
     }
 
     successSection.scrollIntoView({
@@ -333,9 +372,22 @@ async function submitSignup(event) {
                 "/customers",
                 {
                     method: "POST",
-                    body: JSON.stringify(request),
+                    body:
+                        JSON.stringify(
+                            request,
+                        ),
                 },
             );
+
+        /*
+         * Remember the successful demo identity.
+         *
+         * Do not store the generated ID before the
+         * backend has actually created the customer.
+         */
+        rememberFactoredId(
+            customer.factored_id,
+        );
 
         showSuccess(customer);
 
@@ -344,12 +396,16 @@ async function submitSignup(event) {
             console.error(
                 "Signup API error",
                 {
-                    status: error.status,
-                    details: error.details,
+                    status:
+                        error.status,
+                    details:
+                        error.details,
                 },
             );
 
-            showError(error.message);
+            showError(
+                error.message,
+            );
 
         } else {
             console.error(
@@ -358,8 +414,8 @@ async function submitSignup(event) {
             );
 
             showError(
-                "We could not create your account. " +
-                "Please try again.",
+                "We could not create your account. "
+                + "Please try again.",
             );
         }
 
@@ -395,8 +451,8 @@ phoneInput.addEventListener(
     "input",
     () => {
         const cursorWasAtEnd =
-            phoneInput.selectionStart ===
-            phoneInput.value.length;
+            phoneInput.selectionStart
+            === phoneInput.value.length;
 
         formatPhoneInput();
 
@@ -416,7 +472,10 @@ phoneInput.addEventListener(
 phoneInput.addEventListener(
     "blur",
     () => {
-        if (phoneInput.value === "+") {
+        if (
+            phoneInput.value
+            === "+"
+        ) {
             phoneInput.value = "";
             return;
         }
@@ -435,6 +494,8 @@ form.addEventListener(
 continueButton.addEventListener(
     "click",
     () => {
-        window.location.assign("/login");
+        window.location.assign(
+            "/login",
+        );
     },
 );
