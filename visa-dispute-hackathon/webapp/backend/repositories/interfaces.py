@@ -3,6 +3,7 @@ from typing import Protocol
 from webapp.backend.models.customer import Customer
 from webapp.backend.models.product import Product
 from webapp.backend.models.session import CustomerSession
+from webapp.backend.models.transaction import Transaction
 
 
 class CustomerRepository(Protocol):
@@ -47,6 +48,28 @@ class ProductRepository(Protocol):
         self,
         product: Product,
     ) -> Product: ...
+
+
+class TransactionRepository(Protocol):
+    def create(
+        self,
+        transaction: Transaction,
+    ) -> Transaction: ...
+
+    def get_by_id(
+        self,
+        transaction_id: str,
+    ) -> Transaction | None: ...
+
+    def list_by_customer(
+        self,
+        customer_id: str,
+    ) -> list[Transaction]: ...
+
+    def update(
+        self,
+        transaction: Transaction,
+    ) -> Transaction: ...
 
 
 class SessionRepository(Protocol):

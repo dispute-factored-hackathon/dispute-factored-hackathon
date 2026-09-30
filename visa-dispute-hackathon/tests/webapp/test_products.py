@@ -5,12 +5,14 @@ from webapp.backend.repositories.mock import (
     customer_repository,
     product_repository,
     session_repository,
+    transaction_repository,
 )
 
 
 def clear_repositories() -> None:
     customer_repository._customers.clear()
     product_repository._products.clear()
+    transaction_repository._transactions.clear()
     session_repository._sessions.clear()
 
 
