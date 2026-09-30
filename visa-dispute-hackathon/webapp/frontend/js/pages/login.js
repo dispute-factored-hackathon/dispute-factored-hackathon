@@ -21,8 +21,76 @@ const loginError =
     document.querySelector("#login-error");
 
 
+const FACTORED_ID_COOKIE =
+    "factored_id";
+
+
+function getCookie(name) {
+    const cookies =
+        document.cookie
+            .split(";")
+            .map(
+                (cookie) =>
+                    cookie.trim(),
+            );
+
+    const prefix =
+        `${name}=`;
+
+    const cookie =
+        cookies.find(
+            (candidate) =>
+                candidate.startsWith(
+                    prefix,
+                ),
+        );
+
+    if (!cookie) {
+        return null;
+    }
+
+    return decodeURIComponent(
+        cookie.slice(
+            prefix.length,
+        ),
+    );
+}
+
+
+function rememberedFactoredId() {
+    const value =
+        getCookie(
+            FACTORED_ID_COOKIE,
+        );
+
+    if (
+        !value
+        || !/^\d{6}$/.test(value)
+    ) {
+        return null;
+    }
+
+    return value;
+}
+
+
+function prefillFactoredId() {
+    const factoredId =
+        rememberedFactoredId();
+
+    if (!factoredId) {
+        return;
+    }
+
+    factoredIdInput.value =
+        factoredId;
+}
+
+
 function showError(message) {
-    loginError.textContent = message;
+    loginError.textContent =
+        message;
+
     loginError.hidden = false;
 }
 
@@ -33,8 +101,11 @@ function clearError() {
 }
 
 
-function setSubmitting(isSubmitting) {
-    loginButton.disabled = isSubmitting;
+function setSubmitting(
+    isSubmitting,
+) {
+    loginButton.disabled =
+        isSubmitting;
 
     loginButton.textContent =
         isSubmitting
@@ -45,11 +116,13 @@ function setSubmitting(isSubmitting) {
 
 function normalizeFactoredId() {
     const digits =
-        factoredIdInput.value
+        factoredIdInput
+            .value
             .replace(/\D/g, "")
             .slice(0, 6);
 
-    factoredIdInput.value = digits;
+    factoredIdInput.value =
+        digits;
 
     return digits;
 }
@@ -61,14 +134,21 @@ async function redirectIfAuthenticated() {
             await getCurrentCustomer();
 
         if (customer) {
-            window.location.replace("/home");
+            window.location.replace(
+                "/home",
+            );
+
+            return true;
         }
+
     } catch (error) {
         console.error(
             "Unable to check current session:",
             error,
         );
     }
+
+    return false;
 }
 
 
@@ -97,17 +177,23 @@ async function submitLogin(event) {
             "/auth/login",
             {
                 method: "POST",
-                body: JSON.stringify({
-                    factored_id: factoredId,
-                }),
+                body:
+                    JSON.stringify({
+                        factored_id:
+                            factoredId,
+                    }),
             },
         );
 
-        window.location.replace("/home");
+        window.location.replace(
+            "/home",
+        );
 
     } catch (error) {
         if (error instanceof ApiError) {
-            showError(error.message);
+            showError(
+                error.message,
+            );
         } else {
             console.error(
                 "Unexpected login error:",
@@ -115,14 +201,26 @@ async function submitLogin(event) {
             );
 
             showError(
-                "We could not sign you in. " +
-                "Please try again.",
+                "We could not sign you in. "
+                + "Please try again.",
             );
         }
 
     } finally {
         setSubmitting(false);
     }
+}
+
+
+async function initializeLogin() {
+    /*
+     * Prefill before checking the session so the
+     * remembered identity is immediately available
+     * when this page actually needs to be shown.
+     */
+    prefillFactoredId();
+
+    await redirectIfAuthenticated();
 }
 
 
@@ -141,4 +239,4 @@ form.addEventListener(
 );
 
 
-redirectIfAuthenticated();
+initializeLogin();

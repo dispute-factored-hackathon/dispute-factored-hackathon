@@ -113,7 +113,6 @@ def test_placeholder_routes_are_available() -> None:
     client = TestClient(app)
 
     routes = (
-        "/cards",
         "/transactions",
         "/complaints",
         "/profile",
@@ -126,6 +125,17 @@ def test_placeholder_routes_are_available() -> None:
 
         assert response.status_code == 200
         assert "Coming soon" in response.text
+
+
+def test_cards_route_uses_real_cards_page() -> None:
+    client = TestClient(app)
+
+    response = client.get("/cards")
+
+    assert response.status_code == 200
+    assert "Manage your Factored Bank cards" in response.text
+    assert "cards.js" in response.text
+    assert "Coming soon" not in response.text
 
 
 def test_api_me_remains_protected() -> None:

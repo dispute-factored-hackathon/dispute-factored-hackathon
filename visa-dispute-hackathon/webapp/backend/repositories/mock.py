@@ -72,6 +72,12 @@ class MockProductRepository:
 
         return product
 
+    def get_by_id(
+        self,
+        product_id: str,
+    ) -> Product | None:
+        return self._products.get(product_id)
+
     def list_by_customer(
         self,
         customer_id: str,
@@ -80,6 +86,18 @@ class MockProductRepository:
             product for product in self._products.values() if product.customer_id == customer_id
         ]
 
+    def update(
+        self,
+        product: Product,
+    ) -> Product:
+        with self._lock:
+            if product.product_id not in self._products:
+                raise ValueError("Product does not exist.")
+
+            self._products[product.product_id] = product
+
+        return product
+
 
 class MockSessionRepository:
     def __init__(self) -> None:
@@ -87,6 +105,7 @@ class MockSessionRepository:
             str,
             CustomerSession,
         ] = {}
+
         self._lock = Lock()
 
     def create(
@@ -116,5 +135,7 @@ class MockSessionRepository:
 
 
 customer_repository = MockCustomerRepository()
+
 product_repository = MockProductRepository()
+
 session_repository = MockSessionRepository()

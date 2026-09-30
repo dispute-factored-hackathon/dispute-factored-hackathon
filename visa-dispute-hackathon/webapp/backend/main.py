@@ -10,6 +10,9 @@ from webapp.backend.api.routes.auth import (
 from webapp.backend.api.routes.customers import (
     router as customers_router,
 )
+from webapp.backend.api.routes.products import (
+    router as products_router,
+)
 from webapp.backend.config import get_settings
 
 settings = get_settings()
@@ -25,6 +28,7 @@ app = FastAPI(
 
 app.include_router(auth_router)
 app.include_router(customers_router)
+app.include_router(products_router)
 
 
 app.mount(
@@ -70,7 +74,7 @@ def home_page() -> FileResponse:
 
 @app.get("/cards")
 def cards_page() -> FileResponse:
-    return page("coming-soon.html")
+    return page("cards.html")
 
 
 @app.get("/transactions")
