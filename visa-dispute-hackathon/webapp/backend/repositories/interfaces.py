@@ -1,5 +1,6 @@
 from typing import Protocol
 
+from webapp.backend.models.complaint import Complaint
 from webapp.backend.models.customer import Customer
 from webapp.backend.models.product import Product
 from webapp.backend.models.session import CustomerSession
@@ -70,6 +71,28 @@ class TransactionRepository(Protocol):
         self,
         transaction: Transaction,
     ) -> Transaction: ...
+
+
+class ComplaintRepository(Protocol):
+    def create(
+        self,
+        complaint: Complaint,
+    ) -> Complaint: ...
+
+    def get_by_id(
+        self,
+        complaint_id: str,
+    ) -> Complaint | None: ...
+
+    def list_by_customer(
+        self,
+        customer_id: str,
+    ) -> list[Complaint]: ...
+
+    def update(
+        self,
+        complaint: Complaint,
+    ) -> Complaint: ...
 
 
 class SessionRepository(Protocol):

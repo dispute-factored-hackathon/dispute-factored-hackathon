@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from webapp.backend.main import app
 from webapp.backend.repositories.mock import (
+    complaint_repository,
     customer_repository,
     product_repository,
     session_repository,
@@ -13,6 +14,7 @@ def clear_repositories() -> None:
     customer_repository._customers.clear()
     product_repository._products.clear()
     transaction_repository._transactions.clear()
+    complaint_repository._complaints.clear()
     session_repository._sessions.clear()
 
 
@@ -133,11 +135,21 @@ def test_cards_route_uses_real_cards_page() -> None:
     assert "Coming soon" not in response.text
 
 
+def test_complaints_route_uses_real_page() -> None:
+    client = TestClient(app)
+
+    response = client.get("/complaints")
+
+    assert response.status_code == 200
+    assert "Complaint history" in response.text
+    assert "complaints.js" in response.text
+    assert "Coming soon" not in response.text
+
+
 def test_placeholder_routes_are_available() -> None:
     client = TestClient(app)
 
     routes = (
-        "/complaints",
         "/profile",
         "/agent",
         "/shop",

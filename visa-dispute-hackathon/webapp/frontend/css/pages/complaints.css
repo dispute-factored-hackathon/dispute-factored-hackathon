@@ -1,0 +1,388 @@
+.complaints-page {
+    min-height: 100vh;
+    padding-bottom: 6rem;
+    background: var(--color-background);
+}
+
+.app-header {
+    display: grid;
+    grid-template-columns:
+        2.75rem
+        1fr
+        2.75rem;
+
+    align-items: center;
+    gap: var(--space-3);
+
+    padding: var(--space-4);
+
+    background: var(--color-surface);
+
+    border-bottom:
+        1px
+        solid
+        var(--color-border);
+}
+
+.brand-name {
+    justify-self: center;
+
+    color: var(--color-text);
+
+    font-family: var(--font-display);
+    font-weight: 700;
+
+    text-decoration: none;
+}
+
+.back-link,
+.profile-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    width: 2.75rem;
+    height: 2.75rem;
+
+    text-decoration: none;
+}
+
+.back-link {
+    color: var(--color-text);
+    background: var(--color-surface);
+
+    border:
+        1px
+        solid
+        var(--color-border);
+
+    border-radius: 50%;
+
+    font-size: 1.25rem;
+}
+
+.profile-button {
+    color: #ffffff;
+    background: var(--color-primary);
+
+    border-radius: 50%;
+
+    font-family: var(--font-display);
+    font-weight: 700;
+}
+
+.complaints-content {
+    width: 100%;
+    max-width: 48rem;
+
+    margin: 0 auto;
+
+    padding:
+        var(--space-8)
+        var(--space-4)
+        var(--space-10);
+}
+
+.page-heading {
+    margin-bottom: var(--space-5);
+}
+
+.eyebrow {
+    margin:
+        0
+        0
+        var(--space-2);
+
+    color: var(--color-success);
+
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+}
+
+.page-heading h1 {
+    margin:
+        0
+        0
+        var(--space-2);
+
+    font-family: var(--font-display);
+
+    font-size:
+        clamp(
+            2.5rem,
+            12vw,
+            4.5rem
+        );
+
+    line-height: 0.95;
+    letter-spacing: -0.055em;
+}
+
+.page-heading > p:last-child {
+    margin: 0;
+
+    color: var(--color-text-secondary);
+    line-height: 1.5;
+}
+
+.new-complaint-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+
+    gap: var(--space-4);
+
+    margin-bottom: var(--space-6);
+    padding: var(--space-5);
+
+    color: #ffffff;
+    background: var(--color-primary);
+
+    border-radius: var(--radius-lg);
+
+    box-shadow: var(--shadow-card);
+
+    text-decoration: none;
+}
+
+.new-complaint-label {
+    display: block;
+
+    margin-bottom: var(--space-2);
+
+    color:
+        rgba(
+            255,
+            255,
+            255,
+            0.6
+        );
+
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+}
+
+.new-complaint-card strong {
+    display: block;
+
+    margin-bottom: var(--space-1);
+
+    font-family: var(--font-display);
+    font-size: 1.15rem;
+}
+
+.new-complaint-card p {
+    margin: 0;
+
+    color:
+        rgba(
+            255,
+            255,
+            255,
+            0.72
+        );
+
+    font-size: 0.85rem;
+}
+
+.new-complaint-arrow {
+    flex: 0 0 auto;
+    font-size: 1.5rem;
+}
+
+.complaints-list {
+    display: grid;
+    gap: var(--space-3);
+}
+
+.complaint-item {
+    display: grid;
+    grid-template-columns:
+        minmax(0, 1fr)
+        auto;
+
+    gap: var(--space-4);
+
+    padding: var(--space-4);
+
+    color: var(--color-text);
+    background: var(--color-surface);
+
+    border:
+        1px
+        solid
+        var(--color-border);
+
+    border-radius: var(--radius-md);
+
+    text-decoration: none;
+
+    transition:
+        border-color 120ms ease,
+        transform 120ms ease;
+}
+
+.complaint-item:hover {
+    border-color: var(--color-accent);
+    transform: translateY(-1px);
+}
+
+.complaint-category {
+    margin:
+        0
+        0
+        var(--space-1);
+
+    font-weight: 700;
+}
+
+.complaint-subcategory {
+    margin:
+        0
+        0
+        var(--space-3);
+
+    color: var(--color-text-secondary);
+
+    font-size: 0.8rem;
+}
+
+.complaint-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+
+    color: var(--color-text-secondary);
+
+    font-size: 0.75rem;
+}
+
+.complaint-side {
+    min-width: 6rem;
+    text-align: right;
+}
+
+.complaint-amount {
+    display: block;
+
+    margin-bottom: var(--space-2);
+
+    font-family: var(--font-display);
+    font-weight: 700;
+}
+
+.status-badge {
+    display: inline-block;
+
+    padding:
+        var(--space-1)
+        var(--space-2);
+
+    border-radius: 999px;
+
+    font-size: 0.68rem;
+    font-weight: 800;
+}
+
+.status-resolved {
+    color: #126149;
+    background: #e5f8f1;
+}
+
+.status-open {
+    color: #815000;
+    background: #fff1d6;
+}
+
+.status-default {
+    color: var(--color-text-secondary);
+    background: var(--color-background);
+}
+
+.page-error {
+    margin-bottom: var(--space-5);
+    padding: var(--space-4);
+
+    color: var(--color-error);
+
+    background:
+        rgba(
+            180,
+            35,
+            24,
+            0.06
+        );
+
+    border:
+        1px
+        solid
+        rgba(
+            180,
+            35,
+            24,
+            0.2
+        );
+
+    border-radius: var(--radius-md);
+}
+
+.page-error[hidden],
+.empty-state[hidden] {
+    display: none;
+}
+
+.empty-state {
+    padding:
+        var(--space-10)
+        var(--space-5);
+
+    text-align: center;
+
+    background: var(--color-surface);
+
+    border:
+        1px
+        solid
+        var(--color-border);
+
+    border-radius: var(--radius-lg);
+}
+
+.empty-state h2 {
+    margin:
+        0
+        0
+        var(--space-2);
+
+    font-family: var(--font-display);
+}
+
+.empty-state p {
+    margin:
+        0
+        0
+        var(--space-5);
+
+    color: var(--color-text-secondary);
+}
+
+@media (min-width: 700px) {
+    .app-header {
+        padding:
+            var(--space-4)
+            var(--space-8);
+    }
+
+    .complaints-content {
+        padding:
+            var(--space-10)
+            var(--space-8)
+            8rem;
+    }
+
+    .complaint-item {
+        padding: var(--space-5);
+    }
+}

@@ -1,10 +1,12 @@
 import secrets
 from datetime import UTC, datetime, timedelta
 
+from webapp.backend.models.complaint import Complaint
 from webapp.backend.models.customer import Customer
 from webapp.backend.models.product import Product
 from webapp.backend.models.transaction import Transaction
 from webapp.backend.repositories.interfaces import (
+    ComplaintRepository,
     CustomerRepository,
     ProductRepository,
     TransactionRepository,
@@ -22,10 +24,12 @@ class SignupService:
         customers: CustomerRepository,
         products: ProductRepository,
         transactions: TransactionRepository,
+        complaints: ComplaintRepository,
     ) -> None:
         self.customers = customers
         self.products = products
         self.transactions = transactions
+        self.complaints = complaints
 
     def signup(
         self,
@@ -84,6 +88,12 @@ class SignupService:
         self.products.create(product)
 
         self._create_demo_transactions(
+            customer=customer,
+            product=product,
+            now=now,
+        )
+
+        self._create_demo_complaints(
             customer=customer,
             product=product,
             now=now,
@@ -193,6 +203,81 @@ class SignupService:
             )
 
             self.transactions.create(transaction)
+
+    def _create_demo_complaints(
+        self,
+        *,
+        customer: Customer,
+        product: Product,
+        now: datetime,
+    ) -> None:
+        resolved_creation = now - timedelta(days=45)
+
+        resolved_complaint = Complaint(
+            complaint_id=("CMP-DEMO-" + secrets.token_hex(6).upper()),
+            creation_date=resolved_creation,
+            process_date=resolved_creation.date(),
+            customer_id=customer.customer_id,
+            case_type="Claim",
+            category="Card Purchase",
+            subcategory="Duplicate Charge",
+            reception_channel="Web",
+            affected_product_id=product.product_id,
+            related_branch_id=None,
+            origin_interaction_id=None,
+            description=("Customer reported a duplicate charge from Factored Coffee."),
+            claimed_amount=8.75,
+            currency="USD",
+            priority="Medium",
+            status="Resolved",
+            assigned_agent_id="IZZY",
+            assignment_date=(resolved_creation + timedelta(hours=1)),
+            first_response_date=(resolved_creation + timedelta(hours=2)),
+            resolution_date=(resolved_creation + timedelta(days=2)),
+            closing_date=(resolved_creation + timedelta(days=3)),
+            sla_breached=False,
+            resolution_days=2,
+            resolution=("Duplicate charge confirmed. The disputed amount was refunded."),
+            compensation_granted=8.75,
+            resolution_satisfaction=5.0,
+            is_repeat_complainer=False,
+        )
+
+        open_creation = now - timedelta(days=4)
+
+        open_complaint = Complaint(
+            complaint_id=("CMP-DEMO-" + secrets.token_hex(6).upper()),
+            creation_date=open_creation,
+            process_date=open_creation.date(),
+            customer_id=customer.customer_id,
+            case_type="Claim",
+            category="Card Purchase",
+            subcategory="Unrecognized Transaction",
+            reception_channel="Call Center",
+            affected_product_id=product.product_id,
+            related_branch_id=None,
+            origin_interaction_id=None,
+            description=("Customer reported an unrecognized online purchase and requested review."),
+            claimed_amount=129.90,
+            currency="USD",
+            priority="High",
+            status="In Review",
+            assigned_agent_id="IZZY",
+            assignment_date=(open_creation + timedelta(minutes=10)),
+            first_response_date=(open_creation + timedelta(minutes=15)),
+            resolution_date=None,
+            closing_date=None,
+            sla_breached=False,
+            resolution_days=None,
+            resolution=None,
+            compensation_granted=None,
+            resolution_satisfaction=None,
+            is_repeat_complainer=True,
+        )
+
+        self.complaints.create(resolved_complaint)
+
+        self.complaints.create(open_complaint)
 
     @staticmethod
     def _generate_card_number() -> str:

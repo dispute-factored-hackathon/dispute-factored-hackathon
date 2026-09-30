@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from webapp.backend.main import app
 from webapp.backend.repositories.mock import (
+    complaint_repository,
     customer_repository,
     product_repository,
     session_repository,
@@ -13,6 +14,7 @@ def clear_repositories() -> None:
     customer_repository._customers.clear()
     product_repository._products.clear()
     transaction_repository._transactions.clear()
+    complaint_repository._complaints.clear()
     session_repository._sessions.clear()
 
 
