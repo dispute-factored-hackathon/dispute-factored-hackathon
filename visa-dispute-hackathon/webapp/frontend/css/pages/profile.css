@@ -41,8 +41,7 @@
     margin-bottom: var(--space-8);
 }
 
-.eyebrow,
-.section-number {
+.eyebrow {
     margin: 0 0 var(--space-2);
     color: var(--color-success);
     font-size: 0.7rem;
