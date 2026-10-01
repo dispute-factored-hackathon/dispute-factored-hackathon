@@ -1,6 +1,11 @@
 import { ApiError, apiRequest } from "../api.js";
 import { requireCustomer } from "../auth.js";
-import { addToCart, emitStoreMetric, updateCartBadges } from "../components/store-cart.js";
+import {
+    addToCart,
+    animateAddToCart,
+    emitStoreMetric,
+    updateCartBadges,
+} from "../components/store-cart.js";
 
 const page = document.querySelector("#product-page");
 const detail = document.querySelector("#product-detail");
@@ -21,7 +26,10 @@ function render(product) {
         <div class="product-detail-copy">
             <span class="product-badge" hidden></span><p class="store-kicker"></p><h1></h1>
             <p class="description"></p><strong class="product-price"></strong>
-            <button class="shady-button" type="button">Add to cart</button>
+            <div class="product-buy-controls">
+                <label>Quantity <select class="product-quantity" aria-label="Quantity"></select></label>
+                <button class="shady-button" type="button">Add to cart</button>
+            </div>
         </div>`;
     detail.querySelector(".product-detail-visual").textContent = product.emoji;
     detail.querySelector(".store-kicker").textContent = product.category;
@@ -30,10 +38,30 @@ function render(product) {
     detail.querySelector(".product-price").textContent = money(product.price);
     const badge = detail.querySelector(".product-badge");
     if (product.badge) { badge.textContent = product.badge; badge.hidden = false; }
-    detail.querySelector("button").addEventListener("click", () => {
-        addToCart(product.product_id);
+    const quantity = detail.querySelector(".product-quantity");
+    quantity.replaceChildren(...Array.from({ length: 10 }, (_, index) => {
+        const option = document.createElement("option");
+        option.value = String(index + 1);
+        option.textContent = String(index + 1);
+        return option;
+    }));
+    const addButton = detail.querySelector("button");
+    addButton.addEventListener("click", async (event) => {
+        const selectedQuantity = Number(quantity.value);
+        addButton.disabled = true;
+        addButton.textContent = selectedQuantity === 1 ? "Added!" : `${selectedQuantity} added!`;
+        addToCart(product.product_id, selectedQuantity);
         updateCartBadges();
-        emitStoreMetric("add_to_cart", { source: "product", product_id: product.product_id });
+        emitStoreMetric("add_to_cart", {
+            source: "product",
+            product_id: product.product_id,
+            quantity: selectedQuantity,
+        });
+        await animateAddToCart({
+            event,
+            sourceElement: detail.querySelector(".product-detail-visual"),
+            emoji: product.emoji,
+        });
         window.location.assign("/shop/cart");
     });
 }
