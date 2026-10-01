@@ -249,7 +249,10 @@ def test_onboarding_state_is_customer_specific() -> None:
         factored_id="222222",
     )
 
-    completion = first_client.post("/api/onboarding/complete")
+    completion = first_client.patch(
+        "/api/onboarding/tour",
+        json={"status": "completed", "last_completed_step": "finish"},
+    )
 
     assert completion.status_code == 200
 

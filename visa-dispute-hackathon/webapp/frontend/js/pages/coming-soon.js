@@ -6,6 +6,10 @@ import {
     renderBottomNavigation,
 } from "../components/bottom-nav.js";
 
+import {
+    initializeGuidedTour,
+} from "../components/guided-tour.js";
+
 
 const page =
     document.querySelector("#coming-soon-page");
@@ -131,6 +135,8 @@ async function initializePage() {
         applyAgentContext();
 
         page.hidden = false;
+
+        await initializeGuidedTour();
 
     } catch (error) {
         console.error(

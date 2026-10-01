@@ -8,6 +8,10 @@
     overflow: hidden;
 }
 
+.guided-tour [hidden] {
+    display: none !important;
+}
+
 .guided-tour-backdrop,
 .guided-tour-spotlight,
 .guided-tour-tooltip {
@@ -20,24 +24,38 @@
     background: rgba(8, 20, 16, 0.7);
 }
 
+.guided-tour-target-context {
+    z-index: 101 !important;
+}
+
+.guided-tour-target {
+    position: relative !important;
+    z-index: 102 !important;
+    isolation: isolate;
+    outline: 3px solid #ffffff;
+    outline-offset: 5px;
+    box-shadow: 0 0 0 9px rgba(42, 114, 91, 0.72), 0 1rem 3rem rgba(8, 20, 16, 0.35) !important;
+}
+
+.guided-tour-target-busy {
+    pointer-events: none;
+}
+
 .guided-tour-spotlight {
     top: var(--tour-top);
     left: var(--tour-left);
     z-index: 101;
     width: var(--tour-width);
     height: var(--tour-height);
-    border: 3px solid #ffffff;
+    border: 0;
     border-radius: var(--radius-lg);
-    box-shadow: 0 0 0 4px rgba(42, 114, 91, 0.6);
+    box-shadow: none;
     pointer-events: none;
     transition: inset 160ms ease, width 160ms ease, height 160ms ease;
 }
 
 .guided-tour-tooltip {
-    right: var(--space-4);
-    bottom: calc(5.5rem + env(safe-area-inset-bottom));
-    left: var(--space-4);
-    z-index: 102;
+    z-index: 103;
     max-height: min(28rem, calc(100vh - 7rem));
     padding: var(--space-5);
     overflow: auto;
@@ -46,6 +64,13 @@
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
     box-shadow: 0 1.5rem 4rem rgba(8, 20, 16, 0.3);
+}
+
+.guided-tour-no-target .guided-tour-tooltip {
+    top: 50%;
+    left: 50%;
+    width: min(32rem, calc(100vw - 2rem));
+    transform: translate(-50%, -50%);
 }
 
 .guided-tour-topline,
@@ -94,6 +119,12 @@
     line-height: 1.55;
 }
 
+.guided-tour-tooltip .guided-tour-instruction {
+    margin-top: calc(-1 * var(--space-3));
+    color: var(--color-primary);
+    font-weight: 800;
+}
+
 .guided-tour-tooltip .guided-tour-error {
     padding: var(--space-3);
     color: #9f1d20;
@@ -118,6 +149,37 @@
 @media (prefers-reduced-motion: reduce) {
     .guided-tour-spotlight {
         transition: none;
+    }
+}
+
+@media (max-width: 420px) {
+    .guided-tour-tooltip {
+        padding: var(--space-4);
+    }
+
+    .guided-tour-actions {
+        align-items: stretch;
+    }
+
+    .guided-tour-actions .button {
+        flex: 1;
+    }
+
+    .guided-tour-skip {
+        flex-basis: 100%;
+        order: 3;
+        margin-right: 0;
+    }
+
+    .guided-tour-action-step .guided-tour-skip {
+        flex-basis: auto;
+        order: initial;
+        margin-left: auto;
+    }
+
+    .guided-tour-action-step .guided-tour-actions {
+        display: grid;
+        grid-template-columns: 1fr auto;
     }
 }
 

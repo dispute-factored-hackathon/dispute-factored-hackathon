@@ -4,19 +4,20 @@ from webapp.backend.models.customer import Customer, TutorialStatus
 from webapp.backend.repositories.interfaces import CustomerRepository
 from webapp.backend.schemas.onboarding import TutorialProgressRequest, TutorialStateResponse
 
-TUTORIAL_VERSION = 1
+TUTORIAL_VERSION = 2
 TUTORIAL_STEP_IDS = (
     "welcome",
-    "menu",
     "cards-link",
     "cards",
     "transactions-link",
     "transactions",
     "report-transaction",
     "izzy",
+    "complaints-link",
     "complaints",
+    "profile-link",
     "profile",
-    "replay",
+    "finish",
 )
 
 

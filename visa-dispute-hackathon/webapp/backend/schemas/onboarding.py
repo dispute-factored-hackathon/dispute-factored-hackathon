@@ -3,14 +3,6 @@ from pydantic import BaseModel, ConfigDict
 from webapp.backend.models.customer import TutorialStatus
 
 
-class OnboardingStateResponse(BaseModel):
-    onboarding_completed: bool
-
-
-class CompleteOnboardingResponse(BaseModel):
-    onboarding_completed: bool
-
-
 class TutorialProgressRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

@@ -82,11 +82,6 @@ def signup_page() -> FileResponse:
     return page("signup.html")
 
 
-@app.get("/onboarding")
-def onboarding_page() -> FileResponse:
-    return page("onboarding.html")
-
-
 @app.get("/home")
 def home_page() -> FileResponse:
     return page("home.html")

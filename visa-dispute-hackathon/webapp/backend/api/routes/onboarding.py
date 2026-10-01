@@ -10,16 +10,11 @@ from fastapi import (
 from webapp.backend.api.dependencies import (
     require_customer,
 )
-from webapp.backend.models.customer import Customer, TutorialStatus
+from webapp.backend.models.customer import Customer
 from webapp.backend.repositories.mock import (
     customer_repository,
 )
-from webapp.backend.schemas.onboarding import (
-    CompleteOnboardingResponse,
-    OnboardingStateResponse,
-    TutorialProgressRequest,
-    TutorialStateResponse,
-)
+from webapp.backend.schemas.onboarding import TutorialProgressRequest, TutorialStateResponse
 from webapp.backend.services.onboarding import InvalidTutorialStepError, OnboardingService
 
 router = APIRouter(
@@ -28,44 +23,6 @@ router = APIRouter(
 )
 
 onboarding_service = OnboardingService(customer_repository)
-
-
-@router.get(
-    "",
-    response_model=OnboardingStateResponse,
-)
-def get_onboarding_state(
-    customer: Annotated[
-        Customer,
-        Depends(require_customer),
-    ],
-) -> OnboardingStateResponse:
-    return OnboardingStateResponse(
-        onboarding_completed=(customer.onboarding_completed),
-    )
-
-
-@router.post(
-    "/complete",
-    response_model=CompleteOnboardingResponse,
-)
-def complete_onboarding(
-    customer: Annotated[
-        Customer,
-        Depends(require_customer),
-    ],
-) -> CompleteOnboardingResponse:
-    onboarding_service.update(
-        customer,
-        TutorialProgressRequest(
-            status=TutorialStatus.COMPLETED,
-            last_completed_step="replay",
-        ),
-    )
-
-    return CompleteOnboardingResponse(
-        onboarding_completed=True,
-    )
 
 
 @router.get(

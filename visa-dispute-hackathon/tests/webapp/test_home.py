@@ -167,14 +167,12 @@ def test_complaints_route_uses_real_page() -> None:
     assert "Coming soon" not in response.text
 
 
-def test_onboarding_route_is_available() -> None:
+def test_legacy_onboarding_route_is_removed() -> None:
     client = TestClient(app)
 
     response = client.get("/onboarding")
 
-    assert response.status_code == 200
-
-    assert "onboarding.js" in response.text
+    assert response.status_code == 404
 
 
 def test_placeholder_routes_are_available() -> None:
