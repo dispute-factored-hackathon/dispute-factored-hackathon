@@ -104,7 +104,7 @@ def test_home_contains_replay_tutorial() -> None:
 
     assert response.status_code == 200
 
-    assert 'href="/onboarding?replay=true"' in response.text
+    assert 'href="/home?tour=start"' in response.text
 
     assert "Replay tutorial" in response.text
 

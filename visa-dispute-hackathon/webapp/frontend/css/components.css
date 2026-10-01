@@ -4,6 +4,123 @@
     z-index: 20;
 }
 
+.guided-tour-active {
+    overflow: hidden;
+}
+
+.guided-tour-backdrop,
+.guided-tour-spotlight,
+.guided-tour-tooltip {
+    position: fixed;
+}
+
+.guided-tour-backdrop {
+    inset: 0;
+    z-index: 100;
+    background: rgba(8, 20, 16, 0.7);
+}
+
+.guided-tour-spotlight {
+    top: var(--tour-top);
+    left: var(--tour-left);
+    z-index: 101;
+    width: var(--tour-width);
+    height: var(--tour-height);
+    border: 3px solid #ffffff;
+    border-radius: var(--radius-lg);
+    box-shadow: 0 0 0 4px rgba(42, 114, 91, 0.6);
+    pointer-events: none;
+    transition: inset 160ms ease, width 160ms ease, height 160ms ease;
+}
+
+.guided-tour-tooltip {
+    right: var(--space-4);
+    bottom: calc(5.5rem + env(safe-area-inset-bottom));
+    left: var(--space-4);
+    z-index: 102;
+    max-height: min(28rem, calc(100vh - 7rem));
+    padding: var(--space-5);
+    overflow: auto;
+    color: var(--color-text);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 1.5rem 4rem rgba(8, 20, 16, 0.3);
+}
+
+.guided-tour-topline,
+.guided-tour-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+}
+
+.guided-tour-topline {
+    justify-content: space-between;
+}
+
+.guided-tour-progress {
+    color: var(--color-success);
+    font-size: 0.75rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.guided-tour-close,
+.guided-tour-skip {
+    color: var(--color-text-secondary);
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+}
+
+.guided-tour-close {
+    width: 2.5rem;
+    height: 2.5rem;
+    font-size: 1.7rem;
+    line-height: 1;
+}
+
+.guided-tour-tooltip h2 {
+    margin: var(--space-3) 0 var(--space-2);
+    font-family: var(--font-display);
+    font-size: 1.6rem;
+}
+
+.guided-tour-tooltip p {
+    margin: 0 0 var(--space-5);
+    color: var(--color-text-secondary);
+    line-height: 1.55;
+}
+
+.guided-tour-tooltip .guided-tour-error {
+    padding: var(--space-3);
+    color: #9f1d20;
+    background: #fff0f0;
+    border: 1px solid #efb4b5;
+    border-radius: var(--radius-md);
+    font-weight: 650;
+}
+
+.guided-tour-actions {
+    justify-content: flex-end;
+    flex-wrap: wrap;
+}
+
+.guided-tour-skip {
+    margin-right: auto;
+    padding: var(--space-2);
+    font: inherit;
+    font-weight: 700;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .guided-tour-spotlight {
+        transition: none;
+    }
+}
+
 .button {
     display: inline-flex;
     align-items: center;

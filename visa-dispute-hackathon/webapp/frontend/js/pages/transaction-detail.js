@@ -11,6 +11,10 @@ import {
     renderBottomNavigation,
 } from "../components/bottom-nav.js";
 
+import {
+    initializeGuidedTour,
+} from "../components/guided-tour.js";
+
 
 const page =
     document.querySelector("#transaction-page");
@@ -282,6 +286,10 @@ async function initialize() {
 
         await loadTransaction(
             transactionId,
+        );
+
+        await initializeGuidedTour(
+            customer,
         );
 
     } catch (error) {

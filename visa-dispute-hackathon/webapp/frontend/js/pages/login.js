@@ -129,19 +129,8 @@ function normalizeFactoredId() {
 
 
 function redirectCustomer(
-    customer,
+    _customer,
 ) {
-    if (
-        customer.onboarding_completed
-        === false
-    ) {
-        window.location.replace(
-            "/onboarding",
-        );
-
-        return;
-    }
-
     window.location.replace(
         "/home",
     );

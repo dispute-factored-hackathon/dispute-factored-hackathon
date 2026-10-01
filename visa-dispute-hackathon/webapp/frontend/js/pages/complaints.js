@@ -11,6 +11,10 @@ import {
     renderBottomNavigation,
 } from "../components/bottom-nav.js";
 
+import {
+    initializeGuidedTour,
+} from "../components/guided-tour.js";
+
 
 const page =
     document.querySelector("#complaints-page");
@@ -297,6 +301,10 @@ async function initialize() {
         page.hidden = false;
 
         await loadComplaints();
+
+        await initializeGuidedTour(
+            customer,
+        );
 
     } catch (error) {
         console.error(

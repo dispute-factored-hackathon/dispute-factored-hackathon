@@ -11,6 +11,10 @@ import {
     renderBottomNavigation,
 } from "../components/bottom-nav.js";
 
+import {
+    initializeGuidedTour,
+} from "../components/guided-tour.js";
+
 
 const cardsPage =
     document.querySelector("#cards-page");
@@ -456,6 +460,10 @@ async function initializeCards() {
         cardsPage.hidden = false;
 
         await loadCards();
+
+        await initializeGuidedTour(
+            customer,
+        );
 
     } catch (error) {
         console.error(

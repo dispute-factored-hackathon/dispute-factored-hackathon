@@ -7,6 +7,10 @@ import {
     renderBottomNavigation,
 } from "../components/bottom-nav.js";
 
+import {
+    initializeGuidedTour,
+} from "../components/guided-tour.js";
+
 
 const homePage =
     document.querySelector("#home-page");
@@ -66,17 +70,6 @@ async function initializeHome() {
             return;
         }
 
-        if (
-            customer.onboarding_completed
-            === false
-        ) {
-            window.location.replace(
-                "/onboarding",
-            );
-
-            return;
-        }
-
         displayCustomer(
             customer,
         );
@@ -87,6 +80,10 @@ async function initializeHome() {
         );
 
         homePage.hidden = false;
+
+        await initializeGuidedTour(
+            customer,
+        );
 
     } catch (error) {
         console.error(

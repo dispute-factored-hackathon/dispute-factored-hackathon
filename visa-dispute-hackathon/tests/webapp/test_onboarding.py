@@ -22,6 +22,7 @@ def create_customer(
     client: TestClient,
     *,
     factored_id: str = "123456",
+    mobile_phone: str = "+5511981020050",
 ) -> dict:
     response = client.post(
         "/api/customers",
@@ -30,7 +31,7 @@ def create_customer(
             "last_name": "Factored",
             "date_of_birth": "2000-01-01",
             "gender": "male",
-            "mobile_phone": "+5511981020050",
+            "mobile_phone": mobile_phone,
             "preferred_accent": "portuguese",
             "factored_id": factored_id,
         },
@@ -252,6 +253,10 @@ def test_completing_onboarding_is_idempotent() -> None:
         "onboarding_completed": True,
     }
 
+    tour = client.get("/api/onboarding/tour").json()
+    assert tour["status"] == "completed"
+    assert tour["last_completed_step"] == "replay"
+
 
 def test_home_contains_replay_tutorial_link() -> None:
     client = TestClient(app)
@@ -260,9 +265,175 @@ def test_home_contains_replay_tutorial_link() -> None:
 
     assert response.status_code == 200
 
-    assert 'href="/onboarding?replay=true"' in response.text
+    assert 'href="/home?tour=start"' in response.text
 
     assert "Replay tutorial" in response.text
+
+
+def test_tutorial_state_requires_authentication() -> None:
+    client = TestClient(app)
+
+    assert client.get("/api/onboarding/tour").status_code == 401
+    assert (
+        client.patch(
+            "/api/onboarding/tour",
+            json={"status": "in_progress", "last_completed_step": None},
+        ).status_code
+        == 401
+    )
+
+
+def test_new_customer_is_offered_contextual_tour() -> None:
+    client = TestClient(app)
+    create_customer(client)
+    login(client)
+
+    response = client.get("/api/onboarding/tour")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "version": 1,
+        "status": "not_started",
+        "last_completed_step": None,
+        "should_offer": True,
+    }
+
+
+def test_tutorial_progress_is_persisted_for_customer() -> None:
+    client = TestClient(app)
+    created = create_customer(client)
+    login(client)
+
+    response = client.patch(
+        "/api/onboarding/tour",
+        json={"status": "in_progress", "last_completed_step": "cards"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["last_completed_step"] == "cards"
+    stored = customer_repository.get_by_id(created["customer_id"])
+    assert stored is not None
+    assert stored.tutorial_version == 1
+    assert stored.tutorial_status == "in_progress"
+    assert stored.tutorial_last_completed_step == "cards"
+
+
+def test_completing_contextual_tour_marks_onboarding_complete() -> None:
+    client = TestClient(app)
+    created = create_customer(client)
+    login(client)
+
+    response = client.patch(
+        "/api/onboarding/tour",
+        json={"status": "completed", "last_completed_step": "replay"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+    assert response.json()["should_offer"] is False
+    stored = customer_repository.get_by_id(created["customer_id"])
+    assert stored is not None
+    assert stored.onboarding_completed is True
+
+
+def test_skipping_contextual_tour_is_remembered() -> None:
+    client = TestClient(app)
+    create_customer(client)
+    login(client)
+
+    client.patch(
+        "/api/onboarding/tour",
+        json={"status": "skipped", "last_completed_step": "menu"},
+    )
+    response = client.get("/api/onboarding/tour")
+
+    assert response.json()["status"] == "skipped"
+    assert response.json()["last_completed_step"] == "menu"
+    assert response.json()["should_offer"] is False
+
+
+def test_tutorial_rejects_unknown_step() -> None:
+    client = TestClient(app)
+    create_customer(client)
+    login(client)
+
+    response = client.patch(
+        "/api/onboarding/tour",
+        json={"status": "in_progress", "last_completed_step": "not-a-step"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Unknown tutorial step."
+
+
+def test_tutorial_progress_is_isolated_between_customers() -> None:
+    first = TestClient(app)
+    second = TestClient(app)
+    create_customer(first, factored_id="123456")
+    create_customer(
+        second,
+        factored_id="654321",
+        mobile_phone="+5511981020060",
+    )
+    first.post("/api/auth/login", json={"factored_id": "123456"})
+    second.post("/api/auth/login", json={"factored_id": "654321"})
+
+    first.patch(
+        "/api/onboarding/tour",
+        json={"status": "in_progress", "last_completed_step": "cards-link"},
+    )
+
+    assert first.get("/api/onboarding/tour").json()["last_completed_step"] == "cards-link"
+    assert second.get("/api/onboarding/tour").json()["last_completed_step"] is None
+
+
+def test_new_tutorial_version_is_offered_again() -> None:
+    client = TestClient(app)
+    created = create_customer(client)
+    login(client)
+    customer = customer_repository.get_by_id(created["customer_id"])
+    assert customer is not None
+    customer_repository.update(
+        customer.model_copy(
+            update={
+                "tutorial_version": 999,
+                "tutorial_status": "completed",
+                "tutorial_last_completed_step": "replay",
+            }
+        )
+    )
+
+    state = client.get("/api/onboarding/tour").json()
+
+    assert state == {
+        "version": 1,
+        "status": "not_started",
+        "last_completed_step": None,
+        "should_offer": True,
+    }
+
+
+def test_contextual_tour_component_covers_required_journey_and_languages() -> None:
+    client = TestClient(app)
+
+    response = client.get("/static/js/components/guided-tour.js")
+
+    assert response.status_code == 200
+    content = response.text
+    for expected in (
+        'id: "menu"',
+        'id: "cards"',
+        'id: "transactions"',
+        'id: "report-transaction"',
+        'id: "izzy"',
+        'id: "complaints"',
+        'id: "profile"',
+        'id: "replay"',
+        "pt:",
+        "es:",
+        "prefers-reduced-motion",
+    ):
+        assert expected in content or expected in client.get("/static/css/components.css").text
 
 
 def test_onboarding_contains_mobile_phone_action() -> None:
