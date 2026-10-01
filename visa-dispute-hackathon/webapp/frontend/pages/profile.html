@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Manage your Factored Bank demo profile.">
+    <title>Profile · Factored Bank</title>
+    <link rel="icon" type="image/svg+xml" href="/static/assets/favicons/factored-bank.svg">
+
+    <link rel="stylesheet" href="/static/css/tokens.css">
+    <link rel="stylesheet" href="/static/css/global.css">
+    <link rel="stylesheet" href="/static/css/components.css?v=2">
+    <link rel="stylesheet" href="/static/css/pages/profile.css">
+</head>
+
+<body>
+    <main id="profile-page" class="profile-page" hidden>
+        <header class="app-header">
+            <a class="back-link" href="/home" aria-label="Back to menu">
+                ←
+            </a>
+
+            <a class="brand-name" href="/home" aria-label="Factored Bank home">
+                FACTORED BANK
+            </a>
+
+            <button id="logout-button" class="text-button" type="button">
+                Sign out
+            </button>
+        </header>
+
+        <div class="profile-content">
+            <section class="profile-heading" aria-labelledby="profile-title">
+                <p class="eyebrow">YOUR ACCOUNT</p>
+                <h1 id="profile-title">Your profile</h1>
+                <p>
+                    Keep your demo contact details and language preference current.
+                    Your Factored ID identifies this account and cannot be changed.
+                </p>
+            </section>
+
+            <form id="profile-form" class="profile-form" novalidate>
+                <section class="form-section" aria-labelledby="identity-title">
+                    <div class="section-heading">
+                        <div>
+                            <h2 id="identity-title">Account identity</h2>
+                        </div>
+                        <span id="account-status" class="status-chip"></span>
+                    </div>
+
+                    <label class="field field-locked" for="factored-id">
+                        <span>Factored ID</span>
+                        <input id="factored-id" type="text" readonly aria-describedby="factored-id-help">
+                        <small id="factored-id-help">This identifier cannot be edited.</small>
+                    </label>
+                </section>
+
+                <section class="form-section" aria-labelledby="personal-title">
+                    <div class="section-heading">
+                        <div>
+                            <h2 id="personal-title">Personal details</h2>
+                        </div>
+                    </div>
+
+                    <div class="field-grid">
+                        <label class="field" for="first-name">
+                            <span>First name</span>
+                            <input id="first-name" name="first_name" type="text" maxlength="100" required autocomplete="given-name">
+                        </label>
+
+                        <label class="field" for="last-name">
+                            <span>Last name</span>
+                            <input id="last-name" name="last_name" type="text" maxlength="100" required autocomplete="family-name">
+                        </label>
+
+                        <label class="field" for="date-of-birth">
+                            <span>Date of birth</span>
+                            <input id="date-of-birth" name="date_of_birth" type="date" required autocomplete="bday">
+                        </label>
+
+                        <label class="field" for="gender">
+                            <span>Gender</span>
+                            <select id="gender" name="gender" required>
+                                <option value="male">Male</option>
+                                <option value="female">Female</option>
+                                <option value="other">Other</option>
+                                <option value="prefer_not_to_say">Prefer not to say</option>
+                            </select>
+                        </label>
+                    </div>
+                </section>
+
+                <section class="form-section" aria-labelledby="contact-title">
+                    <div class="section-heading">
+                        <div>
+                            <h2 id="contact-title">Contact and voice</h2>
+                        </div>
+                    </div>
+
+                    <div class="field-grid">
+                        <label class="field" for="mobile-phone">
+                            <span>Mobile phone</span>
+                            <input id="mobile-phone" name="mobile_phone" type="tel" maxlength="16" autocomplete="tel" placeholder="+5511999999999">
+                            <small>Use international format, including the country code.</small>
+                        </label>
+
+                        <label class="field" for="preferred-accent">
+                            <span>Preferred language and accent</span>
+                            <select id="preferred-accent" name="preferred_accent" required>
+                                <option value="english">American English</option>
+                                <option value="portuguese">Brazilian Portuguese</option>
+                                <option value="mexican_spanish">Mexican Spanish</option>
+                                <option value="colombian_spanish">Colombian Spanish</option>
+                                <option value="argentine_spanish">Argentine Spanish</option>
+                            </select>
+                            <small>Izzy can use this preference in future conversations.</small>
+                        </label>
+                    </div>
+                </section>
+
+                <div id="profile-error" class="form-message form-message-error" role="alert" hidden></div>
+                <div id="profile-success" class="form-message form-message-success" role="status" hidden></div>
+
+                <div class="form-actions">
+                    <button id="save-button" class="button button-primary" type="submit">Save changes</button>
+                </div>
+            </form>
+        </div>
+
+        <nav id="bottom-nav" class="bottom-nav" aria-label="Primary navigation"></nav>
+    </main>
+
+    <script type="module" src="/static/js/pages/profile.js?v=3"></script>
+</body>
+</html>

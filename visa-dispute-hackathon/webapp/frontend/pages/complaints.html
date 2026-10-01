@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+    >
+
+    <meta
+        name="description"
+        content="View your Factored Bank complaints and disputes."
+    >
+
+    <title>Complaints · Factored Bank</title>
+
+    <link rel="icon" type="image/svg+xml" href="/static/assets/favicons/factored-bank.svg">
+
+    <link
+        rel="stylesheet"
+        href="/static/css/tokens.css"
+    >
+
+    <link
+        rel="stylesheet"
+        href="/static/css/global.css"
+    >
+
+    <link
+        rel="stylesheet"
+        href="/static/css/components.css?v=2"
+    >
+
+    <link
+        rel="stylesheet"
+        href="/static/css/pages/complaints.css"
+    >
+</head>
+
+<body>
+    <main
+        id="complaints-page"
+        class="complaints-page"
+        hidden
+    >
+        <header class="app-header">
+            <a
+                class="back-link"
+                href="/home"
+                aria-label="Back to home"
+            >
+                ←
+            </a>
+
+            <a
+                class="brand-name"
+                href="/home"
+            >
+                FACTORED BANK
+            </a>
+
+            <a
+                class="profile-button"
+                href="/profile"
+                aria-label="Open profile"
+            >
+                <span
+                    id="profile-initial"
+                    aria-hidden="true"
+                >
+                    F
+                </span>
+            </a>
+        </header>
+
+        <div class="complaints-content">
+            <header class="page-heading">
+                <p class="eyebrow">
+                    DISPUTES
+                </p>
+
+                <h1>
+                    Complaints
+                </h1>
+
+                <p>
+                    Follow your complaints, disputes
+                    and their outcomes.
+                </p>
+            </header>
+
+            <a
+                class="new-complaint-card"
+                href="/agent?intent=new_complaint"
+            >
+                <div>
+                    <span class="new-complaint-label">
+                        IZZY
+                    </span>
+
+                    <strong>
+                        Something wrong with a payment?
+                    </strong>
+
+                    <p>
+                        Start a new complaint with Izzy.
+                    </p>
+                </div>
+
+                <span
+                    class="new-complaint-arrow"
+                    aria-hidden="true"
+                >
+                    →
+                </span>
+            </a>
+
+            <div
+                id="page-error"
+                class="page-error"
+                role="alert"
+                hidden
+            ></div>
+
+            <section
+                id="complaints-list"
+                class="complaints-list"
+                aria-label="Complaint history"
+                aria-live="polite"
+            ></section>
+
+            <section
+                id="empty-state"
+                class="empty-state"
+                hidden
+            >
+                <h2>
+                    No complaints yet
+                </h2>
+
+                <p>
+                    If something goes wrong with a
+                    transaction, Izzy can help you
+                    start a complaint.
+                </p>
+
+                <a
+                    class="button button-primary"
+                    href="/agent?intent=new_complaint"
+                >
+                    Talk to Izzy
+                </a>
+            </section>
+        </div>
+
+        <nav
+            id="bottom-nav"
+            class="bottom-nav"
+            aria-label="Primary navigation"
+        ></nav>
+    </main>
+
+    <script
+        type="module"
+        src="/static/js/pages/complaints.js?v=3"
+    ></script>
+</body>
+</html>

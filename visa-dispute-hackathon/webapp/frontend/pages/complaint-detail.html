@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+    >
+
+    <meta
+        name="description"
+        content="Factored Bank complaint details."
+    >
+
+    <title>Complaint · Factored Bank</title>
+
+    <link rel="icon" type="image/svg+xml" href="/static/assets/favicons/factored-bank.svg">
+
+    <link
+        rel="stylesheet"
+        href="/static/css/tokens.css"
+    >
+
+    <link
+        rel="stylesheet"
+        href="/static/css/global.css"
+    >
+
+    <link
+        rel="stylesheet"
+        href="/static/css/components.css?v=2"
+    >
+
+    <link
+        rel="stylesheet"
+        href="/static/css/pages/complaint-detail.css"
+    >
+</head>
+
+<body>
+    <main
+        id="complaint-page"
+        class="complaint-page"
+        hidden
+    >
+        <header class="app-header">
+            <a
+                class="back-link"
+                href="/complaints"
+                aria-label="Back to complaints"
+            >
+                ←
+            </a>
+
+            <a
+                class="brand-name"
+                href="/home"
+            >
+                FACTORED BANK
+            </a>
+
+            <a
+                class="profile-button"
+                href="/profile"
+                aria-label="Open profile"
+            >
+                <span
+                    id="profile-initial"
+                    aria-hidden="true"
+                >
+                    F
+                </span>
+            </a>
+        </header>
+
+        <div class="complaint-content">
+            <div
+                id="page-error"
+                class="page-error"
+                role="alert"
+                hidden
+            ></div>
+
+            <section
+                id="complaint-detail"
+                hidden
+            >
+                <header class="complaint-heading">
+                    <div class="heading-top">
+                        <p class="eyebrow">
+                            COMPLAINT
+                        </p>
+
+                        <span
+                            id="complaint-status"
+                            class="status-badge"
+                        ></span>
+                    </div>
+
+                    <h1 id="complaint-category">
+                        Complaint
+                    </h1>
+
+                    <p
+                        id="complaint-subcategory"
+                        class="complaint-subcategory"
+                    ></p>
+
+                    <p
+                        id="claimed-amount"
+                        class="claimed-amount"
+                    ></p>
+                </header>
+
+                <section
+                    class="description-card"
+                    aria-labelledby="description-title"
+                >
+                    <p class="section-eyebrow">
+                        WHAT WAS REPORTED
+                    </p>
+
+                    <h2 id="description-title">
+                        Complaint description
+                    </h2>
+
+                    <p id="complaint-description"></p>
+                </section>
+
+                <section
+                    class="detail-card"
+                    aria-label="Complaint details"
+                >
+                    <dl class="detail-list">
+                        <div>
+                            <dt>Created</dt>
+                            <dd id="creation-date"></dd>
+                        </div>
+
+                        <div>
+                            <dt>Case type</dt>
+                            <dd id="case-type"></dd>
+                        </div>
+
+                        <div>
+                            <dt>Priority</dt>
+                            <dd id="complaint-priority"></dd>
+                        </div>
+
+                        <div>
+                            <dt>Channel</dt>
+                            <dd id="reception-channel"></dd>
+                        </div>
+
+                        <div>
+                            <dt>First response</dt>
+                            <dd id="first-response-date"></dd>
+                        </div>
+
+                        <div>
+                            <dt>SLA</dt>
+                            <dd id="sla-status"></dd>
+                        </div>
+                    </dl>
+                </section>
+
+                <section
+                    id="resolution-card"
+                    class="resolution-card"
+                >
+                    <p class="section-eyebrow">
+                        OUTCOME
+                    </p>
+
+                    <h2>
+                        Resolution
+                    </h2>
+
+                    <p
+                        id="resolution-status"
+                        class="resolution-status"
+                    ></p>
+
+                    <p
+                        id="resolution-text"
+                        class="resolution-text"
+                    ></p>
+
+                    <dl
+                        id="resolution-details"
+                        class="resolution-details"
+                    >
+                        <div>
+                            <dt>Resolution date</dt>
+                            <dd id="resolution-date"></dd>
+                        </div>
+
+                        <div>
+                            <dt>Resolution time</dt>
+                            <dd id="resolution-days"></dd>
+                        </div>
+
+                        <div>
+                            <dt>Compensation</dt>
+                            <dd id="compensation"></dd>
+                        </div>
+                    </dl>
+                </section>
+
+                <section
+                    class="izzy-card"
+                    aria-labelledby="izzy-title"
+                >
+                    <p class="izzy-eyebrow">
+                        IZZY
+                    </p>
+
+                    <h2 id="izzy-title">
+                        Need more help?
+                    </h2>
+
+                    <p>
+                        Start a new conversation with
+                        Izzy about a payment or dispute.
+                    </p>
+
+                    <a
+                        class="
+                            button
+                            izzy-button
+                        "
+                        href="/agent?intent=new_complaint"
+                    >
+                        Start new complaint
+                        <span aria-hidden="true">
+                            →
+                        </span>
+                    </a>
+                </section>
+            </section>
+        </div>
+
+        <nav
+            id="bottom-nav"
+            class="bottom-nav"
+            aria-label="Primary navigation"
+        ></nav>
+    </main>
+
+    <script
+        type="module"
+        src="/static/js/pages/complaint-detail.js?v=5"
+    ></script>
+</body>
+</html>

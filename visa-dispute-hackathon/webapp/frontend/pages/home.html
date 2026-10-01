@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+    >
+
+    <meta
+        name="description"
+        content="Factored Bank customer home."
+    >
+
+    <title>Home · Factored Bank</title>
+
+    <link rel="icon" type="image/svg+xml" href="/static/assets/favicons/factored-bank.svg">
+
+    <link
+        rel="stylesheet"
+        href="/static/css/tokens.css"
+    >
+
+    <link
+        rel="stylesheet"
+        href="/static/css/global.css"
+    >
+
+    <link
+        rel="stylesheet"
+        href="/static/css/components.css?v=2"
+    >
+
+    <link
+        rel="stylesheet"
+        href="/static/css/pages/home.css?v=3"
+    >
+</head>
+
+<body>
+    <main
+        id="home-page"
+        class="home-page"
+        hidden
+    >
+        <header class="app-header">
+            <a
+                class="brand-name"
+                href="/home"
+                aria-label="Factored Bank home"
+            >
+                FACTORED BANK
+            </a>
+
+            <a
+                class="profile-button"
+                href="/profile"
+                aria-label="Open profile"
+            >
+                <span
+                    id="profile-initial"
+                    aria-hidden="true"
+                >
+                    F
+                </span>
+            </a>
+        </header>
+
+        <div class="home-content">
+            <section class="welcome">
+                <p
+                    id="greeting"
+                    class="eyebrow"
+                >
+                    WELCOME BACK
+                </p>
+
+                <h1>
+                    Hi,
+                    <span id="customer-name"></span>.
+                </h1>
+
+                <p>
+                    What would you like to do today?
+                </p>
+            </section>
+
+            <section
+                class="izzy-hero"
+                data-tour="izzy"
+                aria-labelledby="izzy-title"
+            >
+                <div class="izzy-wordmark">
+                    IZZY
+                </div>
+
+                <div class="izzy-content">
+                    <p class="izzy-eyebrow">
+                        YOUR DISPUTE ASSISTANT
+                    </p>
+
+                    <h2 id="izzy-title">
+                        Something wrong
+                        with a payment?
+                    </h2>
+
+                    <p>
+                        Izzy can help you find a
+                        transaction, understand what
+                        happened and start a complaint.
+                    </p>
+
+                    <a
+                        class="
+                            button
+                            izzy-primary-action
+                        "
+                        href="/agent"
+                    >
+                        Talk to Izzy
+                        <span aria-hidden="true">
+                            →
+                        </span>
+                    </a>
+                </div>
+
+                <div class="phone-option">
+                    <div>
+                        <span class="phone-label">
+                            PREFER TO CALL?
+                        </span>
+
+                        <a
+                            class="phone-number"
+                            href="tel:+16615779964"
+                        >
+                            +1 661 577 9964
+                        </a>
+                    </div>
+
+                    <a
+                        class="call-button"
+                        href="tel:+16615779964"
+                        aria-label="Call Izzy"
+                    >
+                        Call
+                    </a>
+                </div>
+            </section>
+
+            <section
+                class="banking-section"
+                aria-labelledby="banking-title"
+            >
+                <div class="section-heading">
+                    <div>
+                        <p class="section-eyebrow">
+                            FACTORED BANK
+                        </p>
+
+                        <h2 id="banking-title">
+                            Your banking
+                        </h2>
+                    </div>
+                </div>
+
+                <div class="hub-grid">
+                    <a
+                        class="hub-card"
+                        href="/cards"
+                        data-tour="cards-link"
+                    >
+                        <span
+                            class="hub-icon"
+                            aria-hidden="true"
+                        >
+                            <svg viewBox="0 0 24 24" focusable="false">
+                                <rect x="3" y="5" width="18" height="14" rx="2"></rect>
+                                <path d="M3 10h18"></path>
+                            </svg>
+                        </span>
+
+                        <div>
+                            <h3>
+                                Cards
+                            </h3>
+
+                            <p>
+                                View, block and manage
+                                your cards.
+                            </p>
+                        </div>
+
+                        <span
+                            class="hub-arrow"
+                            aria-hidden="true"
+                        >
+                            →
+                        </span>
+                    </a>
+
+                    <a
+                        class="hub-card"
+                        href="/transactions"
+                        data-tour="transactions-link"
+                    >
+                        <span
+                            class="hub-icon"
+                            aria-hidden="true"
+                        >
+                            <svg viewBox="0 0 24 24" focusable="false">
+                                <path d="M7 7h13M7 12h13M7 17h13"></path>
+                                <path d="m3 7 1 1 2-2M3 12l1 1 2-2M3 17l1 1 2-2"></path>
+                            </svg>
+                        </span>
+
+                        <div>
+                            <h3>
+                                Transactions
+                            </h3>
+
+                            <p>
+                                Review purchases and
+                                payment activity.
+                            </p>
+                        </div>
+
+                        <span
+                            class="hub-arrow"
+                            aria-hidden="true"
+                        >
+                            →
+                        </span>
+                    </a>
+
+                    <a
+                        class="hub-card"
+                        href="/complaints"
+                        data-tour="complaints-link"
+                    >
+                        <span
+                            class="hub-icon"
+                            aria-hidden="true"
+                        >
+                            <svg viewBox="0 0 24 24" focusable="false">
+                                <circle cx="12" cy="12" r="9"></circle>
+                                <path d="M12 7v6"></path>
+                                <path d="M12 17h.01"></path>
+                            </svg>
+                        </span>
+
+                        <div>
+                            <h3>
+                                Complaints
+                            </h3>
+
+                            <p>
+                                Follow your disputes
+                                and complaints.
+                            </p>
+                        </div>
+
+                        <span
+                            class="hub-arrow"
+                            aria-hidden="true"
+                        >
+                            →
+                        </span>
+                    </a>
+
+                    <a
+                        class="hub-card"
+                        href="/profile"
+                        data-tour="profile-link"
+                    >
+                        <span
+                            class="hub-icon"
+                            aria-hidden="true"
+                        >
+                            <svg viewBox="0 0 24 24" focusable="false">
+                                <circle cx="12" cy="8" r="4"></circle>
+                                <path d="M4.5 21a7.5 7.5 0 0 1 15 0"></path>
+                            </svg>
+                        </span>
+
+                        <div>
+                            <h3>
+                                Profile
+                            </h3>
+
+                            <p>
+                                Review your personal
+                                information.
+                            </p>
+                        </div>
+
+                        <span
+                            class="hub-arrow"
+                            aria-hidden="true"
+                        >
+                            →
+                        </span>
+                    </a>
+                </div>
+            </section>
+
+            <section
+                class="shady-business"
+                aria-labelledby="shady-title"
+                data-tour="shady-business"
+            >
+                <div>
+                    <p class="shady-eyebrow">
+                        DEMO EXPERIENCE
+                    </p>
+
+                    <h2 id="shady-title">
+                        Shady Business
+                    </h2>
+
+                    <p>
+                        Visit our suspicious little shop,
+                        make a demo purchase and see if
+                        everything on your statement is
+                        what you expected.
+                    </p>
+                </div>
+
+                <a
+                    class="shady-link"
+                    href="/shop"
+                >
+                    Visit Shady Business
+                    <span aria-hidden="true">
+                        →
+                    </span>
+                </a>
+            </section>
+
+            <section
+                id="tutorial-replay"
+                class="tutorial-replay"
+                aria-labelledby="tutorial-replay-title"
+                hidden
+            >
+                <div>
+                    <p class="tutorial-replay-eyebrow">
+                        DEMO GUIDE
+                    </p>
+
+                    <h2 id="tutorial-replay-title">
+                        Need a refresher?
+                    </h2>
+
+                    <p>
+                        Replay the short guide to
+                        Factored Bank, Shady Business
+                        and Izzy.
+                    </p>
+                </div>
+
+                <a
+                    class="
+                        button
+                        button-secondary
+                        tutorial-replay-button
+                    "
+                    href="/home?tour=start"
+                    data-tour="replay"
+                >
+                    Replay tutorial
+                </a>
+            </section>
+
+            <button
+                id="logout-button"
+                class="sign-out-button"
+                type="button"
+            >
+                Sign out
+            </button>
+        </div>
+
+        <nav
+            id="bottom-nav"
+            class="bottom-nav"
+            aria-label="Primary navigation"
+        ></nav>
+    </main>
+
+    <script
+        type="module"
+        src="/static/js/pages/home.js?v=3"
+    ></script>
+</body>
+</html>
