@@ -13,7 +13,7 @@ import {
 
 import {
     initializeGuidedTour,
-} from "../components/guided-tour.js";
+} from "../components/guided-tour.js?v=5";
 
 
 const page =

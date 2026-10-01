@@ -538,6 +538,10 @@
     border-radius: var(--radius-lg);
 }
 
+.tutorial-replay[hidden] {
+    display: none !important;
+}
+
 .tutorial-replay-eyebrow {
     margin:
         0

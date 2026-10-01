@@ -21,8 +21,8 @@ const COPY = {
             "Select Cards to review the cards connected to this demo account.",
         ],
         cards: [
-            "Your demo cards",
-            "This page shows each card and its status. You can block a card here if you believe it is compromised.",
+            "Your active card",
+            "Check the card status and last four digits here. If you believe the card is compromised, you can block it using the control below after the tour.",
         ],
         "transactions-link": [
             "Review account activity",
@@ -78,7 +78,7 @@ const STEPS = [
     {
         id: "cards",
         route: "/cards",
-        target: ".bank-card-container",
+        target: ".bank-card.is-active",
         allowMissingTarget: true,
     },
     {

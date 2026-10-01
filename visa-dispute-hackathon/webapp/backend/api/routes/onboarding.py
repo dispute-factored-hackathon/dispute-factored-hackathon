@@ -34,7 +34,10 @@ onboarding_service = OnboardingService(customer_repository)
 def get_tutorial_state(
     context: Annotated[AuthenticatedContext, Depends(require_authenticated_context)],
 ) -> TutorialStateResponse:
-    if context.session.authentication_method is not AuthenticationMethod.FACTORED_ID:
+    if (
+        context.session.authentication_method is not AuthenticationMethod.FACTORED_ID
+        or not context.customer.is_judge_profile
+    ):
         return TutorialStateResponse(
             version=onboarding_service.version,
             status=TutorialStatus.NOT_STARTED,
@@ -53,7 +56,10 @@ def update_tutorial_progress(
     request: TutorialProgressRequest,
     context: Annotated[AuthenticatedContext, Depends(require_authenticated_context)],
 ) -> TutorialStateResponse:
-    if context.session.authentication_method is not AuthenticationMethod.FACTORED_ID:
+    if (
+        context.session.authentication_method is not AuthenticationMethod.FACTORED_ID
+        or not context.customer.is_judge_profile
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="The guided tour is available after signing in with a Factored ID.",

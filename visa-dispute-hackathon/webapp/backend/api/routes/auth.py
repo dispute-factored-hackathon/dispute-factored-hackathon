@@ -61,7 +61,10 @@ def customer_response(
         preferred_accent=(customer.detected_accent.value),
         locale=LOCALE_BY_ACCENT[customer.detected_accent.value],
         onboarding_completed=(customer.onboarding_completed),
-        onboarding_eligible=(session.authentication_method is AuthenticationMethod.FACTORED_ID),
+        onboarding_eligible=(
+            session.authentication_method is AuthenticationMethod.FACTORED_ID
+            and customer.is_judge_profile
+        ),
     )
 
 

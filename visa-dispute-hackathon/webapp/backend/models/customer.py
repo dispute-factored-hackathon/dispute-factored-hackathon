@@ -59,3 +59,7 @@ class Customer(BaseModel):
     tutorial_last_completed_step: str | None = None
 
     last_updated: datetime
+
+    @property
+    def is_judge_profile(self) -> bool:
+        return self.document_type == "FACTORED_ID"

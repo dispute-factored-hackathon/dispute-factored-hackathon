@@ -248,6 +248,7 @@ def test_contextual_tour_is_interactive_and_english_only() -> None:
     content = response.text
     for expected in (
         'id: "cards-link"',
+        'target: ".bank-card.is-active"',
         'id: "transactions"',
         'id: "report-transaction"',
         'id: "izzy"',
@@ -312,7 +313,7 @@ def test_complaint_details_resume_the_contextual_tour() -> None:
     client = TestClient(app)
     content = client.get("/static/js/pages/complaint-detail.js").text
 
-    assert 'from "../components/guided-tour.js"' in content
+    assert 'from "../components/guided-tour.js?v=5"' in content
     assert "await initializeGuidedTour();" in content
 
 
@@ -337,3 +338,10 @@ def test_contextual_tour_reenables_controls_after_changing_steps() -> None:
     show_step = show_step.split("async function activateTarget", 1)[0]
 
     assert "setControlsDisabled(false);" in show_step
+
+
+def test_cards_render_an_explicit_active_tour_target() -> None:
+    client = TestClient(app)
+    content = client.get("/static/js/pages/cards.js?v=2").text
+
+    assert '"bank-card is-active"' in content

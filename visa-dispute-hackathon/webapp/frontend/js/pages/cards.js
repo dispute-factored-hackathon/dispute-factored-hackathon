@@ -13,7 +13,7 @@ import {
 
 import {
     initializeGuidedTour,
-} from "../components/guided-tour.js";
+} from "../components/guided-tour.js?v=5";
 
 
 const cardsPage =
@@ -111,7 +111,7 @@ function createBankCard(product) {
     card.className =
         isBlocked(product)
             ? "bank-card is-blocked"
-            : "bank-card";
+            : "bank-card is-active";
 
     const top =
         document.createElement("div");

@@ -115,12 +115,16 @@ def test_home_contains_replay_tutorial() -> None:
     client = TestClient(app)
 
     response = client.get("/home")
+    styles = client.get("/static/css/pages/home.css")
 
     assert response.status_code == 200
+    assert styles.status_code == 200
 
     assert 'href="/home?tour=start"' in response.text
 
     assert "Replay tutorial" in response.text
+    assert ".tutorial-replay[hidden]" in styles.text
+    assert "display: none !important;" in styles.text
 
 
 def test_authenticated_customer_context() -> None:
