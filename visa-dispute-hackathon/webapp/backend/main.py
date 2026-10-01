@@ -127,7 +127,7 @@ def complaint_detail_page(
 
 @app.get("/profile")
 def profile_page() -> FileResponse:
-    return page("coming-soon.html")
+    return page("profile.html")
 
 
 @app.get("/agent")

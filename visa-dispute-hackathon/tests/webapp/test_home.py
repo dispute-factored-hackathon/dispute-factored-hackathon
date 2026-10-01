@@ -181,7 +181,6 @@ def test_placeholder_routes_are_available() -> None:
     client = TestClient(app)
 
     routes = (
-        "/profile",
         "/agent",
         "/shop",
     )

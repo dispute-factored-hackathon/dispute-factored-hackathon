@@ -1,3 +1,9 @@
+.app-header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+}
+
 .button {
     display: inline-flex;
     align-items: center;
