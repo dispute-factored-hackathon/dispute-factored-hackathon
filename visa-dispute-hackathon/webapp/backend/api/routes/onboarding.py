@@ -1,64 +1,73 @@
-from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import (
     APIRouter,
     Depends,
+    HTTPException,
+    status,
 )
 
 from webapp.backend.api.dependencies import (
-    require_customer,
+    AuthenticatedContext,
+    require_authenticated_context,
 )
-from webapp.backend.models.customer import Customer
+from webapp.backend.models.customer import TutorialStatus
+from webapp.backend.models.session import AuthenticationMethod
 from webapp.backend.repositories.mock import (
     customer_repository,
 )
-from webapp.backend.schemas.onboarding import (
-    CompleteOnboardingResponse,
-    OnboardingStateResponse,
-)
+from webapp.backend.schemas.onboarding import TutorialProgressRequest, TutorialStateResponse
+from webapp.backend.services.onboarding import InvalidTutorialStepError, OnboardingService
 
 router = APIRouter(
     prefix="/api/onboarding",
     tags=["onboarding"],
 )
 
+onboarding_service = OnboardingService(customer_repository)
+
 
 @router.get(
-    "",
-    response_model=OnboardingStateResponse,
+    "/tour",
+    response_model=TutorialStateResponse,
 )
-def get_onboarding_state(
-    customer: Annotated[
-        Customer,
-        Depends(require_customer),
-    ],
-) -> OnboardingStateResponse:
-    return OnboardingStateResponse(
-        onboarding_completed=(customer.onboarding_completed),
-    )
-
-
-@router.post(
-    "/complete",
-    response_model=CompleteOnboardingResponse,
-)
-def complete_onboarding(
-    customer: Annotated[
-        Customer,
-        Depends(require_customer),
-    ],
-) -> CompleteOnboardingResponse:
-    if not customer.onboarding_completed:
-        updated = customer.model_copy(
-            update={
-                "onboarding_completed": True,
-                "last_updated": datetime.now(UTC),
-            }
+def get_tutorial_state(
+    context: Annotated[AuthenticatedContext, Depends(require_authenticated_context)],
+) -> TutorialStateResponse:
+    if (
+        context.session.authentication_method is not AuthenticationMethod.FACTORED_ID
+        or not context.customer.is_judge_profile
+    ):
+        return TutorialStateResponse(
+            version=onboarding_service.version,
+            status=TutorialStatus.NOT_STARTED,
+            last_completed_step=None,
+            should_offer=False,
+            eligible=False,
         )
+    return onboarding_service.state(context.customer)
 
-        customer_repository.update(updated)
 
-    return CompleteOnboardingResponse(
-        onboarding_completed=True,
-    )
+@router.patch(
+    "/tour",
+    response_model=TutorialStateResponse,
+)
+def update_tutorial_progress(
+    request: TutorialProgressRequest,
+    context: Annotated[AuthenticatedContext, Depends(require_authenticated_context)],
+) -> TutorialStateResponse:
+    if (
+        context.session.authentication_method is not AuthenticationMethod.FACTORED_ID
+        or not context.customer.is_judge_profile
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The guided tour is available after signing in with a Factored ID.",
+        )
+    try:
+        return onboarding_service.update(context.customer, request)
+    except InvalidTutorialStepError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(error),
+        ) from error

@@ -394,7 +394,16 @@
 
     border-radius: var(--radius-md);
 
-    font-size: 1.15rem;
+}
+
+.hub-icon svg {
+    width: 1.35rem;
+    height: 1.35rem;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
 }
 
 .hub-card h3 {
@@ -527,6 +536,10 @@
         var(--color-border);
 
     border-radius: var(--radius-lg);
+}
+
+.tutorial-replay[hidden] {
+    display: none !important;
 }
 
 .tutorial-replay-eyebrow {

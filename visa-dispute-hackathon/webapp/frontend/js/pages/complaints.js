@@ -9,7 +9,11 @@ import {
 
 import {
     renderBottomNavigation,
-} from "../components/bottom-nav.js";
+} from "../components/bottom-nav.js?v=2";
+
+import {
+    initializeGuidedTour,
+} from "../components/guided-tour.js?v=5";
 
 
 const page =
@@ -297,6 +301,10 @@ async function initialize() {
         page.hidden = false;
 
         await loadComplaints();
+
+        await initializeGuidedTour(
+            customer,
+        );
 
     } catch (error) {
         console.error(

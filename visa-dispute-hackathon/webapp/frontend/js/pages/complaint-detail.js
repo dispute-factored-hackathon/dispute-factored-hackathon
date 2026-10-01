@@ -9,7 +9,11 @@ import {
 
 import {
     renderBottomNavigation,
-} from "../components/bottom-nav.js";
+} from "../components/bottom-nav.js?v=2";
+
+import {
+    initializeGuidedTour,
+} from "../components/guided-tour.js?v=5";
 
 
 const page =
@@ -357,6 +361,8 @@ async function initialize() {
         await loadComplaint(
             complaintId,
         );
+
+        await initializeGuidedTour();
 
     } catch (error) {
         console.error(

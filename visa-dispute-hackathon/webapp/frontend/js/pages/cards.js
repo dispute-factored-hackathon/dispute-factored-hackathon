@@ -9,7 +9,11 @@ import {
 
 import {
     renderBottomNavigation,
-} from "../components/bottom-nav.js";
+} from "../components/bottom-nav.js?v=2";
+
+import {
+    initializeGuidedTour,
+} from "../components/guided-tour.js?v=5";
 
 
 const cardsPage =
@@ -107,7 +111,7 @@ function createBankCard(product) {
     card.className =
         isBlocked(product)
             ? "bank-card is-blocked"
-            : "bank-card";
+            : "bank-card is-active";
 
     const top =
         document.createElement("div");
@@ -456,6 +460,10 @@ async function initializeCards() {
         cardsPage.hidden = false;
 
         await loadCards();
+
+        await initializeGuidedTour(
+            customer,
+        );
 
     } catch (error) {
         console.error(

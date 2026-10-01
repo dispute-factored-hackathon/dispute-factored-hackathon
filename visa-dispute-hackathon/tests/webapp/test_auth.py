@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from webapp.backend.demo_seed import seed_demo_customers
 from webapp.backend.main import app
 from webapp.backend.repositories.mock import (
     complaint_repository,
@@ -95,6 +96,19 @@ def test_login_with_valid_factored_id() -> None:
     assert customer["preferred_accent"] == "portuguese"
 
     assert customer["onboarding_completed"] is False
+    assert customer["onboarding_eligible"] is True
+
+
+def test_seeded_non_judge_profile_is_not_onboarding_eligible() -> None:
+    client = TestClient(app)
+    seed_demo_customers(customer_repository, product_repository)
+
+    response = login(client, factored_id="410001")
+
+    assert response.status_code == 200
+    assert response.json()["customer"]["onboarding_eligible"] is False
+    assert client.get("/api/auth/me").json()["onboarding_eligible"] is False
+    assert client.get("/api/onboarding/tour").json()["eligible"] is False
 
 
 def test_login_sets_session_cookie() -> None:
@@ -152,6 +166,7 @@ def test_me_returns_authenticated_customer() -> None:
     assert body["preferred_accent"] == "portuguese"
 
     assert body["onboarding_completed"] is False
+    assert body["onboarding_eligible"] is True
 
 
 def test_logout_invalidates_session() -> None:
@@ -250,7 +265,10 @@ def test_onboarding_state_is_customer_specific() -> None:
         factored_id="222222",
     )
 
-    completion = first_client.post("/api/onboarding/complete")
+    completion = first_client.patch(
+        "/api/onboarding/tour",
+        json={"status": "completed", "last_completed_step": "finish"},
+    )
 
     assert completion.status_code == 200
 
@@ -320,6 +338,7 @@ def test_demo_selection_logs_in_exact_customer_and_returns_locale() -> None:
     assert response.status_code == 200
     assert response.json()["customer"]["customer_id"] == expected["customer_id"]
     assert response.json()["customer"]["locale"] == "es-CO"
+    assert response.json()["customer"]["onboarding_eligible"] is False
     assert client.get("/api/auth/me").json()["customer_id"] == expected["customer_id"]
 
 

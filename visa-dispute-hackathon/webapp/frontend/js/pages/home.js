@@ -5,7 +5,11 @@ import {
 
 import {
     renderBottomNavigation,
-} from "../components/bottom-nav.js";
+} from "../components/bottom-nav.js?v=2";
+
+import {
+    initializeGuidedTour,
+} from "../components/guided-tour.js?v=5";
 
 
 const homePage =
@@ -25,6 +29,9 @@ const logoutButton =
 
 const bottomNav =
     document.querySelector("#bottom-nav");
+
+const tutorialReplay =
+    document.querySelector("#tutorial-replay");
 
 
 function greetingForCurrentTime() {
@@ -54,6 +61,9 @@ function displayCustomer(customer) {
 
     greeting.textContent =
         greetingForCurrentTime();
+
+    tutorialReplay.hidden =
+        !customer.onboarding_eligible;
 }
 
 
@@ -63,17 +73,6 @@ async function initializeHome() {
             await requireCustomer();
 
         if (!customer) {
-            return;
-        }
-
-        if (
-            customer.onboarding_completed
-            === false
-        ) {
-            window.location.replace(
-                "/onboarding",
-            );
-
             return;
         }
 
@@ -87,6 +86,10 @@ async function initializeHome() {
         );
 
         homePage.hidden = false;
+
+        await initializeGuidedTour(
+            customer,
+        );
 
     } catch (error) {
         console.error(

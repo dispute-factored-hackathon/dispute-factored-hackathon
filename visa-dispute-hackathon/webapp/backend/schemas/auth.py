@@ -33,6 +33,7 @@ class AuthenticatedCustomerResponse(BaseModel):
     preferred_accent: str
     locale: str
     onboarding_completed: bool
+    onboarding_eligible: bool
 
 
 class LoginResponse(BaseModel):

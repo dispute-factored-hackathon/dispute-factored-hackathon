@@ -1,6 +1,7 @@
 import { ApiError, apiRequest } from "../api.js";
 import { logout, requireCustomer } from "../auth.js";
-import { renderBottomNavigation } from "../components/bottom-nav.js";
+import { renderBottomNavigation } from "../components/bottom-nav.js?v=2";
+import { initializeGuidedTour } from "../components/guided-tour.js?v=5";
 
 const page = document.querySelector("#profile-page");
 const form = document.querySelector("#profile-form");
@@ -120,6 +121,7 @@ async function initialize() {
         renderProfile(profile);
         renderBottomNavigation(bottomNav, null);
         page.hidden = false;
+        await initializeGuidedTour(customer);
     } catch (error) {
         console.error("Unable to initialize profile:", error);
         window.location.replace("/login");

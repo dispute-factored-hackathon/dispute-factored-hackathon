@@ -4,7 +4,11 @@ import {
 
 import {
     renderBottomNavigation,
-} from "../components/bottom-nav.js";
+} from "../components/bottom-nav.js?v=2";
+
+import {
+    initializeGuidedTour,
+} from "../components/guided-tour.js?v=5";
 
 
 const page =
@@ -131,6 +135,8 @@ async function initializePage() {
         applyAgentContext();
 
         page.hidden = false;
+
+        await initializeGuidedTour();
 
     } catch (error) {
         console.error(

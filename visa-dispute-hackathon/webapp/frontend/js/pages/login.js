@@ -90,7 +90,7 @@ function redirectCustomer(customer) {
     localStorage.setItem("factored_locale", customer.locale);
     document.documentElement.lang = customer.locale;
     window.location.replace(
-        customer.onboarding_completed === false ? "/onboarding" : "/home",
+        "/home",
     );
 }
 

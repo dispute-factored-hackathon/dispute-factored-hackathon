@@ -15,6 +15,8 @@
 
     <title>Sign in · Factored Bank</title>
 
+    <link rel="icon" type="image/svg+xml" href="/static/assets/favicons/factored-bank.svg">
+
     <link
         rel="stylesheet"
         href="/static/css/tokens.css"
@@ -27,7 +29,7 @@
 
     <link
         rel="stylesheet"
-        href="/static/css/pages/login.css"
+        href="/static/css/pages/login.css?v=20261001"
     >
 </head>
 
@@ -98,6 +100,12 @@
                         <strong>Demo access only.</strong>
                         No password is required because every profile and transaction is synthetic.
                         Never use this pattern for real banking access.
+                    </div>
+
+                    <div class="demo-warning" role="note">
+                        <strong>Judges:</strong>
+                        create a profile, then sign in with its Factored ID for the guided first experience.
+                        Choosing a customer opens the demo without onboarding.
                     </div>
 
                     <div
@@ -193,7 +201,7 @@
 
     <script
         type="module"
-        src="/static/js/pages/login.js"
+        src="/static/js/pages/login.js?v=20261001"
     ></script>
 </body>
 </html>
