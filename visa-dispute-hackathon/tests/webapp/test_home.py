@@ -175,19 +175,13 @@ def test_legacy_onboarding_route_is_removed() -> None:
     assert response.status_code == 404
 
 
-def test_placeholder_routes_are_available() -> None:
+def test_agent_placeholder_route_is_available() -> None:
     client = TestClient(app)
 
-    routes = (
-        "/agent",
-        "/shop",
-    )
+    response = client.get("/agent")
 
-    for route in routes:
-        response = client.get(route)
-
-        assert response.status_code == 200
-        assert "Coming soon" in response.text
+    assert response.status_code == 200
+    assert "Coming soon" in response.text
 
 
 def test_api_me_remains_protected() -> None:

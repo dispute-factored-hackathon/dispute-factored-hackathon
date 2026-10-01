@@ -5,6 +5,7 @@ from webapp.backend.models.complaint import Complaint
 from webapp.backend.models.customer import Customer
 from webapp.backend.models.product import Product
 from webapp.backend.models.session import CustomerSession
+from webapp.backend.models.store import StoreProduct
 from webapp.backend.models.transaction import Transaction
 
 
@@ -283,6 +284,17 @@ class MockSessionRepository:
                 session_id,
                 None,
             )
+
+
+class MockStoreCatalogRepository:
+    def __init__(self, products: tuple[StoreProduct, ...]) -> None:
+        self._products = {product.product_id: product for product in products}
+
+    def list_all(self) -> list[StoreProduct]:
+        return list(self._products.values())
+
+    def get_by_id(self, product_id: str) -> StoreProduct | None:
+        return self._products.get(product_id)
 
 
 customer_repository = MockCustomerRepository()

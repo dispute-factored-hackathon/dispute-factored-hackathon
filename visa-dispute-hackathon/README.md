@@ -10,6 +10,12 @@ The web interface offers two paths: a searchable synthetic-customer selector for
 
 This shortcut is controlled impersonation for the hackathon demo, not production authentication. The in-memory repository and seeded profiles are replaceable through the `CustomerRepository` contract. The selected profile exposes a regional locale (`pt-BR`, `es-CO`, `es-MX`, `es-AR`, or `en-US`) for the interface-localization layer.
 
+## Shady Business purchase simulator
+
+Authenticated demo customers can open `/shop`, browse a humorous synthetic catalog, manage a browser-session cart, and pay with one of their active mock credit cards. The server resolves authoritative catalog prices, validates card ownership and status, and writes the approved purchase to the same in-memory transaction repository used by Factored Bank.
+
+Every checkout also injects exactly one randomly selected training scenario: either a duplicate Shady Business charge or an unrelated high-value electronics transaction in a configured South Asian location. The receipt does not reveal the selected scenario; the judge discovers it in `/transactions` and can continue into the dispute journey. No real card network, merchant processor, money movement, inventory service, or production database is used.
+
 ## Mock customer identification
 
 The default agent is orchestrated with LangGraph. The LLM extracts a caller-stated name and may answer an allowed dispute question directly. Whenever the conversation must choose a state-changing branch, the graph uses a local multilingual zero-shot classifier. The graph advances only when the top class is not `other`, meets the configured confidence threshold, and—during name confirmation—also meets the minimum score margin.
