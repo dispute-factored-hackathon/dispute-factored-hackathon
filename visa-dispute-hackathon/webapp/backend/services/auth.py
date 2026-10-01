@@ -67,7 +67,7 @@ class AuthenticationService:
             raise AuthenticationError(
                 "That demo profile is no longer available. Search for the customer again."
             )
-        return customer, self._create_session(customer)
+        return self.login(customer.document_number)
 
     def _create_session(self, customer: Customer) -> CustomerSession:
         now = datetime.now(UTC)

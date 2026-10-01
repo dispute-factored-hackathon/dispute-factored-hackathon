@@ -147,6 +147,35 @@
     color: var(--color-text);
 }
 
+.login-methods {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    padding: 0.25rem;
+    background: var(--color-background);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+}
+
+.login-method {
+    min-height: 2.75rem;
+    padding: var(--space-2) var(--space-3);
+    color: var(--color-text-secondary);
+    background: transparent;
+    border: 0;
+    border-radius: calc(var(--radius-md) - 0.2rem);
+    font-weight: 700;
+}
+
+.login-method.active {
+    color: var(--color-text);
+    background: var(--color-surface);
+    box-shadow: 0 0.15rem 0.5rem rgba(8, 20, 16, 0.1);
+}
+
+[role="tabpanel"][hidden] {
+    display: none;
+}
+
 .customer-picker {
     position: relative;
 }

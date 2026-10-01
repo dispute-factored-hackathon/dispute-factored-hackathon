@@ -5,6 +5,10 @@ const form = document.querySelector("#login-form");
 const searchInput = document.querySelector("#customer-search");
 const selectionInput = document.querySelector("#customer-selection");
 const optionsList = document.querySelector("#customer-options");
+const customerPanel = document.querySelector("#customer-login-panel");
+const factoredIdPanel = document.querySelector("#factored-id-login-panel");
+const factoredIdInput = document.querySelector("#factored-id");
+const methodButtons = [...document.querySelectorAll("[data-method]")];
 const loginButton = document.querySelector("#login-button");
 const loginError = document.querySelector("#login-error");
 
@@ -12,6 +16,7 @@ let options = [];
 let activeIndex = -1;
 let searchTimer = null;
 let searchController = null;
+let loginMethod = "customer";
 const startedAt = performance.now();
 
 function emitMetric(name, detail = {}) {
@@ -32,7 +37,31 @@ function clearError() {
 
 function setSubmitting(isSubmitting) {
     loginButton.disabled = isSubmitting;
-    loginButton.textContent = isSubmitting ? "Entering demo..." : "Enter demo";
+    if (isSubmitting) {
+        loginButton.textContent = loginMethod === "customer" ? "Entering demo..." : "Signing in...";
+        return;
+    }
+    loginButton.textContent = loginMethod === "customer" ? "Enter demo" : "Sign in";
+}
+
+function setLoginMethod(method, { focus = false } = {}) {
+    loginMethod = method;
+    const customerSelected = method === "customer";
+    customerPanel.hidden = !customerSelected;
+    factoredIdPanel.hidden = customerSelected;
+    closeOptions();
+    clearError();
+    methodButtons.forEach((button) => {
+        const selected = button.dataset.method === method;
+        button.classList.toggle("active", selected);
+        button.setAttribute("aria-selected", String(selected));
+        button.tabIndex = selected ? 0 : -1;
+    });
+    loginButton.textContent = customerSelected ? "Enter demo" : "Sign in";
+    if (focus) {
+        (customerSelected ? searchInput : factoredIdInput).focus();
+    }
+    emitMetric("login_method_selected", { method });
 }
 
 function redirectCustomer(customer) {
@@ -134,18 +163,31 @@ function scheduleSearch() {
 async function submitLogin(event) {
     event.preventDefault();
     clearError();
-    if (!selectionInput.value) {
+    if (loginMethod === "customer" && !selectionInput.value) {
         showError("Search for a customer and choose one of the demo profiles.");
         searchInput.focus();
         emitMetric("login_failure", { reason: "no_selection" });
         return;
     }
 
+    const factoredId = factoredIdInput.value.replace(/\D/g, "").slice(0, 6);
+    factoredIdInput.value = factoredId;
+    if (loginMethod === "factored-id" && factoredId.length !== 6) {
+        showError("Enter your six-digit Factored ID.");
+        factoredIdInput.focus();
+        emitMetric("login_failure", { reason: "invalid_factored_id" });
+        return;
+    }
+
     setSubmitting(true);
     try {
-        const response = await apiRequest("/auth/demo-login", {
+        const endpoint = loginMethod === "customer" ? "/auth/demo-login" : "/auth/login";
+        const payload = loginMethod === "customer"
+            ? { selection: selectionInput.value }
+            : { factored_id: factoredId };
+        const response = await apiRequest(endpoint, {
             method: "POST",
-            body: JSON.stringify({ selection: selectionInput.value }),
+            body: JSON.stringify(payload),
         });
         emitMetric("login_success", {
             time_to_enter_ms: Math.round(performance.now() - startedAt),
@@ -157,11 +199,23 @@ async function submitLogin(event) {
             console.error("Unexpected demo login error:", error);
             showError("We could not enter the demo. Please try again.");
         }
-        selectionInput.value = "";
-        emitMetric("login_failure", { reason: "invalid_or_stale_selection" });
+        if (loginMethod === "customer") selectionInput.value = "";
+        emitMetric("login_failure", {
+            reason: loginMethod === "customer"
+                ? "invalid_or_stale_selection"
+                : "unknown_or_inactive_factored_id",
+        });
     } finally {
         setSubmitting(false);
     }
+}
+
+function handleMethodKeydown(event) {
+    if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+    event.preventDefault();
+    const nextMethod = loginMethod === "customer" ? "factored-id" : "customer";
+    setLoginMethod(nextMethod);
+    methodButtons.find((button) => button.dataset.method === nextMethod)?.focus();
 }
 
 function handleSearchKeydown(event) {
@@ -197,6 +251,14 @@ searchInput.addEventListener("input", () => {
 });
 searchInput.addEventListener("keydown", handleSearchKeydown);
 searchInput.addEventListener("blur", () => window.setTimeout(closeOptions, 100));
+factoredIdInput.addEventListener("input", () => {
+    clearError();
+    factoredIdInput.value = factoredIdInput.value.replace(/\D/g, "").slice(0, 6);
+});
+methodButtons.forEach((button) => {
+    button.addEventListener("click", () => setLoginMethod(button.dataset.method, { focus: true }));
+    button.addEventListener("keydown", handleMethodKeydown);
+});
 form.addEventListener("submit", submitLogin);
 
 initializeLogin();

@@ -397,6 +397,10 @@ def test_login_page_uses_accessible_searchable_demo_selector() -> None:
 
     assert 'role="combobox"' in page
     assert 'role="listbox"' in page
+    assert 'role="tablist"' in page
+    assert 'data-method="customer"' in page
+    assert 'data-method="factored-id"' in page
+    assert 'id="factored-id"' in page
     assert 'aria-required="true"' in page
     assert 'aria-live="polite"' in page
     assert "Demo access only" in page
@@ -404,4 +408,6 @@ def test_login_page_uses_accessible_searchable_demo_selector() -> None:
     assert 'event.key === "ArrowDown"' in script
     assert 'event.key === "ArrowUp"' in script
     assert 'event.key === "Enter"' in script
+    assert '"/auth/login"' in script
+    assert '"/auth/demo-login"' in script
     assert "factored:demo-login-metric" in script

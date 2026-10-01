@@ -69,13 +69,43 @@
                         hidden
                     ></div>
 
+                    <div class="login-methods" role="tablist" aria-label="Sign-in method">
+                        <button
+                            id="customer-method"
+                            class="login-method active"
+                            type="button"
+                            role="tab"
+                            aria-selected="true"
+                            aria-controls="customer-login-panel"
+                            data-method="customer"
+                        >
+                            Choose customer
+                        </button>
+                        <button
+                            id="factored-id-method"
+                            class="login-method"
+                            type="button"
+                            role="tab"
+                            aria-selected="false"
+                            aria-controls="factored-id-login-panel"
+                            data-method="factored-id"
+                        >
+                            Use Factored ID
+                        </button>
+                    </div>
+
                     <div class="demo-warning" role="note">
                         <strong>Demo access only.</strong>
                         No password is required because every profile and transaction is synthetic.
                         Never use this pattern for real banking access.
                     </div>
 
-                    <div class="form-field customer-picker">
+                    <div
+                        id="customer-login-panel"
+                        class="form-field customer-picker"
+                        role="tabpanel"
+                        aria-labelledby="customer-method"
+                    >
                         <label for="customer-search">
                             Customer name
                         </label>
@@ -109,6 +139,29 @@
                         <p id="customer-help" class="field-help">
                             Search ignores capitalization and accents. A short profile label distinguishes
                             customers with the same name without exposing document numbers.
+                        </p>
+                    </div>
+
+                    <div
+                        id="factored-id-login-panel"
+                        class="form-field"
+                        role="tabpanel"
+                        aria-labelledby="factored-id-method"
+                        hidden
+                    >
+                        <label for="factored-id">Factored ID</label>
+                        <input
+                            id="factored-id"
+                            name="factoredId"
+                            type="text"
+                            inputmode="numeric"
+                            autocomplete="one-time-code"
+                            maxlength="6"
+                            pattern="[0-9]{6}"
+                            placeholder="123456"
+                        >
+                        <p class="field-help">
+                            Enter the six-digit ID generated when the demo account was created.
                         </p>
                     </div>
 
