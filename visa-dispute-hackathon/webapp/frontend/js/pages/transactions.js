@@ -2,6 +2,14 @@ import {
     ApiError,
     apiRequest,
 } from "../api.js";
+import {
+    getLocale,
+    i18nReady,
+    t,
+    translateValue,
+} from "../i18n.js?v=1";
+
+await i18nReady;
 
 import {
     requireCustomer,
@@ -9,11 +17,11 @@ import {
 
 import {
     renderBottomNavigation,
-} from "../components/bottom-nav.js?v=2";
+} from "../components/bottom-nav.js?v=4";
 
 import {
     initializeGuidedTour,
-} from "../components/guided-tour.js?v=5";
+} from "../components/guided-tour.js?v=6";
 
 
 const page =
@@ -56,7 +64,7 @@ function formatMoney(
 ) {
     try {
         return new Intl.NumberFormat(
-            undefined,
+            getLocale(),
             {
                 style: "currency",
                 currency,
@@ -74,7 +82,7 @@ function formatDate(value) {
         new Date(value);
 
     return new Intl.DateTimeFormat(
-        undefined,
+        getLocale(),
         {
             month: "short",
             day: "numeric",
@@ -130,7 +138,7 @@ function createTransactionItem(
 
     merchant.textContent =
         transaction.merchant_name
-        || "Unknown merchant";
+        || t("transaction.unknown_merchant");
 
     const meta =
         document.createElement("div");
@@ -149,8 +157,9 @@ function createTransactionItem(
     const card =
         document.createElement("span");
 
-    card.textContent =
-        `Card •••• ${transaction.card_last_four}`;
+    card.textContent = t("transaction.card_ending", {
+        lastFour: transaction.card_last_four,
+    });
 
     meta.append(
         date,
@@ -187,8 +196,7 @@ function createTransactionItem(
     status.className =
         "transaction-status";
 
-    status.textContent =
-        transaction.transaction_status;
+    status.textContent = translateValue(transaction.transaction_status);
 
     side.append(
         amount,
@@ -202,8 +210,7 @@ function createTransactionItem(
         fraudBadge.className =
             "fraud-badge";
 
-        fraudBadge.textContent =
-            "Suspicious";
+        fraudBadge.textContent = t("transactions.suspicious");
 
         side.append(fraudBadge);
     }
@@ -283,10 +290,7 @@ async function loadTransactions() {
             error,
         );
 
-        showError(
-            "We could not load your transactions. "
-            + "Please try again.",
-        );
+        showError(t("transactions.load_error"));
     }
 }
 

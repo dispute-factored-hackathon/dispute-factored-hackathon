@@ -40,15 +40,6 @@ router = APIRouter(
 settings = get_settings()
 
 
-LOCALE_BY_ACCENT = {
-    "portuguese": "pt-BR",
-    "mexican_spanish": "es-MX",
-    "colombian_spanish": "es-CO",
-    "argentine_spanish": "es-AR",
-    "english": "en-US",
-}
-
-
 def customer_response(
     customer: Customer,
     session: CustomerSession,
@@ -59,7 +50,12 @@ def customer_response(
         first_name=customer.first_name,
         last_name=customer.last_name,
         preferred_accent=(customer.detected_accent.value),
-        locale=LOCALE_BY_ACCENT[customer.detected_accent.value],
+        locale=customer.interface_locale.value,
+        locale_source=(
+            "customer"
+            if session.authentication_method is AuthenticationMethod.FACTORED_ID
+            else "ip"
+        ),
         onboarding_completed=(customer.onboarding_completed),
         onboarding_eligible=(
             session.authentication_method is AuthenticationMethod.FACTORED_ID

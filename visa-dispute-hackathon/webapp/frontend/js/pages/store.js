@@ -1,18 +1,26 @@
 import { apiRequest } from "../api.js";
 import { requireCustomer } from "../auth.js";
 import {
+    formatCurrency,
+    i18nReady,
+    t,
+    translateValue,
+} from "../i18n.js?v=1";
+import {
     addToCart,
     animateAddToCart,
     emitStoreMetric,
     updateCartBadges,
 } from "../components/store-cart.js";
 
+await i18nReady;
+
 const page = document.querySelector("#store-page");
 const grid = document.querySelector("#product-grid");
 const error = document.querySelector("#store-error");
 
 function money(value) {
-    return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value);
+    return formatCurrency(value);
 }
 
 function renderProduct(product) {
@@ -31,13 +39,15 @@ function renderProduct(product) {
         </div>`;
     article.querySelector(".product-card-visual").textContent = product.emoji;
     const badge = article.querySelector(".product-badge");
-    if (product.badge) { badge.textContent = product.badge; badge.hidden = false; }
-    article.querySelector("h3").textContent = product.name;
-    article.querySelector("p").textContent = product.tagline;
+    if (product.badge) { badge.textContent = translateValue(product.badge); badge.hidden = false; }
+    article.querySelector("h3").textContent = translateValue(product.name);
+    article.querySelector("p").textContent = translateValue(product.tagline);
     article.querySelector("strong").textContent = money(product.price);
     const link = article.querySelector("a");
     link.href = `/shop/products/${encodeURIComponent(product.product_id)}`;
-    link.setAttribute("aria-label", `View ${product.name}`);
+    link.setAttribute("aria-label", t("store.view_product", {
+        name: translateValue(product.name),
+    }));
     const quantity = article.querySelector(".quick-quantity");
     quantity.replaceChildren(...Array.from({ length: 10 }, (_, index) => {
         const option = document.createElement("option");
@@ -49,7 +59,9 @@ function renderProduct(product) {
     addButton.addEventListener("click", async (event) => {
         const selectedQuantity = Number(quantity.value);
         addButton.disabled = true;
-        addButton.textContent = selectedQuantity === 1 ? "Added!" : `${selectedQuantity} added!`;
+        addButton.textContent = selectedQuantity === 1
+            ? t("store.added_one")
+            : t("store.added_many", { count: selectedQuantity });
         addToCart(product.product_id, selectedQuantity);
         updateCartBadges();
         emitStoreMetric("add_to_cart", {
@@ -63,7 +75,7 @@ function renderProduct(product) {
             emoji: product.emoji,
         });
         addButton.disabled = false;
-        addButton.textContent = "Add to cart";
+        addButton.textContent = t("store.add_cart");
     });
     return article;
 }
@@ -79,7 +91,7 @@ async function initialize() {
         grid.replaceChildren(...products.map(renderProduct));
     } catch (requestError) {
         console.error("Unable to load Shady Business catalog:", requestError);
-        error.textContent = "Our van is temporarily empty. Reload the page to try again.";
+        error.textContent = t("store.load_error");
         error.hidden = false;
     }
 }

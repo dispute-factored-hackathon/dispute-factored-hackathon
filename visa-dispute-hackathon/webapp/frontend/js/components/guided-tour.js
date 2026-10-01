@@ -1,69 +1,31 @@
 import { ApiError, apiRequest } from "../api.js";
+import { t } from "../i18n.js?v=1";
 
 const COPY = {
     controls: {
-        activate: "Select the highlighted control to continue.",
-        close: "Close tutorial",
-        error: "The tour could not save your progress. Try again or reload the page.",
-        finish: "Finish",
-        next: "Next",
-        previous: "Previous",
-        progress: (current, total) => `Step ${current} of ${total}`,
-        skip: "Skip tour",
+        activate: "tour.activate",
+        close: "tour.close",
+        error: "tour.error",
+        finish: "tour.finish",
+        next: "tour.next",
+        previous: "tour.previous",
+        progress: "tour.progress",
+        skip: "tour.skip",
     },
     steps: {
-        welcome: [
-            "Welcome to Factored Bank",
-            "This interactive tour will guide you through the real controls used to review and dispute a card transaction.",
-        ],
-        "cards-link": [
-            "Start with your cards",
-            "Select Cards to review the cards connected to this demo account.",
-        ],
-        cards: [
-            "Your active card",
-            "Check the card status and last four digits here. If you believe the card is compromised, you can block it using the control below after the tour.",
-        ],
-        "transactions-link": [
-            "Review account activity",
-            "Select Transactions to inspect purchases and identify a payment you want to report.",
-        ],
-        transactions: [
-            "Choose a transaction",
-            "Select a transaction to review its merchant, amount, date, channel, and location.",
-        ],
-        "report-transaction": [
-            "Report a payment problem",
-            "Select this action to send the transaction to Izzy as context for the dispute conversation.",
-        ],
-        izzy: [
-            "Meet Izzy",
-            "Izzy helps customers understand payment problems and start card disputes by chat or telephone.",
-        ],
-        "complaints-link": [
-            "Follow existing disputes",
-            "Select Complaints to see disputes that have already been opened.",
-        ],
-        complaints: [
-            "Track dispute progress",
-            "Two example complaints are included in every judge account. Select the highlighted complaint to inspect its progress and outcome.",
-        ],
-        "complaint-detail": [
-            "Understand a complaint",
-            "Complaint details show what was reported, the current status, service dates, SLA state, and any resolution or compensation.",
-        ],
-        "profile-link": [
-            "Review your profile",
-            "Select Profile to review the customer information used by this demo.",
-        ],
-        profile: [
-            "Keep your information current",
-            "Contact and voice preferences can be changed here. The Factored ID remains read-only.",
-        ],
-        finish: [
-            "Start at Shady Business",
-            "Your first experience after this tour is to visit Shady Business and buy a funny item with the fake card. The purchase creates realistic activity that you can find and dispute in Factored Bank.",
-        ],
+        welcome: ["tour.welcome_title", "tour.welcome_body"],
+        "cards-link": ["tour.cards_link_title", "tour.cards_link_body"],
+        cards: ["tour.cards_title", "tour.cards_body"],
+        "transactions-link": ["tour.transactions_link_title", "tour.transactions_link_body"],
+        transactions: ["tour.transactions_title", "tour.transactions_body"],
+        "report-transaction": ["tour.report_title", "tour.report_body"],
+        izzy: ["tour.izzy_title", "tour.izzy_body"],
+        "complaints-link": ["tour.complaints_link_title", "tour.complaints_link_body"],
+        complaints: ["tour.complaints_title", "tour.complaints_body"],
+        "complaint-detail": ["tour.complaint_title", "tour.complaint_body"],
+        "profile-link": ["tour.profile_link_title", "tour.profile_link_body"],
+        profile: ["tour.profile_title", "tour.profile_body"],
+        finish: ["tour.finish_title", "tour.finish_body"],
     },
 };
 
@@ -279,7 +241,7 @@ async function handleAction(action) {
         console.error("Unable to update guided tour:", error);
         const message = layer?.querySelector(".guided-tour-error");
         if (message) {
-            message.textContent = COPY.controls.error;
+            message.textContent = t(COPY.controls.error);
             message.hidden = false;
         }
         setControlsDisabled(false);
@@ -527,15 +489,18 @@ async function showCurrentStep() {
     setTarget(target, step);
     if (!layer) layer = createLayer();
 
-    const [title, body] = COPY.steps[step.id];
-    layer.querySelector(".guided-tour-progress").textContent = COPY.controls.progress(currentIndex + 1, STEPS.length);
+    const [titleKey, bodyKey] = COPY.steps[step.id];
+    layer.querySelector(".guided-tour-progress").textContent = t(
+        COPY.controls.progress,
+        { current: currentIndex + 1, total: STEPS.length },
+    );
     layer.querySelector(".guided-tour-close").textContent = "×";
-    layer.querySelector(".guided-tour-close").setAttribute("aria-label", COPY.controls.close);
-    layer.querySelector("#guided-tour-title").textContent = title;
-    layer.querySelector("#guided-tour-body").textContent = body;
+    layer.querySelector(".guided-tour-close").setAttribute("aria-label", t(COPY.controls.close));
+    layer.querySelector("#guided-tour-title").textContent = t(titleKey);
+    layer.querySelector("#guided-tour-body").textContent = t(bodyKey);
     layer.querySelector(".guided-tour-error").hidden = true;
     const instruction = layer.querySelector(".guided-tour-instruction");
-    instruction.textContent = COPY.controls.activate;
+    instruction.textContent = t(COPY.controls.activate);
     instruction.hidden = !requiresTargetActivation(step) || activationElements.length === 0;
     layer.classList.toggle(
         "guided-tour-action-step",
@@ -544,12 +509,14 @@ async function showCurrentStep() {
 
     setControlsDisabled(false);
     const previous = layer.querySelector(".guided-tour-previous");
-    previous.textContent = COPY.controls.previous;
+    previous.textContent = t(COPY.controls.previous);
     previous.disabled = currentIndex === 0;
     const skip = layer.querySelector(".guided-tour-skip");
-    skip.textContent = COPY.controls.skip;
+    skip.textContent = t(COPY.controls.skip);
     const next = layer.querySelector(".guided-tour-next");
-    next.textContent = currentIndex === STEPS.length - 1 ? COPY.controls.finish : COPY.controls.next;
+    next.textContent = t(
+        currentIndex === STEPS.length - 1 ? COPY.controls.finish : COPY.controls.next,
+    );
     next.hidden = requiresTargetActivation(step) && activationElements.length > 0;
     previous.onclick = () => handleAction(previousStep);
     skip.onclick = () => handleAction(() => skipTour("button"));

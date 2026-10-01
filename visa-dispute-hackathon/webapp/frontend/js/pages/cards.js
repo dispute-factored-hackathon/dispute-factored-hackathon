@@ -2,6 +2,13 @@ import {
     ApiError,
     apiRequest,
 } from "../api.js";
+import {
+    i18nReady,
+    t,
+    translateValue,
+} from "../i18n.js?v=1";
+
+await i18nReady;
 
 import {
     requireCustomer,
@@ -9,11 +16,11 @@ import {
 
 import {
     renderBottomNavigation,
-} from "../components/bottom-nav.js?v=2";
+} from "../components/bottom-nav.js?v=4";
 
 import {
     initializeGuidedTour,
-} from "../components/guided-tour.js?v=5";
+} from "../components/guided-tour.js?v=6";
 
 
 const cardsPage =
@@ -86,10 +93,7 @@ function createStatus(product) {
             ? "card-status card-status-blocked"
             : "card-status card-status-active";
 
-    status.textContent =
-        blocked
-            ? "Blocked"
-            : "Active";
+    status.textContent = t(blocked ? "common.blocked" : "common.active");
 
     return status;
 }
@@ -210,14 +214,11 @@ function createControls(product) {
         "button card-action";
 
     if (isBlocked(product)) {
-        title.textContent =
-            "Card blocked";
+        title.textContent = t("cards.blocked_title");
 
-        description.textContent =
-            "Unblock it when you're ready to use it again.";
+        description.textContent = t("cards.blocked_help");
 
-        action.textContent =
-            "Unblock";
+        action.textContent = t("cards.unblock");
 
         action.classList.add(
             "unblock-action",
@@ -234,14 +235,11 @@ function createControls(product) {
         );
 
     } else {
-        title.textContent =
-            "Card active";
+        title.textContent = t("cards.active_title");
 
-        description.textContent =
-            "Block this card if you think it may be compromised.";
+        description.textContent = t("cards.active_help");
 
-        action.textContent =
-            "Block";
+        action.textContent = t("cards.block");
 
         action.classList.add(
             "block-action",
@@ -302,28 +300,18 @@ function openStatusDialog(
     const blocking =
         action === "block";
 
-    dialogTitle.textContent =
-        blocking
-            ? "Block this card?"
-            : "Unblock this card?";
+    dialogTitle.textContent = t(
+        blocking ? "cards.block_question" : "cards.unblock_question",
+    );
 
-    dialogDescription.textContent =
-        blocking
-            ? (
-                `Card ending in ${product.last_four} ` +
-                "will no longer be available for new " +
-                "demo purchases until you unblock it."
-            )
-            : (
-                `Card ending in ${product.last_four} ` +
-                "will become active and available " +
-                "for demo purchases again."
-            );
+    dialogDescription.textContent = t(
+        blocking ? "cards.block_detail" : "cards.unblock_detail",
+        { lastFour: product.last_four },
+    );
 
-    dialogConfirm.textContent =
-        blocking
-            ? "Block card"
-            : "Unblock card";
+    dialogConfirm.textContent = t(
+        blocking ? "cards.block_action" : "cards.unblock_action",
+    );
 
     dialogConfirm.classList.toggle(
         "block-action",
@@ -379,17 +367,14 @@ async function changeCardStatus() {
         closeStatusDialog();
 
         if (error instanceof ApiError) {
-            showError(error.message);
+            showError(translateValue(error.message));
         } else {
             console.error(
                 "Unable to change card status:",
                 error,
             );
 
-            showError(
-                "We could not update this card. " +
-                "Please try again.",
-            );
+            showError(t("cards.update_error"));
         }
 
     } finally {
@@ -430,10 +415,7 @@ async function loadCards() {
             error,
         );
 
-        showError(
-            "We could not load your cards. " +
-            "Please try again.",
-        );
+        showError(t("cards.load_error"));
     }
 }
 

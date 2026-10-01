@@ -1,14 +1,17 @@
 import {
     requireCustomer,
 } from "../auth.js";
+import { i18nReady, t } from "../i18n.js?v=1";
+
+await i18nReady;
 
 import {
     renderBottomNavigation,
-} from "../components/bottom-nav.js?v=2";
+} from "../components/bottom-nav.js?v=4";
 
 import {
     initializeGuidedTour,
-} from "../components/guided-tour.js?v=5";
+} from "../components/guided-tour.js?v=6";
 
 
 const page =
@@ -26,35 +29,26 @@ const bottomNav =
 
 const FEATURES = {
     "/complaints": {
-        title: "Complaints",
-        description:
-            "Follow complaints and disputes you have opened "
-            + "with Factored Bank.",
+        titleKey: "nav.complaints",
+        descriptionKey: "coming.complaints",
         navigationKey: null,
     },
 
     "/profile": {
-        title: "Your profile",
-        description:
-            "Review your Factored Bank demo identity and "
-            + "personal preferences.",
+        titleKey: "profile.title",
+        descriptionKey: "coming.profile",
         navigationKey: null,
     },
 
     "/agent": {
-        title: "Izzy",
-        description:
-            "Chat with Izzy about a payment, transaction, "
-            + "or dispute.",
+        titleKey: "coming.izzy_title",
+        descriptionKey: "coming.izzy",
         navigationKey: "agent",
     },
 
     "/shop": {
-        title: "Shady Business",
-        description:
-            "The suspicious demo shop is being prepared. "
-            + "Soon you'll be able to make purchases here "
-            + "and generate transactions to dispute.",
+        titleKey: "coming.store_title",
+        descriptionKey: "coming.store",
         navigationKey: null,
     },
 };
@@ -83,19 +77,15 @@ function applyAgentContext() {
         );
 
     if (transactionId) {
-        featureDescription.textContent =
-            "Izzy received the transaction you selected "
-            + `(${transactionId}). The chat experience will `
-            + "use this transaction as its starting context.";
+        featureDescription.textContent = t("coming.transaction_context", {
+            transactionId,
+        });
 
         return;
     }
 
     if (intent === "new_complaint") {
-        featureDescription.textContent =
-            "Izzy is ready to help you start a new complaint. "
-            + "The chat experience will begin in the "
-            + "complaint workflow.";
+        featureDescription.textContent = t("coming.complaint_context");
     }
 }
 
@@ -115,11 +105,9 @@ async function initializePage() {
             ];
 
         if (feature) {
-            featureTitle.textContent =
-                feature.title;
+            featureTitle.textContent = t(feature.titleKey);
 
-            featureDescription.textContent =
-                feature.description;
+            featureDescription.textContent = t(feature.descriptionKey);
 
             renderBottomNavigation(
                 bottomNav,

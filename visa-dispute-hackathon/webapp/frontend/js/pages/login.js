@@ -1,5 +1,14 @@
 import { ApiError, apiRequest } from "../api.js";
 import { getCurrentCustomer } from "../auth.js";
+import {
+    clearCustomerLocale,
+    i18nReady,
+    setLocale,
+    t,
+    translateValue,
+} from "../i18n.js?v=1";
+
+await i18nReady;
 
 const form = document.querySelector("#login-form");
 const searchInput = document.querySelector("#customer-search");
@@ -60,10 +69,14 @@ function clearError() {
 function setSubmitting(isSubmitting) {
     loginButton.disabled = isSubmitting;
     if (isSubmitting) {
-        loginButton.textContent = loginMethod === "customer" ? "Entering demo..." : "Signing in...";
+        loginButton.textContent = t(
+            loginMethod === "customer" ? "login.entering_demo" : "login.signing_in",
+        );
         return;
     }
-    loginButton.textContent = loginMethod === "customer" ? "Enter demo" : "Sign in";
+    loginButton.textContent = t(
+        loginMethod === "customer" ? "login.enter_demo" : "login.sign_in",
+    );
 }
 
 function setLoginMethod(method, { focus = false } = {}) {
@@ -79,16 +92,21 @@ function setLoginMethod(method, { focus = false } = {}) {
         button.setAttribute("aria-selected", String(selected));
         button.tabIndex = selected ? 0 : -1;
     });
-    loginButton.textContent = customerSelected ? "Enter demo" : "Sign in";
+    loginButton.textContent = t(
+        customerSelected ? "login.enter_demo" : "login.sign_in",
+    );
     if (focus) {
         (customerSelected ? searchInput : factoredIdInput).focus();
     }
     emitMetric("login_method_selected", { method });
 }
 
-function redirectCustomer(customer) {
-    localStorage.setItem("factored_locale", customer.locale);
-    document.documentElement.lang = customer.locale;
+async function redirectCustomer(customer, method = "session") {
+    if (method === "factored-id" || customer.locale_source === "customer") {
+        await setLocale(customer.locale, { persistCustomer: true });
+    } else if (method === "customer") {
+        clearCustomerLocale();
+    }
     window.location.replace(
         "/home",
     );
@@ -128,7 +146,7 @@ function renderOptions() {
     if (options.length === 0) {
         const empty = document.createElement("p");
         empty.className = "customer-options-empty";
-        empty.textContent = "No demo customers match that name.";
+        empty.textContent = t("login.no_matches");
         optionsList.append(empty);
         optionsList.hidden = false;
         searchInput.setAttribute("aria-expanded", "true");
@@ -173,7 +191,7 @@ async function searchCustomers() {
         if (error.name === "AbortError") return;
         console.error("Unable to search demo customers:", error);
         closeOptions();
-        showError("We could not load demo customers. Please try again.");
+        showError(t("login.load_customers_error"));
     }
 }
 
@@ -186,7 +204,7 @@ async function submitLogin(event) {
     event.preventDefault();
     clearError();
     if (loginMethod === "customer" && !selectionInput.value) {
-        showError("Search for a customer and choose one of the demo profiles.");
+        showError(t("login.select_customer_error"));
         searchInput.focus();
         emitMetric("login_failure", { reason: "no_selection" });
         return;
@@ -195,7 +213,7 @@ async function submitLogin(event) {
     const factoredId = factoredIdInput.value.replace(/\D/g, "").slice(0, 6);
     factoredIdInput.value = factoredId;
     if (loginMethod === "factored-id" && factoredId.length !== 6) {
-        showError("Enter your six-digit Factored ID.");
+        showError(t("login.id_error"));
         factoredIdInput.focus();
         emitMetric("login_failure", { reason: "invalid_factored_id" });
         return;
@@ -214,12 +232,12 @@ async function submitLogin(event) {
         emitMetric("login_success", {
             time_to_enter_ms: Math.round(performance.now() - startedAt),
         });
-        redirectCustomer(response.customer);
+        await redirectCustomer(response.customer, loginMethod);
     } catch (error) {
-        if (error instanceof ApiError) showError(error.message);
+        if (error instanceof ApiError) showError(translateValue(error.message));
         else {
             console.error("Unexpected demo login error:", error);
-            showError("We could not enter the demo. Please try again.");
+            showError(t("login.generic_error"));
         }
         if (loginMethod === "customer") selectionInput.value = "";
         emitMetric("login_failure", {
@@ -261,7 +279,7 @@ async function initializeLogin() {
     prefillFactoredId();
     try {
         const customer = await getCurrentCustomer();
-        if (customer) redirectCustomer(customer);
+        if (customer) await redirectCustomer(customer);
     } catch (error) {
         console.error("Unable to check current session:", error);
     }
