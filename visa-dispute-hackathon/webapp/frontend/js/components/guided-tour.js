@@ -1,4 +1,4 @@
-import { apiRequest } from "../api.js";
+import { ApiError, apiRequest } from "../api.js";
 
 const COPY = {
     controls: {
@@ -46,7 +46,7 @@ const COPY = {
         ],
         complaints: [
             "Track dispute progress",
-            "Both example complaints are part of every judge account. Select either one to inspect its progress and outcome.",
+            "Two example complaints are included in every judge account. Select the highlighted complaint to inspect its progress and outcome.",
         ],
         "complaint-detail": [
             "Understand a complaint",
@@ -60,13 +60,9 @@ const COPY = {
             "Keep your information current",
             "Contact and voice preferences can be changed here. The Factored ID remains read-only.",
         ],
-        "shady-business": [
-            "Create activity at Shady Business",
-            "After the tour, visit Shady Business from Home and buy a funny item with the fake card. The store creates a purchase plus either a duplicate charge or an unrelated expensive transaction, giving you something realistic to find and dispute.",
-        ],
         finish: [
-            "You are ready",
-            "You can now explore Factored Bank on your own. Replay this tour at any time from the Home page.",
+            "Start at Shady Business",
+            "Your first experience after this tour is to visit Shady Business and buy a funny item with the fake card. The purchase creates realistic activity that you can find and dispute in Factored Bank.",
         ],
     },
 };
@@ -115,8 +111,7 @@ const STEPS = [
     {
         id: "complaints",
         route: "/complaints",
-        target: "#complaints-list",
-        actionTarget: ".complaint-item",
+        target: ".complaint-item",
         action: "activate",
     },
     { id: "complaint-detail", route: complaintDetailRoute },
@@ -128,12 +123,16 @@ const STEPS = [
     },
     { id: "profile", route: "/profile" },
     {
-        id: "shady-business",
+        id: "finish",
         route: "/home",
         target: "[data-tour='shady-business']",
+        actionTarget: ".shady-link",
+        action: "finish-and-activate",
     },
-    { id: "finish", route: "/home" },
 ];
+
+const SAVE_ATTEMPTS = 3;
+const MOBILE_BREAKPOINT = 600;
 
 let active = false;
 let currentIndex = 0;
@@ -211,10 +210,12 @@ function createLayer() {
                 <span class="guided-tour-progress"></span>
                 <button class="guided-tour-close" type="button"></button>
             </div>
-            <h2 id="guided-tour-title"></h2>
-            <p id="guided-tour-body"></p>
-            <p class="guided-tour-instruction" hidden></p>
-            <p class="guided-tour-error" role="alert" hidden></p>
+            <div class="guided-tour-content">
+                <h2 id="guided-tour-title"></h2>
+                <p id="guided-tour-body"></p>
+                <p class="guided-tour-instruction" hidden></p>
+                <p class="guided-tour-error" role="alert" hidden></p>
+            </div>
             <div class="guided-tour-actions">
                 <button class="button button-secondary guided-tour-previous" type="button"></button>
                 <button class="guided-tour-skip" type="button"></button>
@@ -225,9 +226,13 @@ function createLayer() {
     return container;
 }
 
+function requiresTargetActivation(step = STEPS[currentIndex]) {
+    return ["activate", "finish-and-activate"].includes(step?.action);
+}
+
 function focusableControls() {
     const controls = [...layer.querySelectorAll("button:not([disabled]):not([hidden])")];
-    if (STEPS[currentIndex]?.action === "activate" && activationElements.length > 0) {
+    if (requiresTargetActivation() && activationElements.length > 0) {
         return [...activationElements, ...controls];
     }
     return controls;
@@ -308,7 +313,7 @@ function setTarget(target, step) {
     target.classList.add("guided-tour-target");
     targetContext = target.closest(".app-header, .bottom-nav");
     targetContext?.classList.add("guided-tour-target-context");
-    if (step.action !== "activate") return;
+    if (!requiresTargetActivation(step)) return;
     activationElements = step.actionTarget
         ? [...target.querySelectorAll(step.actionTarget)]
         : [target];
@@ -368,6 +373,38 @@ function tooltipPlacement(rect, tooltipRect) {
         || candidates.sort((a, b) => spaces[b.side] - spaces[a.side])[0];
 }
 
+function viewportSize() {
+    const viewport = window.visualViewport;
+    return {
+        width: viewport?.width || window.innerWidth,
+        height: viewport?.height || window.innerHeight,
+        top: viewport?.offsetTop || 0,
+        left: viewport?.offsetLeft || 0,
+    };
+}
+
+function positionMobileTooltip(tooltip, rect, viewport) {
+    const margin = 12;
+    const gap = 16;
+    tooltip.style.width = `${viewport.width - margin * 2}px`;
+    tooltip.style.left = `${viewport.left + margin}px`;
+    tooltip.style.right = "auto";
+
+    const spaceAbove = rect.top - viewport.top - margin - gap;
+    const spaceBelow = viewport.top + viewport.height - rect.bottom - margin - gap;
+    if (spaceAbove > spaceBelow) {
+        tooltip.style.maxHeight = `${Math.max(140, spaceAbove)}px`;
+        tooltip.style.top = `${viewport.top + margin}px`;
+        tooltip.style.bottom = "auto";
+        tooltip.dataset.placement = "top-sheet";
+    } else {
+        tooltip.style.maxHeight = `${Math.max(140, spaceBelow)}px`;
+        tooltip.style.top = "auto";
+        tooltip.style.bottom = `${margin}px`;
+        tooltip.dataset.placement = "bottom-sheet";
+    }
+}
+
 function positionTour() {
     if (!layer) return;
     const spotlight = layer.querySelector(".guided-tour-spotlight");
@@ -382,11 +419,17 @@ function positionTour() {
     layer.classList.remove("guided-tour-no-target");
     spotlight.hidden = false;
     const rect = targetElement.getBoundingClientRect();
+    const viewport = viewportSize();
     const padding = 8;
     spotlight.style.setProperty("--tour-left", `${Math.max(8, rect.left - padding)}px`);
     spotlight.style.setProperty("--tour-top", `${Math.max(8, rect.top - padding)}px`);
-    spotlight.style.setProperty("--tour-width", `${Math.min(window.innerWidth - 16, rect.width + padding * 2)}px`);
-    spotlight.style.setProperty("--tour-height", `${Math.min(window.innerHeight - 16, rect.height + padding * 2)}px`);
+    spotlight.style.setProperty("--tour-width", `${Math.min(viewport.width - 16, rect.width + padding * 2)}px`);
+    spotlight.style.setProperty("--tour-height", `${Math.min(viewport.height - 16, rect.height + padding * 2)}px`);
+
+    if (viewport.width <= MOBILE_BREAKPOINT) {
+        positionMobileTooltip(tooltip, rect, viewport);
+        return;
+    }
 
     tooltip.style.width = `${Math.min(380, window.innerWidth - 32)}px`;
     tooltip.style.maxHeight = `${Math.max(120, window.innerHeight - 32)}px`;
@@ -415,6 +458,8 @@ function positionTour() {
 function removeLayer() {
     window.removeEventListener("resize", repositionHandler);
     window.removeEventListener("scroll", repositionHandler, true);
+    window.visualViewport?.removeEventListener("resize", repositionHandler);
+    window.visualViewport?.removeEventListener("scroll", repositionHandler);
     document.removeEventListener("keydown", trapFocus);
     document.body.classList.remove("guided-tour-active");
     clearTarget();
@@ -425,10 +470,23 @@ function removeLayer() {
 }
 
 async function saveProgress(status, lastCompletedStep) {
-    return apiRequest("/onboarding/tour", {
-        method: "PATCH",
-        body: JSON.stringify({ status, last_completed_step: lastCompletedStep }),
-    });
+    let lastError = null;
+    for (let attempt = 1; attempt <= SAVE_ATTEMPTS; attempt += 1) {
+        try {
+            return await apiRequest("/onboarding/tour", {
+                method: "PATCH",
+                body: JSON.stringify({ status, last_completed_step: lastCompletedStep }),
+            });
+        } catch (error) {
+            lastError = error;
+            const permanentFailure = error instanceof ApiError
+                && error.status >= 400
+                && error.status < 500;
+            if (permanentFailure || attempt === SAVE_ATTEMPTS) break;
+            await new Promise((resolve) => window.setTimeout(resolve, attempt * 250));
+        }
+    }
+    throw lastError;
 }
 
 async function skipMissingStep() {
@@ -460,7 +518,12 @@ async function showCurrentStep() {
             return;
         }
     }
-    if (target) target.scrollIntoView({ block: "center", behavior: "auto" });
+    if (target) {
+        target.scrollIntoView({
+            block: viewportSize().width <= MOBILE_BREAKPOINT ? "start" : "center",
+            behavior: "auto",
+        });
+    }
     setTarget(target, step);
     if (!layer) layer = createLayer();
 
@@ -473,10 +536,10 @@ async function showCurrentStep() {
     layer.querySelector(".guided-tour-error").hidden = true;
     const instruction = layer.querySelector(".guided-tour-instruction");
     instruction.textContent = COPY.controls.activate;
-    instruction.hidden = step.action !== "activate" || activationElements.length === 0;
+    instruction.hidden = !requiresTargetActivation(step) || activationElements.length === 0;
     layer.classList.toggle(
         "guided-tour-action-step",
-        step.action === "activate" && activationElements.length > 0,
+        requiresTargetActivation(step) && activationElements.length > 0,
     );
 
     setControlsDisabled(false);
@@ -487,13 +550,13 @@ async function showCurrentStep() {
     skip.textContent = COPY.controls.skip;
     const next = layer.querySelector(".guided-tour-next");
     next.textContent = currentIndex === STEPS.length - 1 ? COPY.controls.finish : COPY.controls.next;
-    next.hidden = step.action === "activate" && activationElements.length > 0;
+    next.hidden = requiresTargetActivation(step) && activationElements.length > 0;
     previous.onclick = () => handleAction(previousStep);
     skip.onclick = () => handleAction(() => skipTour("button"));
     layer.querySelector(".guided-tour-close").onclick = () => handleAction(() => skipTour("close"));
     next.onclick = () => handleAction(nextStep);
     positionTour();
-    if (step.action === "activate" && activationElements.length > 0) {
+    if (requiresTargetActivation(step) && activationElements.length > 0) {
         activationElements[0].focus();
     }
     else next.focus();
@@ -502,8 +565,16 @@ async function showCurrentStep() {
 
 async function activateTarget(target) {
     const destination = target.getAttribute("href");
-    const completedId = STEPS[currentIndex].id;
+    const step = STEPS[currentIndex];
+    const completedId = step.id;
     emitMetric("target_activated");
+    if (step.action === "finish-and-activate") {
+        await saveProgress("completed", completedId);
+        emitMetric("completed");
+        removeLayer();
+        if (destination) window.location.assign(destination);
+        return;
+    }
     await saveProgress("in_progress", completedId);
     currentIndex += 1;
     if (destination) {
@@ -555,9 +626,9 @@ async function runGuidedTour() {
     if (active) return;
     const parameters = new URLSearchParams(window.location.search);
     const restart = parameters.get("tour") === "start";
-    const state = restart
-        ? await saveProgress("in_progress", null)
-        : await apiRequest("/onboarding/tour", { method: "GET" });
+    const state = await apiRequest("/onboarding/tour", { method: "GET" });
+
+    if (!state.eligible) return;
 
     if (parameters.has("tour")) {
         parameters.delete("tour");
@@ -580,6 +651,8 @@ async function runGuidedTour() {
     repositionHandler = () => positionTour();
     window.addEventListener("resize", repositionHandler);
     window.addEventListener("scroll", repositionHandler, true);
+    window.visualViewport?.addEventListener("resize", repositionHandler);
+    window.visualViewport?.addEventListener("scroll", repositionHandler);
     document.addEventListener("keydown", trapFocus);
     if (state.status !== "in_progress") {
         await saveProgress("in_progress", null);

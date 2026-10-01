@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 from webapp.backend.config import get_settings
 from webapp.backend.models.customer import Customer
-from webapp.backend.models.session import CustomerSession
+from webapp.backend.models.session import AuthenticationMethod, CustomerSession
 from webapp.backend.repositories.interfaces import (
     CustomerRepository,
     SessionRepository,
@@ -42,7 +42,10 @@ class AuthenticationService:
                 "We could not find an active Factored Bank demo account with this Factored ID."
             )
 
-        return customer, self._create_session(customer)
+        return customer, self._create_session(
+            customer,
+            AuthenticationMethod.FACTORED_ID,
+        )
 
     def list_demo_options(
         self,
@@ -67,13 +70,21 @@ class AuthenticationService:
             raise AuthenticationError(
                 "That demo profile is no longer available. Search for the customer again."
             )
-        return self.login(customer.document_number)
+        return customer, self._create_session(
+            customer,
+            AuthenticationMethod.DEMO_SELECTOR,
+        )
 
-    def _create_session(self, customer: Customer) -> CustomerSession:
+    def _create_session(
+        self,
+        customer: Customer,
+        authentication_method: AuthenticationMethod,
+    ) -> CustomerSession:
         now = datetime.now(UTC)
         session = CustomerSession(
             session_id=secrets.token_urlsafe(32),
             customer_id=customer.customer_id,
+            authentication_method=authentication_method,
             created_at=now,
             expires_at=now + timedelta(hours=settings.session_duration_hours),
         )
@@ -104,6 +115,13 @@ class AuthenticationService:
         self,
         session_id: str,
     ) -> Customer | None:
+        authenticated = self.authenticate_with_session(session_id)
+        return authenticated[0] if authenticated else None
+
+    def authenticate_with_session(
+        self,
+        session_id: str,
+    ) -> tuple[Customer, CustomerSession] | None:
         session = self.sessions.get(session_id)
 
         if session is None:
@@ -121,7 +139,7 @@ class AuthenticationService:
             self.sessions.delete(session_id)
             return None
 
-        return customer
+        return customer, session
 
     def logout(
         self,

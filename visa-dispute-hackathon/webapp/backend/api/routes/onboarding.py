@@ -8,9 +8,11 @@ from fastapi import (
 )
 
 from webapp.backend.api.dependencies import (
-    require_customer,
+    AuthenticatedContext,
+    require_authenticated_context,
 )
-from webapp.backend.models.customer import Customer
+from webapp.backend.models.customer import TutorialStatus
+from webapp.backend.models.session import AuthenticationMethod
 from webapp.backend.repositories.mock import (
     customer_repository,
 )
@@ -30,9 +32,17 @@ onboarding_service = OnboardingService(customer_repository)
     response_model=TutorialStateResponse,
 )
 def get_tutorial_state(
-    customer: Annotated[Customer, Depends(require_customer)],
+    context: Annotated[AuthenticatedContext, Depends(require_authenticated_context)],
 ) -> TutorialStateResponse:
-    return onboarding_service.state(customer)
+    if context.session.authentication_method is not AuthenticationMethod.FACTORED_ID:
+        return TutorialStateResponse(
+            version=onboarding_service.version,
+            status=TutorialStatus.NOT_STARTED,
+            last_completed_step=None,
+            should_offer=False,
+            eligible=False,
+        )
+    return onboarding_service.state(context.customer)
 
 
 @router.patch(
@@ -41,10 +51,15 @@ def get_tutorial_state(
 )
 def update_tutorial_progress(
     request: TutorialProgressRequest,
-    customer: Annotated[Customer, Depends(require_customer)],
+    context: Annotated[AuthenticatedContext, Depends(require_authenticated_context)],
 ) -> TutorialStateResponse:
+    if context.session.authentication_method is not AuthenticationMethod.FACTORED_ID:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The guided tour is available after signing in with a Factored ID.",
+        )
     try:
-        return onboarding_service.update(customer, request)
+        return onboarding_service.update(context.customer, request)
     except InvalidTutorialStepError as error:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

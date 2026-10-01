@@ -15,3 +15,4 @@ class TutorialStateResponse(BaseModel):
     status: TutorialStatus
     last_completed_step: str | None
     should_offer: bool
+    eligible: bool

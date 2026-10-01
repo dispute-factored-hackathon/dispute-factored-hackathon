@@ -117,10 +117,11 @@ def test_new_customer_is_offered_contextual_tour() -> None:
 
     assert response.status_code == 200
     assert response.json() == {
-        "version": 3,
+        "version": 4,
         "status": "not_started",
         "last_completed_step": None,
         "should_offer": True,
+        "eligible": True,
     }
 
 
@@ -138,7 +139,7 @@ def test_tutorial_progress_is_persisted_for_customer() -> None:
     assert response.json()["last_completed_step"] == "cards"
     stored = customer_repository.get_by_id(created["customer_id"])
     assert stored is not None
-    assert stored.tutorial_version == 3
+    assert stored.tutorial_version == 4
     assert stored.tutorial_status == "in_progress"
     assert stored.tutorial_last_completed_step == "cards"
 
@@ -229,10 +230,11 @@ def test_new_tutorial_version_is_offered_again() -> None:
     )
 
     assert client.get("/api/onboarding/tour").json() == {
-        "version": 3,
+        "version": 4,
         "status": "not_started",
         "last_completed_step": None,
         "should_offer": True,
+        "eligible": True,
     }
 
 
@@ -250,18 +252,58 @@ def test_contextual_tour_is_interactive_and_english_only() -> None:
         'id: "complaints-link"',
         'id: "complaint-detail"',
         'id: "profile-link"',
-        'id: "shady-business"',
         "target: \"[data-tour='shady-business']\"",
         'id: "finish"',
+        'action: "finish-and-activate"',
         'action: "activate"',
         'actionTarget: "#report-button"',
-        'actionTarget: ".complaint-item"',
+        'target: ".complaint-item"',
         "element.addEventListener",
         "guided-tour-no-target",
     ):
         assert expected in content
     assert "pt:" not in content
     assert "es:" not in content
+
+
+def test_demo_selector_login_does_not_offer_or_update_tutorial() -> None:
+    client = TestClient(app)
+    create_customer(client)
+    selection = client.get("/api/auth/demo-customers", params={"q": "Gabriel"}).json()["options"][
+        0
+    ]["selection"]
+    login_response = client.post("/api/auth/demo-login", json={"selection": selection})
+
+    assert login_response.status_code == 200
+    assert login_response.json()["customer"]["onboarding_eligible"] is False
+    assert client.get("/api/onboarding/tour").json() == {
+        "version": 4,
+        "status": "not_started",
+        "last_completed_step": None,
+        "should_offer": False,
+        "eligible": False,
+    }
+    response = client.patch(
+        "/api/onboarding/tour",
+        json={"status": "in_progress", "last_completed_step": None},
+    )
+    assert response.status_code == 403
+
+
+def test_tour_script_retries_transient_progress_failures_and_keeps_mobile_controls_visible() -> (
+    None
+):
+    client = TestClient(app)
+    javascript = client.get("/static/js/components/guided-tour.js").text
+    css = client.get("/static/css/components.css").text
+
+    assert "const SAVE_ATTEMPTS = 3" in javascript
+    assert "window.visualViewport" in javascript
+    assert "positionMobileTooltip" in javascript
+    assert ".guided-tour-content" in css
+    assert "overflow-y: auto" in css
+    assert "flex: 0 0 auto" in css
+    assert "100dvh" in css
 
 
 def test_complaint_details_resume_the_contextual_tour() -> None:

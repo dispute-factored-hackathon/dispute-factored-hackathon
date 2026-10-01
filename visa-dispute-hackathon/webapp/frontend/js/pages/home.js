@@ -30,6 +30,9 @@ const logoutButton =
 const bottomNav =
     document.querySelector("#bottom-nav");
 
+const tutorialReplay =
+    document.querySelector("#tutorial-replay");
+
 
 function greetingForCurrentTime() {
     const hour =
@@ -58,6 +61,9 @@ function displayCustomer(customer) {
 
     greeting.textContent =
         greetingForCurrentTime();
+
+    tutorialReplay.hidden =
+        !customer.onboarding_eligible;
 }
 
 

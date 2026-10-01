@@ -12,11 +12,13 @@ from fastapi import (
 
 from webapp.backend.api.dependencies import (
     SESSION_COOKIE_NAME,
+    AuthenticatedContext,
     authentication_service,
-    require_customer,
+    require_authenticated_context,
 )
 from webapp.backend.config import get_settings
 from webapp.backend.models.customer import Customer
+from webapp.backend.models.session import AuthenticationMethod, CustomerSession
 from webapp.backend.schemas.auth import (
     AuthenticatedCustomerResponse,
     DemoLoginOption,
@@ -49,6 +51,7 @@ LOCALE_BY_ACCENT = {
 
 def customer_response(
     customer: Customer,
+    session: CustomerSession,
 ) -> AuthenticatedCustomerResponse:
     return AuthenticatedCustomerResponse(
         customer_id=customer.customer_id,
@@ -58,6 +61,7 @@ def customer_response(
         preferred_accent=(customer.detected_accent.value),
         locale=LOCALE_BY_ACCENT[customer.detected_accent.value],
         onboarding_completed=(customer.onboarding_completed),
+        onboarding_eligible=(session.authentication_method is AuthenticationMethod.FACTORED_ID),
     )
 
 
@@ -73,10 +77,10 @@ def set_session_cookie(response: Response, session_id: str) -> None:
     )
 
 
-def login_response(customer: Customer) -> LoginResponse:
+def login_response(customer: Customer, session: CustomerSession) -> LoginResponse:
     return LoginResponse(
         authenticated=True,
-        customer=customer_response(customer),
+        customer=customer_response(customer, session),
     )
 
 
@@ -117,7 +121,7 @@ def demo_login(
         ) from error
 
     set_session_cookie(response, session.session_id)
-    return login_response(customer)
+    return login_response(customer, session)
 
 
 @router.post(
@@ -138,7 +142,7 @@ def login(
         ) from error
 
     set_session_cookie(response, session.session_id)
-    return login_response(customer)
+    return login_response(customer, session)
 
 
 @router.get(
@@ -146,12 +150,12 @@ def login(
     response_model=AuthenticatedCustomerResponse,
 )
 def me(
-    customer: Annotated[
-        Customer,
-        Depends(require_customer),
+    context: Annotated[
+        AuthenticatedContext,
+        Depends(require_authenticated_context),
     ],
 ) -> AuthenticatedCustomerResponse:
-    return customer_response(customer)
+    return customer_response(context.customer, context.session)
 
 
 @router.post(

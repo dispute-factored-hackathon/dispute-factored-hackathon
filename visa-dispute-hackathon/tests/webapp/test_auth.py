@@ -95,6 +95,7 @@ def test_login_with_valid_factored_id() -> None:
     assert customer["preferred_accent"] == "portuguese"
 
     assert customer["onboarding_completed"] is False
+    assert customer["onboarding_eligible"] is True
 
 
 def test_login_sets_session_cookie() -> None:
@@ -152,6 +153,7 @@ def test_me_returns_authenticated_customer() -> None:
     assert body["preferred_accent"] == "portuguese"
 
     assert body["onboarding_completed"] is False
+    assert body["onboarding_eligible"] is True
 
 
 def test_logout_invalidates_session() -> None:
@@ -323,6 +325,7 @@ def test_demo_selection_logs_in_exact_customer_and_returns_locale() -> None:
     assert response.status_code == 200
     assert response.json()["customer"]["customer_id"] == expected["customer_id"]
     assert response.json()["customer"]["locale"] == "es-CO"
+    assert response.json()["customer"]["onboarding_eligible"] is False
     assert client.get("/api/auth/me").json()["customer_id"] == expected["customer_id"]
 
 

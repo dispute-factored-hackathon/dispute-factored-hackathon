@@ -4,7 +4,7 @@ from webapp.backend.models.customer import Customer, TutorialStatus
 from webapp.backend.repositories.interfaces import CustomerRepository
 from webapp.backend.schemas.onboarding import TutorialProgressRequest, TutorialStateResponse
 
-TUTORIAL_VERSION = 3
+TUTORIAL_VERSION = 4
 TUTORIAL_STEP_IDS = (
     "welcome",
     "cards-link",
@@ -18,7 +18,6 @@ TUTORIAL_STEP_IDS = (
     "complaint-detail",
     "profile-link",
     "profile",
-    "shady-business",
     "finish",
 )
 
@@ -31,6 +30,10 @@ class OnboardingService:
     def __init__(self, customers: CustomerRepository) -> None:
         self.customers = customers
 
+    @property
+    def version(self) -> int:
+        return TUTORIAL_VERSION
+
     def state(self, customer: Customer) -> TutorialStateResponse:
         if customer.tutorial_version != TUTORIAL_VERSION:
             return TutorialStateResponse(
@@ -38,6 +41,7 @@ class OnboardingService:
                 status=TutorialStatus.NOT_STARTED,
                 last_completed_step=None,
                 should_offer=True,
+                eligible=True,
             )
 
         return TutorialStateResponse(
@@ -45,6 +49,7 @@ class OnboardingService:
             status=customer.tutorial_status,
             last_completed_step=customer.tutorial_last_completed_step,
             should_offer=customer.tutorial_status is TutorialStatus.NOT_STARTED,
+            eligible=True,
         )
 
     def update(
