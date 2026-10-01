@@ -1,11 +1,19 @@
 import { ApiError, apiRequest } from "../api.js";
 import { requireCustomer } from "../auth.js";
 import {
+    formatCurrency,
+    i18nReady,
+    t,
+    translateValue,
+} from "../i18n.js?v=1";
+import {
     addToCart,
     animateAddToCart,
     emitStoreMetric,
     updateCartBadges,
 } from "../components/store-cart.js";
+
+await i18nReady;
 
 const page = document.querySelector("#product-page");
 const detail = document.querySelector("#product-detail");
@@ -16,11 +24,11 @@ function productId() {
 }
 
 function money(value) {
-    return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value);
+    return formatCurrency(value);
 }
 
 function render(product) {
-    document.title = `${product.name} · Shady Business`;
+    document.title = `${translateValue(product.name)} · Shady Business`;
     detail.innerHTML = `
         <div class="product-detail-visual" aria-hidden="true"></div>
         <div class="product-detail-copy">
@@ -32,12 +40,12 @@ function render(product) {
             </div>
         </div>`;
     detail.querySelector(".product-detail-visual").textContent = product.emoji;
-    detail.querySelector(".store-kicker").textContent = product.category;
-    detail.querySelector("h1").textContent = product.name;
-    detail.querySelector(".description").textContent = product.description;
+    detail.querySelector(".store-kicker").textContent = translateValue(product.category);
+    detail.querySelector("h1").textContent = translateValue(product.name);
+    detail.querySelector(".description").textContent = translateValue(product.description);
     detail.querySelector(".product-price").textContent = money(product.price);
     const badge = detail.querySelector(".product-badge");
-    if (product.badge) { badge.textContent = product.badge; badge.hidden = false; }
+    if (product.badge) { badge.textContent = translateValue(product.badge); badge.hidden = false; }
     const quantity = detail.querySelector(".product-quantity");
     quantity.replaceChildren(...Array.from({ length: 10 }, (_, index) => {
         const option = document.createElement("option");
@@ -49,7 +57,9 @@ function render(product) {
     addButton.addEventListener("click", async (event) => {
         const selectedQuantity = Number(quantity.value);
         addButton.disabled = true;
-        addButton.textContent = selectedQuantity === 1 ? "Added!" : `${selectedQuantity} added!`;
+        addButton.textContent = selectedQuantity === 1
+            ? t("store.added_one")
+            : t("store.added_many", { count: selectedQuantity });
         addToCart(product.product_id, selectedQuantity);
         updateCartBadges();
         emitStoreMetric("add_to_cart", {
@@ -63,7 +73,7 @@ function render(product) {
             emoji: product.emoji,
         });
         addButton.disabled = false;
-        addButton.textContent = "Add to cart";
+        addButton.textContent = t("store.add_cart");
     });
 }
 
@@ -81,7 +91,7 @@ async function initialize() {
             window.location.replace("/shop");
             return;
         }
-        error.textContent = "We could not load this product. Please try again.";
+        error.textContent = t("store.product_error");
         error.hidden = false;
     }
 }

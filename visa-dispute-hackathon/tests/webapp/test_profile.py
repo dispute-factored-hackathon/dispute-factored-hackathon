@@ -100,6 +100,7 @@ def test_profile_returns_authenticated_customer_data() -> None:
         "gender": "male",
         "mobile_phone": "+5511981020050",
         "preferred_accent": "portuguese",
+        "preferred_locale": "pt-BR",
         "customer_status": "Active",
     }
 
@@ -118,6 +119,7 @@ def test_customer_can_update_editable_profile_fields() -> None:
             gender="female",
             mobile_phone="+573001112233",
             preferred_accent="colombian_spanish",
+            preferred_locale="es-CO",
         ),
     )
 
@@ -127,11 +129,13 @@ def test_customer_can_update_editable_profile_fields() -> None:
     assert body["last_name"] == "De Souza"
     assert body["mobile_phone"] == "+573001112233"
     assert body["preferred_accent"] == "colombian_spanish"
+    assert body["preferred_locale"] == "es-CO"
 
     stored = customer_repository.get_by_id(created["customer_id"])
     assert stored is not None
     assert stored.first_name == "Gabriela"
     assert stored.detected_accent == "colombian_spanish"
+    assert stored.preferred_locale == "es-CO"
 
 
 def test_factored_id_cannot_be_submitted_or_changed() -> None:

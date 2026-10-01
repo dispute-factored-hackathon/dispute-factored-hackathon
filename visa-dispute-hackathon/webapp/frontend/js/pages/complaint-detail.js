@@ -2,6 +2,14 @@ import {
     ApiError,
     apiRequest,
 } from "../api.js";
+import {
+    getLocale,
+    i18nReady,
+    t,
+    translateValue,
+} from "../i18n.js?v=1";
+
+await i18nReady;
 
 import {
     requireCustomer,
@@ -9,11 +17,11 @@ import {
 
 import {
     renderBottomNavigation,
-} from "../components/bottom-nav.js?v=2";
+} from "../components/bottom-nav.js?v=4";
 
 import {
     initializeGuidedTour,
-} from "../components/guided-tour.js?v=5";
+} from "../components/guided-tour.js?v=6";
 
 
 const page =
@@ -102,7 +110,7 @@ function formatMoney(
 
     try {
         return new Intl.NumberFormat(
-            undefined,
+            getLocale(),
             {
                 style: "currency",
                 currency,
@@ -121,7 +129,7 @@ function formatDate(value) {
     }
 
     return new Intl.DateTimeFormat(
-        undefined,
+        getLocale(),
         {
             dateStyle: "medium",
         },
@@ -174,19 +182,16 @@ function renderResolution(
     complaint,
 ) {
     if (!complaint.resolution) {
-        resolutionStatus.textContent =
-            "This complaint is still being processed.";
+        resolutionStatus.textContent = t("complaint.processing");
 
-        resolutionText.textContent =
-            "No final resolution has been recorded yet.";
+        resolutionText.textContent = t("complaint.no_resolution");
 
         resolutionDetails.hidden = true;
 
         return;
     }
 
-    resolutionStatus.textContent =
-        "This complaint has been resolved.";
+    resolutionStatus.textContent = t("complaint.resolved");
 
     resolutionText.textContent =
         complaint.resolution;
@@ -199,7 +204,7 @@ function renderResolution(
     resolutionDays.textContent =
         complaint.resolution_days === null
             ? "—"
-            : `${complaint.resolution_days} days`;
+            : t("complaint.days", { count: complaint.resolution_days });
 
     compensation.textContent =
         formatMoney(
@@ -214,8 +219,7 @@ function renderResolution(
 function renderComplaint(
     complaint,
 ) {
-    complaintStatus.textContent =
-        complaint.status;
+    complaintStatus.textContent = translateValue(complaint.status);
 
     complaintStatus.className =
         `status-badge ${
@@ -248,21 +252,18 @@ function renderComplaint(
     caseType.textContent =
         complaint.case_type;
 
-    complaintPriority.textContent =
-        complaint.priority;
+    complaintPriority.textContent = translateValue(complaint.priority);
 
-    receptionChannel.textContent =
-        complaint.reception_channel;
+    receptionChannel.textContent = translateValue(complaint.reception_channel);
 
     firstResponseDate.textContent =
         formatDate(
             complaint.first_response_date,
         );
 
-    slaStatus.textContent =
-        complaint.sla_breached
-            ? "SLA breached"
-            : "Within SLA";
+    slaStatus.textContent = t(
+        complaint.sla_breached ? "complaint.sla_breached" : "complaint.within_sla",
+    );
 
     renderResolution(
         complaint,
@@ -306,9 +307,7 @@ async function loadComplaint(
             error instanceof ApiError
             && error.status === 404
         ) {
-            showError(
-                "We couldn't find this complaint.",
-            );
+            showError(t("complaint.not_found"));
 
             return;
         }
@@ -318,10 +317,7 @@ async function loadComplaint(
             error,
         );
 
-        showError(
-            "We could not load this complaint. "
-            + "Please try again.",
-        );
+        showError(t("complaint.load_error"));
     }
 }
 
@@ -351,9 +347,7 @@ async function initialize() {
             complaintIdFromPath();
 
         if (!complaintId) {
-            showError(
-                "Invalid complaint.",
-            );
+            showError(t("complaint.invalid"));
 
             return;
         }

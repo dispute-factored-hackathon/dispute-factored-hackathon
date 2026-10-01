@@ -1,7 +1,15 @@
 import { ApiError, apiRequest } from "../api.js";
 import { logout, requireCustomer } from "../auth.js";
-import { renderBottomNavigation } from "../components/bottom-nav.js?v=2";
-import { initializeGuidedTour } from "../components/guided-tour.js?v=5";
+import {
+    i18nReady,
+    setLocale,
+    t,
+    translateValue,
+} from "../i18n.js?v=1";
+import { renderBottomNavigation } from "../components/bottom-nav.js?v=4";
+import { initializeGuidedTour } from "../components/guided-tour.js?v=6";
+
+await i18nReady;
 
 const page = document.querySelector("#profile-page");
 const form = document.querySelector("#profile-form");
@@ -11,7 +19,7 @@ const lastName = document.querySelector("#last-name");
 const dateOfBirth = document.querySelector("#date-of-birth");
 const gender = document.querySelector("#gender");
 const mobilePhone = document.querySelector("#mobile-phone");
-const preferredAccent = document.querySelector("#preferred-accent");
+const preferredLocale = document.querySelector("#preferred-locale");
 const accountStatus = document.querySelector("#account-status");
 const errorMessage = document.querySelector("#profile-error");
 const successMessage = document.querySelector("#profile-success");
@@ -20,10 +28,10 @@ const logoutButton = document.querySelector("#logout-button");
 const bottomNav = document.querySelector("#bottom-nav");
 
 const fieldLabels = {
-    date_of_birth: "Birth date",
-    first_name: "First name",
-    last_name: "Last name",
-    mobile_phone: "Mobile phone",
+    date_of_birth: "signup.birth_date",
+    first_name: "signup.first_name",
+    last_name: "signup.last_name",
+    mobile_phone: "signup.mobile",
 };
 
 function showMessage(element, message) {
@@ -45,8 +53,12 @@ function renderProfile(profile) {
     dateOfBirth.value = profile.date_of_birth;
     gender.value = profile.gender;
     mobilePhone.value = profile.mobile_phone || "";
-    preferredAccent.value = profile.preferred_accent;
-    accountStatus.textContent = profile.customer_status;
+    preferredLocale.value = profile.preferred_locale.startsWith("pt")
+        ? "pt-BR"
+        : profile.preferred_locale.startsWith("es")
+            ? "es-419"
+            : "en-US";
+    accountStatus.textContent = translateValue(profile.customer_status);
 }
 
 function requestBody() {
@@ -56,13 +68,18 @@ function requestBody() {
         date_of_birth: dateOfBirth.value,
         gender: gender.value,
         mobile_phone: mobilePhone.value || null,
-        preferred_accent: preferredAccent.value,
+        preferred_accent: {
+            "en-US": "english",
+            "pt-BR": "portuguese",
+            "es-419": "mexican_spanish",
+        }[preferredLocale.value],
+        preferred_locale: preferredLocale.value,
     };
 }
 
 function setSaving(saving) {
     saveButton.disabled = saving;
-    saveButton.textContent = saving ? "Saving..." : "Save changes";
+    saveButton.textContent = t(saving ? "profile.saving" : "profile.save");
 }
 
 function profileErrorMessage(error) {
@@ -73,14 +90,14 @@ function profileErrorMessage(error) {
 
     if (!validationErrors) {
         return error instanceof ApiError
-            ? error.message
-            : "We could not update your profile. Please try again.";
+            ? translateValue(error.message)
+            : t("profile.generic_error");
     }
 
     return validationErrors.map((validationError) => {
         const field = validationError.loc?.at(-1);
-        const label = fieldLabels[field] || "Profile";
-        const message = (validationError.msg || "Check this value.")
+        const label = fieldLabels[field] ? t(fieldLabels[field]) : t("nav.profile");
+        const message = translateValue(validationError.msg || t("profile.value_error"))
             .replace(/^Value error,\s*/i, "");
         return `${label}: ${message}`;
     }).join(" · ");
@@ -101,7 +118,8 @@ async function saveProfile(event) {
             body: JSON.stringify(requestBody()),
         });
         renderProfile(profile);
-        showMessage(successMessage, "Your profile was updated.");
+        await setLocale(profile.preferred_locale, { persistCustomer: true });
+        showMessage(successMessage, t("profile.updated"));
     } catch (error) {
         showMessage(errorMessage, profileErrorMessage(error));
     } finally {
@@ -129,10 +147,13 @@ async function initialize() {
 }
 
 form.addEventListener("submit", saveProfile);
+preferredLocale.addEventListener("change", async () => {
+    await setLocale(preferredLocale.value);
+});
 logoutButton.addEventListener("click", () => {
     logout().catch((error) => {
         console.error("Unable to sign out:", error);
-        showMessage(errorMessage, "We could not sign you out. Please try again.");
+        showMessage(errorMessage, t("profile.logout_error"));
     });
 });
 
