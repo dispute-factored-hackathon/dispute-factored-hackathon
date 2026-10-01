@@ -62,7 +62,8 @@ function render(product) {
             sourceElement: detail.querySelector(".product-detail-visual"),
             emoji: product.emoji,
         });
-        window.location.assign("/shop/cart");
+        addButton.disabled = false;
+        addButton.textContent = "Add to cart";
     });
 }
 
