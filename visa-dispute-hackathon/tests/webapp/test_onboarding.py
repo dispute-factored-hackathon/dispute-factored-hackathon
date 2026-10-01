@@ -436,6 +436,17 @@ def test_contextual_tour_component_covers_required_journey_and_languages() -> No
         assert expected in content or expected in client.get("/static/css/components.css").text
 
 
+def test_contextual_tour_reenables_controls_after_changing_steps() -> None:
+    client = TestClient(app)
+
+    response = client.get("/static/js/components/guided-tour.js")
+
+    assert response.status_code == 200
+    show_step = response.text.split("async function showCurrentStep()", 1)[1]
+    show_step = show_step.split("async function nextStep()", 1)[0]
+    assert "setControlsDisabled(false);" in show_step
+
+
 def test_onboarding_contains_mobile_phone_action() -> None:
     client = TestClient(app)
 

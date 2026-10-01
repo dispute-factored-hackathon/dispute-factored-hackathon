@@ -309,6 +309,7 @@ async function showCurrentStep() {
     layer.querySelector("#guided-tour-title").textContent = title;
     layer.querySelector("#guided-tour-body").textContent = body;
     layer.querySelector(".guided-tour-error").hidden = true;
+    setControlsDisabled(false);
     const previous = layer.querySelector(".guided-tour-previous");
     previous.textContent = texts.controls.previous;
     previous.disabled = currentIndex === 0;
