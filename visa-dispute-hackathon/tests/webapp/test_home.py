@@ -76,6 +76,46 @@ def test_home_page_is_available() -> None:
     assert "+1 661 577 9964" in response.text
 
 
+def test_pages_use_product_specific_favicons() -> None:
+    client = TestClient(app)
+    bank_icon = (
+        '<link rel="icon" type="image/svg+xml" href="/static/assets/favicons/factored-bank.svg">'
+    )
+    store_icon = (
+        '<link rel="icon" type="image/svg+xml" href="/static/assets/favicons/shady-business.svg">'
+    )
+
+    for route in (
+        "/login",
+        "/signup",
+        "/home",
+        "/cards",
+        "/transactions",
+        "/transactions/example",
+        "/complaints",
+        "/complaints/example",
+        "/profile",
+        "/agent",
+    ):
+        assert bank_icon in client.get(route).text
+
+    for route in (
+        "/shop",
+        "/shop/products/example",
+        "/shop/cart",
+    ):
+        assert store_icon in client.get(route).text
+
+    assert (
+        client.get("/static/assets/favicons/factored-bank.svg").headers["content-type"]
+        == "image/svg+xml"
+    )
+    assert (
+        client.get("/static/assets/favicons/shady-business.svg").headers["content-type"]
+        == "image/svg+xml"
+    )
+
+
 def test_home_contains_required_navigation() -> None:
     client = TestClient(app)
 
