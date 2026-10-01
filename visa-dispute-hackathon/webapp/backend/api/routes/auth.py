@@ -5,6 +5,7 @@ from fastapi import (
     Cookie,
     Depends,
     HTTPException,
+    Query,
     Response,
     status,
 )
@@ -18,6 +19,9 @@ from webapp.backend.config import get_settings
 from webapp.backend.models.customer import Customer
 from webapp.backend.schemas.auth import (
     AuthenticatedCustomerResponse,
+    DemoLoginOption,
+    DemoLoginOptionsResponse,
+    DemoLoginRequest,
     LoginRequest,
     LoginResponse,
     LogoutResponse,
@@ -34,6 +38,15 @@ router = APIRouter(
 settings = get_settings()
 
 
+LOCALE_BY_ACCENT = {
+    "portuguese": "pt-BR",
+    "mexican_spanish": "es-MX",
+    "colombian_spanish": "es-CO",
+    "argentine_spanish": "es-AR",
+    "english": "en-US",
+}
+
+
 def customer_response(
     customer: Customer,
 ) -> AuthenticatedCustomerResponse:
@@ -43,8 +56,68 @@ def customer_response(
         first_name=customer.first_name,
         last_name=customer.last_name,
         preferred_accent=(customer.detected_accent.value),
+        locale=LOCALE_BY_ACCENT[customer.detected_accent.value],
         onboarding_completed=(customer.onboarding_completed),
     )
+
+
+def set_session_cookie(response: Response, session_id: str) -> None:
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=session_id,
+        httponly=True,
+        secure=settings.session_cookie_secure,
+        samesite="lax",
+        max_age=(settings.session_duration_hours * 60 * 60),
+        path="/",
+    )
+
+
+def login_response(customer: Customer) -> LoginResponse:
+    return LoginResponse(
+        authenticated=True,
+        customer=customer_response(customer),
+    )
+
+
+@router.get(
+    "/demo-customers",
+    response_model=DemoLoginOptionsResponse,
+)
+def demo_customers(
+    q: str = Query(default="", max_length=100),
+) -> DemoLoginOptionsResponse:
+    options = authentication_service.list_demo_options(q, limit=10)
+    return DemoLoginOptionsResponse(
+        options=[
+            DemoLoginOption(
+                selection=selection,
+                full_name=f"{customer.first_name} {customer.last_name}",
+                disambiguator=(f"{customer.country} · profile {customer.customer_id[-4:]}"),
+            )
+            for customer, selection in options
+        ]
+    )
+
+
+@router.post(
+    "/demo-login",
+    response_model=LoginResponse,
+)
+def demo_login(
+    request: DemoLoginRequest,
+    response: Response,
+) -> LoginResponse:
+    try:
+        customer, session = authentication_service.login_demo_selection(request.selection)
+    except AuthenticationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(error),
+        ) from error
+
+    set_session_cookie(response, session.session_id)
+    return login_response(customer)
 
 
 @router.post(
@@ -64,20 +137,8 @@ def login(
             detail=str(error),
         ) from error
 
-    response.set_cookie(
-        key=SESSION_COOKIE_NAME,
-        value=session.session_id,
-        httponly=True,
-        secure=settings.session_cookie_secure,
-        samesite="lax",
-        max_age=(settings.session_duration_hours * 60 * 60),
-        path="/",
-    )
-
-    return LoginResponse(
-        authenticated=True,
-        customer=customer_response(customer),
-    )
+    set_session_cookie(response, session.session_id)
+    return login_response(customer)
 
 
 @router.get(

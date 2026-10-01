@@ -23,12 +23,16 @@ from webapp.backend.api.routes.transactions import (
     router as transactions_router,
 )
 from webapp.backend.config import get_settings
+from webapp.backend.demo_seed import seed_demo_customers
+from webapp.backend.repositories.mock import customer_repository
 
 settings = get_settings()
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 FRONTEND_DIR = BASE_DIR / "frontend"
 PAGES_DIR = FRONTEND_DIR / "pages"
+
+seed_demo_customers(customer_repository)
 
 
 app = FastAPI(
