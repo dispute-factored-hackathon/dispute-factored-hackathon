@@ -1,7 +1,8 @@
 from datetime import UTC, date, datetime
 
 from webapp.backend.models.customer import Accent, Customer, Gender
-from webapp.backend.repositories.interfaces import CustomerRepository
+from webapp.backend.models.product import Product
+from webapp.backend.repositories.interfaces import CustomerRepository, ProductRepository
 
 DEMO_CUSTOMERS = (
     {
@@ -62,30 +63,50 @@ DEMO_CUSTOMERS = (
 )
 
 
-def seed_demo_customers(customers: CustomerRepository) -> None:
+def seed_demo_customers(
+    customers: CustomerRepository,
+    products: ProductRepository | None = None,
+) -> None:
     now = datetime.now(UTC)
     for data in DEMO_CUSTOMERS:
-        if customers.get_by_id(data["customer_id"]):
-            continue
-        customers.create(
-            Customer(
-                customer_id=data["customer_id"],
-                document_number=data["document_number"],
-                document_type="DEMO_ID",
-                first_name=data["first_name"],
-                last_name=data["last_name"],
-                date_of_birth=date(1990, 1, 1),
-                gender=Gender.PREFER_NOT_TO_SAY,
-                mobile_phone=data["phone"],
-                city=data["city"],
-                state=data["state"],
-                country=data["country"],
-                detected_accent=data["accent"],
-                segment="Hackathon demo",
-                registration_date=now,
-                registration_branch_id=1,
-                customer_status="Active",
-                onboarding_completed=True,
-                last_updated=now,
+        if not customers.get_by_id(data["customer_id"]):
+            customers.create(
+                Customer(
+                    customer_id=data["customer_id"],
+                    document_number=data["document_number"],
+                    document_type="DEMO_ID",
+                    first_name=data["first_name"],
+                    last_name=data["last_name"],
+                    date_of_birth=date(1990, 1, 1),
+                    gender=Gender.PREFER_NOT_TO_SAY,
+                    mobile_phone=data["phone"],
+                    city=data["city"],
+                    state=data["state"],
+                    country=data["country"],
+                    detected_accent=data["accent"],
+                    segment="Hackathon demo",
+                    registration_date=now,
+                    registration_branch_id=1,
+                    customer_status="Active",
+                    onboarding_completed=True,
+                    last_updated=now,
+                )
             )
-        )
+        if products and not products.list_by_customer(data["customer_id"]):
+            products.create(
+                Product(
+                    product_id=f"CARD-{data['customer_id']}",
+                    customer_id=data["customer_id"],
+                    product_type="Credit Card",
+                    product_number=f"4111111111{data['document_number']}",
+                    currency="USD",
+                    current_balance=0.0,
+                    credit_limit=10_000.0,
+                    opening_date=now.date(),
+                    opening_branch_id=1,
+                    product_status="Active",
+                    opening_channel="Web",
+                    has_linked_app=True,
+                    last_updated=now,
+                )
+            )

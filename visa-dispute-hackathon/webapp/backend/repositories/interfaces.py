@@ -4,6 +4,7 @@ from webapp.backend.models.complaint import Complaint
 from webapp.backend.models.customer import Customer
 from webapp.backend.models.product import Product
 from webapp.backend.models.session import CustomerSession
+from webapp.backend.models.store import StoreProduct
 from webapp.backend.models.transaction import Transaction
 
 
@@ -122,3 +123,9 @@ class SessionRepository(Protocol):
         self,
         session_id: str,
     ) -> None: ...
+
+
+class StoreCatalogRepository(Protocol):
+    def list_all(self) -> list[StoreProduct]: ...
+
+    def get_by_id(self, product_id: str) -> StoreProduct | None: ...

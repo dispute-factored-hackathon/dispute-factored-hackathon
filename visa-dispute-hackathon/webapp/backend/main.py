@@ -19,12 +19,13 @@ from webapp.backend.api.routes.onboarding import (
 from webapp.backend.api.routes.products import (
     router as products_router,
 )
+from webapp.backend.api.routes.store import router as store_router
 from webapp.backend.api.routes.transactions import (
     router as transactions_router,
 )
 from webapp.backend.config import get_settings
 from webapp.backend.demo_seed import seed_demo_customers
-from webapp.backend.repositories.mock import customer_repository
+from webapp.backend.repositories.mock import customer_repository, product_repository
 
 settings = get_settings()
 
@@ -32,7 +33,7 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 FRONTEND_DIR = BASE_DIR / "frontend"
 PAGES_DIR = FRONTEND_DIR / "pages"
 
-seed_demo_customers(customer_repository)
+seed_demo_customers(customer_repository, product_repository)
 
 
 app = FastAPI(
@@ -46,6 +47,7 @@ app.include_router(products_router)
 app.include_router(transactions_router)
 app.include_router(complaints_router)
 app.include_router(onboarding_router)
+app.include_router(store_router)
 
 
 app.mount(
@@ -141,4 +143,15 @@ def agent_page() -> FileResponse:
 
 @app.get("/shop")
 def shop_page() -> FileResponse:
-    return page("coming-soon.html")
+    return page("store.html")
+
+
+@app.get("/shop/products/{product_id}")
+def shop_product_page(product_id: str) -> FileResponse:
+    del product_id
+    return page("store-product.html")
+
+
+@app.get("/shop/cart")
+def shop_cart_page() -> FileResponse:
+    return page("store-cart.html")
