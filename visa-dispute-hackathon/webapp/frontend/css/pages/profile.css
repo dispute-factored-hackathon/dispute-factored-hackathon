@@ -1,0 +1,184 @@
+.profile-page {
+    min-height: 100vh;
+    padding-bottom: 6rem;
+    background: var(--color-background);
+}
+
+.app-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-4);
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.brand-name {
+    color: var(--color-text);
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    text-decoration: none;
+}
+
+.text-button {
+    padding: 0;
+    color: var(--color-text-secondary);
+    background: transparent;
+    border: 0;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.profile-content {
+    width: min(100%, 54rem);
+    margin: 0 auto;
+    padding: var(--space-8) var(--space-4);
+}
+
+.profile-heading {
+    margin-bottom: var(--space-8);
+}
+
+.eyebrow,
+.section-number {
+    margin: 0 0 var(--space-2);
+    color: var(--color-success);
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+}
+
+.profile-heading h1 {
+    margin: 0 0 var(--space-3);
+    font-family: var(--font-display);
+    font-size: clamp(2.8rem, 12vw, 5rem);
+    line-height: 0.95;
+    letter-spacing: -0.055em;
+}
+
+.profile-heading > p:last-child {
+    max-width: 42rem;
+    margin: 0;
+    color: var(--color-text-secondary);
+    line-height: 1.6;
+}
+
+.profile-form {
+    display: grid;
+    gap: var(--space-5);
+}
+
+.form-section {
+    padding: var(--space-5);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 1rem;
+}
+
+.section-heading {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: var(--space-3);
+    margin-bottom: var(--space-5);
+}
+
+.section-heading h2 {
+    margin: 0;
+    font-family: var(--font-display);
+    font-size: 1.45rem;
+}
+
+.status-chip {
+    padding: 0.35rem 0.65rem;
+    color: var(--color-success);
+    background: color-mix(in srgb, var(--color-success) 12%, transparent);
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.field-grid {
+    display: grid;
+    gap: var(--space-4);
+}
+
+.field {
+    display: grid;
+    gap: var(--space-2);
+    color: var(--color-text);
+    font-size: 0.82rem;
+    font-weight: 750;
+}
+
+.field input,
+.field select {
+    width: 100%;
+    min-height: 3rem;
+    padding: 0.75rem 0.85rem;
+    color: var(--color-text);
+    background: var(--color-background);
+    border: 1px solid var(--color-border);
+    border-radius: 0.65rem;
+    font: inherit;
+    font-weight: 500;
+}
+
+.field input:focus,
+.field select:focus {
+    border-color: var(--color-success);
+    outline: 3px solid color-mix(in srgb, var(--color-success) 18%, transparent);
+}
+
+.field small {
+    color: var(--color-text-secondary);
+    font-size: 0.72rem;
+    font-weight: 500;
+    line-height: 1.4;
+}
+
+.field-locked input {
+    color: var(--color-text-secondary);
+    cursor: not-allowed;
+}
+
+.form-message {
+    padding: var(--space-4);
+    border-radius: 0.65rem;
+    font-weight: 650;
+}
+
+.form-message-error {
+    color: #9f1d20;
+    background: #fff0f0;
+    border: 1px solid #efb4b5;
+}
+
+.form-message-success {
+    color: #17643a;
+    background: #eaf8f0;
+    border: 1px solid #9ed8b7;
+}
+
+.form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-3);
+}
+
+@media (min-width: 700px) {
+    .app-header {
+        padding: var(--space-4) var(--space-8);
+    }
+
+    .profile-content {
+        padding: var(--space-10) var(--space-8);
+    }
+
+    .field-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
