@@ -1,3 +1,4 @@
+import unicodedata
 from threading import Lock
 
 from webapp.backend.models.complaint import Complaint
@@ -58,6 +59,36 @@ class MockCustomerRepository:
             ),
             None,
         )
+
+    def search_by_full_name(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+    ) -> list[Customer]:
+        normalized_query = self._normalize_name(query)
+        customers = sorted(
+            self._customers.values(),
+            key=lambda customer: self._normalize_name(
+                f"{customer.first_name} {customer.last_name}"
+            ),
+        )
+        if normalized_query:
+            customers = [
+                customer
+                for customer in customers
+                if normalized_query
+                in self._normalize_name(f"{customer.first_name} {customer.last_name}")
+            ]
+        return customers[:limit]
+
+    @staticmethod
+    def _normalize_name(value: str) -> str:
+        decomposed = unicodedata.normalize("NFKD", value.casefold())
+        without_marks = "".join(
+            character for character in decomposed if not unicodedata.combining(character)
+        )
+        return " ".join(without_marks.split())
 
     def update(
         self,

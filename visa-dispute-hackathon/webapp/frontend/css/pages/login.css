@@ -116,10 +116,8 @@
 
     border-radius: var(--radius-md);
 
-    font-family: var(--font-display);
-    font-size: 1.35rem;
+    font-size: 1rem;
     font-weight: 600;
-    letter-spacing: 0.18em;
 }
 
 .form-field input:focus {
@@ -133,6 +131,104 @@
 
     font-size: 0.8rem;
     line-height: 1.4;
+}
+
+.demo-warning {
+    padding: var(--space-4);
+    color: var(--color-text-secondary);
+    background: rgba(38, 198, 160, 0.08);
+    border: 1px solid rgba(38, 198, 160, 0.3);
+    border-radius: var(--radius-md);
+    font-size: 0.85rem;
+    line-height: 1.5;
+}
+
+.demo-warning strong {
+    color: var(--color-text);
+}
+
+.login-methods {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    padding: 0.25rem;
+    background: var(--color-background);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+}
+
+.login-method {
+    min-height: 2.75rem;
+    padding: var(--space-2) var(--space-3);
+    color: var(--color-text-secondary);
+    background: transparent;
+    border: 0;
+    border-radius: calc(var(--radius-md) - 0.2rem);
+    font-weight: 700;
+}
+
+.login-method.active {
+    color: var(--color-text);
+    background: var(--color-surface);
+    box-shadow: 0 0.15rem 0.5rem rgba(8, 20, 16, 0.1);
+}
+
+[role="tabpanel"][hidden] {
+    display: none;
+}
+
+.customer-picker {
+    position: relative;
+}
+
+.customer-options {
+    position: absolute;
+    top: 5.25rem;
+    right: 0;
+    left: 0;
+    z-index: 10;
+    max-height: 18rem;
+    padding: var(--space-2);
+    overflow-y: auto;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-card);
+}
+
+.customer-options[hidden] {
+    display: none;
+}
+
+.customer-option {
+    display: grid;
+    gap: 0.2rem;
+    width: 100%;
+    padding: var(--space-3);
+    color: var(--color-text);
+    text-align: left;
+    background: transparent;
+    border: 0;
+    border-radius: calc(var(--radius-md) - 0.25rem);
+}
+
+.customer-option:hover,
+.customer-option.active {
+    background: rgba(38, 198, 160, 0.12);
+}
+
+.customer-option-name {
+    font-weight: 750;
+}
+
+.customer-option-detail,
+.customer-options-empty {
+    color: var(--color-text-secondary);
+    font-size: 0.8rem;
+}
+
+.customer-options-empty {
+    margin: 0;
+    padding: var(--space-3);
 }
 
 .button {

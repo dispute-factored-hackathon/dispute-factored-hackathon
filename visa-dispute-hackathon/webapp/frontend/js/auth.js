@@ -6,12 +6,17 @@ import {
 
 export async function getCurrentCustomer() {
     try {
-        return await apiRequest(
+        const customer = await apiRequest(
             "/auth/me",
             {
                 method: "GET",
             },
         );
+
+        localStorage.setItem("factored_locale", customer.locale);
+        document.documentElement.lang = customer.locale;
+
+        return customer;
 
     } catch (error) {
         if (

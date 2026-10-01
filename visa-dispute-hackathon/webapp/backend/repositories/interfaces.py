@@ -28,6 +28,13 @@ class CustomerRepository(Protocol):
         mobile_phone: str,
     ) -> Customer | None: ...
 
+    def search_by_full_name(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+    ) -> list[Customer]: ...
+
     def update(
         self,
         customer: Customer,
