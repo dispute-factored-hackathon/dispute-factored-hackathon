@@ -3,7 +3,7 @@ from datetime import date
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from webapp.backend.models.customer import Accent, Gender
+from webapp.backend.models.customer import Accent, Gender, InterfaceLocale
 
 PHONE_PATTERN = re.compile(r"^\+[1-9]\d{7,14}$")
 
@@ -19,6 +19,7 @@ class CustomerProfileUpdateRequest(BaseModel):
     gender: Gender
     mobile_phone: str | None = None
     preferred_accent: Accent
+    preferred_locale: InterfaceLocale | None = None
 
     @field_validator("first_name", "last_name")
     @classmethod
@@ -57,6 +58,7 @@ class CustomerProfileResponse(BaseModel):
     gender: Gender
     mobile_phone: str | None
     preferred_accent: Accent
+    preferred_locale: InterfaceLocale
     customer_status: str
 
 
@@ -75,6 +77,7 @@ class CustomerSignupRequest(BaseModel):
 
     mobile_phone: str | None = None
     preferred_accent: Accent
+    preferred_locale: InterfaceLocale | None = None
 
     factored_id: str = Field(
         pattern=r"^\d{6}$",
@@ -144,6 +147,7 @@ class CustomerSignupResponse(BaseModel):
     factored_id: str
     mobile_phone: str | None
     preferred_accent: Accent
+    preferred_locale: InterfaceLocale
 
     customer_status: str
 

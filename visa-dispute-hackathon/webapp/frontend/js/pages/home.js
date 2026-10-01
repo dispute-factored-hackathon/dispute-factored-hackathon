@@ -2,14 +2,17 @@ import {
     logout,
     requireCustomer,
 } from "../auth.js";
+import { i18nReady, t } from "../i18n.js?v=1";
+
+await i18nReady;
 
 import {
     renderBottomNavigation,
-} from "../components/bottom-nav.js?v=2";
+} from "../components/bottom-nav.js?v=4";
 
 import {
     initializeGuidedTour,
-} from "../components/guided-tour.js?v=5";
+} from "../components/guided-tour.js?v=6";
 
 
 const homePage =
@@ -39,14 +42,14 @@ function greetingForCurrentTime() {
         new Date().getHours();
 
     if (hour < 12) {
-        return "GOOD MORNING";
+        return t("home.morning");
     }
 
     if (hour < 18) {
-        return "GOOD AFTERNOON";
+        return t("home.afternoon");
     }
 
-    return "GOOD EVENING";
+    return t("home.evening");
 }
 
 

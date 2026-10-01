@@ -51,6 +51,7 @@ def profile_response(customer: Customer) -> CustomerProfileResponse:
         gender=customer.gender,
         mobile_phone=customer.mobile_phone,
         preferred_accent=customer.detected_accent,
+        preferred_locale=customer.interface_locale,
         customer_status=customer.customer_status,
     )
 

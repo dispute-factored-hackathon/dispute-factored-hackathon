@@ -196,46 +196,38 @@
                             </p>
                         </div>
 
-                        <!-- Accent -->
+                        <!-- Language -->
                         <div class="form-field">
-                            <label for="preferred-accent">
-                                Preferred accent
+                            <label for="preferred-locale">
+                                Preferred language
                             </label>
 
                             <select
-                                id="preferred-accent"
-                                name="preferredAccent"
+                                id="preferred-locale"
+                                name="preferredLocale"
                                 required
                             >
                                 <option value="">
                                     Select
                                 </option>
 
-                                <option value="english">
+                                <option value="en-US">
                                     English
                                 </option>
 
-                                <option value="portuguese">
+                                <option value="pt-BR">
                                     Portuguese
                                 </option>
 
-                                <option value="mexican_spanish">
-                                    Mexican Spanish
-                                </option>
-
-                                <option value="colombian_spanish">
-                                    Colombian Spanish
-                                </option>
-
-                                <option value="argentine_spanish">
-                                    Argentine Spanish
+                                <option value="es-419">
+                                    Spanish
                                 </option>
                             </select>
 
                             <p class="field-help">
-                                Izzy can use this preference
-                                to personalize your demo
-                                experience.
+                                Factored Bank and Izzy will use
+                                this language after you sign in
+                                with your Factored ID.
                             </p>
                         </div>
 
@@ -405,7 +397,7 @@
 
     <script
         type="module"
-        src="/static/js/pages/signup.js"
+        src="/static/js/pages/signup.js?v=20261001-i18n1"
     ></script>
 </body>
 </html>

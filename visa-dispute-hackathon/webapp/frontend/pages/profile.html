@@ -93,7 +93,7 @@
                 <section class="form-section" aria-labelledby="contact-title">
                     <div class="section-heading">
                         <div>
-                            <h2 id="contact-title">Contact and voice</h2>
+                            <h2 id="contact-title">Contact and language</h2>
                         </div>
                     </div>
 
@@ -104,16 +104,14 @@
                             <small>Use international format, including the country code.</small>
                         </label>
 
-                        <label class="field" for="preferred-accent">
-                            <span>Preferred language and accent</span>
-                            <select id="preferred-accent" name="preferred_accent" required>
-                                <option value="english">American English</option>
-                                <option value="portuguese">Brazilian Portuguese</option>
-                                <option value="mexican_spanish">Mexican Spanish</option>
-                                <option value="colombian_spanish">Colombian Spanish</option>
-                                <option value="argentine_spanish">Argentine Spanish</option>
+                        <label class="field" for="preferred-locale">
+                            <span>Preferred language</span>
+                            <select id="preferred-locale" name="preferred_locale" required>
+                                <option value="en-US">English</option>
+                                <option value="pt-BR">Portuguese</option>
+                                <option value="es-419">Spanish</option>
                             </select>
-                            <small>Izzy can use this preference in future conversations.</small>
+                            <small>The interface changes immediately and Izzy will use this preference in future conversations.</small>
                         </label>
                     </div>
                 </section>
@@ -130,6 +128,6 @@
         <nav id="bottom-nav" class="bottom-nav" aria-label="Primary navigation"></nav>
     </main>
 
-    <script type="module" src="/static/js/pages/profile.js?v=3"></script>
+    <script type="module" src="/static/js/pages/profile.js?v=20261001-i18n1"></script>
 </body>
 </html>

@@ -2,6 +2,10 @@ import {
     ApiError,
     apiRequest,
 } from "./api.js";
+import {
+    clearCustomerLocale,
+    setLocale,
+} from "./i18n.js?v=1";
 
 
 export async function getCurrentCustomer() {
@@ -13,8 +17,9 @@ export async function getCurrentCustomer() {
             },
         );
 
-        localStorage.setItem("factored_locale", customer.locale);
-        document.documentElement.lang = customer.locale;
+        if (customer.locale_source === "customer") {
+            await setLocale(customer.locale, { persistCustomer: true });
+        }
 
         return customer;
 
@@ -51,6 +56,8 @@ export async function logout() {
             method: "POST",
         },
     );
+
+    clearCustomerLocale();
 
     window.location.replace("/login");
 }

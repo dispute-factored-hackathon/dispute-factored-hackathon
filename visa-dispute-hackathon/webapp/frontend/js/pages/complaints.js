@@ -2,6 +2,14 @@ import {
     ApiError,
     apiRequest,
 } from "../api.js";
+import {
+    getLocale,
+    i18nReady,
+    t,
+    translateValue,
+} from "../i18n.js?v=1";
+
+await i18nReady;
 
 import {
     requireCustomer,
@@ -9,11 +17,11 @@ import {
 
 import {
     renderBottomNavigation,
-} from "../components/bottom-nav.js?v=2";
+} from "../components/bottom-nav.js?v=4";
 
 import {
     initializeGuidedTour,
-} from "../components/guided-tour.js?v=5";
+} from "../components/guided-tour.js?v=6";
 
 
 const page =
@@ -53,7 +61,7 @@ function formatMoney(
 ) {
     try {
         return new Intl.NumberFormat(
-            undefined,
+            getLocale(),
             {
                 style: "currency",
                 currency,
@@ -68,7 +76,7 @@ function formatMoney(
 
 function formatDate(value) {
     return new Intl.DateTimeFormat(
-        undefined,
+        getLocale(),
         {
             month: "short",
             day: "numeric",
@@ -153,8 +161,9 @@ function createComplaintItem(
     const priority =
         document.createElement("span");
 
-    priority.textContent =
-        `${complaint.priority} priority`;
+    priority.textContent = t("complaints.priority_value", {
+        priority: translateValue(complaint.priority),
+    });
 
     meta.append(
         date,
@@ -196,8 +205,7 @@ function createComplaintItem(
             )
         }`;
 
-    status.textContent =
-        complaint.status;
+    status.textContent = translateValue(complaint.status);
 
     side.append(
         amount,
@@ -271,10 +279,7 @@ async function loadComplaints() {
             error,
         );
 
-        showError(
-            "We could not load your complaints. "
-            + "Please try again.",
-        );
+        showError(t("complaints.load_error"));
     }
 }
 

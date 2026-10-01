@@ -27,6 +27,7 @@ def create_customer(
     last_name: str = "Factored",
     phone: str = "+5511981020050",
     preferred_accent: str = "portuguese",
+    preferred_locale: str | None = None,
 ) -> dict:
     response = client.post(
         "/api/customers",
@@ -37,6 +38,7 @@ def create_customer(
             "gender": "male",
             "mobile_phone": phone,
             "preferred_accent": preferred_accent,
+            "preferred_locale": preferred_locale,
             "factored_id": factored_id,
         },
     )
@@ -94,6 +96,8 @@ def test_login_with_valid_factored_id() -> None:
     assert customer["factored_id"] == "123456"
 
     assert customer["preferred_accent"] == "portuguese"
+    assert customer["locale"] == "pt-BR"
+    assert customer["locale_source"] == "customer"
 
     assert customer["onboarding_completed"] is False
     assert customer["onboarding_eligible"] is True
@@ -107,6 +111,7 @@ def test_seeded_non_judge_profile_is_not_onboarding_eligible() -> None:
 
     assert response.status_code == 200
     assert response.json()["customer"]["onboarding_eligible"] is False
+    assert response.json()["customer"]["locale_source"] == "customer"
     assert client.get("/api/auth/me").json()["onboarding_eligible"] is False
     assert client.get("/api/onboarding/tour").json()["eligible"] is False
 
