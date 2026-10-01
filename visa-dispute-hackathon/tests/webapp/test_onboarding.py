@@ -117,7 +117,7 @@ def test_new_customer_is_offered_contextual_tour() -> None:
 
     assert response.status_code == 200
     assert response.json() == {
-        "version": 2,
+        "version": 3,
         "status": "not_started",
         "last_completed_step": None,
         "should_offer": True,
@@ -138,7 +138,7 @@ def test_tutorial_progress_is_persisted_for_customer() -> None:
     assert response.json()["last_completed_step"] == "cards"
     stored = customer_repository.get_by_id(created["customer_id"])
     assert stored is not None
-    assert stored.tutorial_version == 2
+    assert stored.tutorial_version == 3
     assert stored.tutorial_status == "in_progress"
     assert stored.tutorial_last_completed_step == "cards"
 
@@ -229,7 +229,7 @@ def test_new_tutorial_version_is_offered_again() -> None:
     )
 
     assert client.get("/api/onboarding/tour").json() == {
-        "version": 2,
+        "version": 3,
         "status": "not_started",
         "last_completed_step": None,
         "should_offer": True,
@@ -248,15 +248,28 @@ def test_contextual_tour_is_interactive_and_english_only() -> None:
         'id: "report-transaction"',
         'id: "izzy"',
         'id: "complaints-link"',
+        'id: "complaint-detail"',
         'id: "profile-link"',
+        'id: "shady-business"',
+        "target: \"[data-tour='shady-business']\"",
         'id: "finish"',
         'action: "activate"',
-        "target.addEventListener",
+        'actionTarget: "#report-button"',
+        'actionTarget: ".complaint-item"',
+        "element.addEventListener",
         "guided-tour-no-target",
     ):
         assert expected in content
     assert "pt:" not in content
     assert "es:" not in content
+
+
+def test_complaint_details_resume_the_contextual_tour() -> None:
+    client = TestClient(app)
+    content = client.get("/static/js/pages/complaint-detail.js").text
+
+    assert 'from "../components/guided-tour.js"' in content
+    assert "await initializeGuidedTour();" in content
 
 
 def test_contextual_tour_keeps_targets_visible_clickable_and_non_overlapping() -> None:

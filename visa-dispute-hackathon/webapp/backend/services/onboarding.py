@@ -4,7 +4,7 @@ from webapp.backend.models.customer import Customer, TutorialStatus
 from webapp.backend.repositories.interfaces import CustomerRepository
 from webapp.backend.schemas.onboarding import TutorialProgressRequest, TutorialStateResponse
 
-TUTORIAL_VERSION = 2
+TUTORIAL_VERSION = 3
 TUTORIAL_STEP_IDS = (
     "welcome",
     "cards-link",
@@ -15,8 +15,10 @@ TUTORIAL_STEP_IDS = (
     "izzy",
     "complaints-link",
     "complaints",
+    "complaint-detail",
     "profile-link",
     "profile",
+    "shady-business",
     "finish",
 )
 

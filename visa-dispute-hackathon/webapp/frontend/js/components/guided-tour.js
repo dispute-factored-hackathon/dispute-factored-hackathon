@@ -46,7 +46,11 @@ const COPY = {
         ],
         complaints: [
             "Track dispute progress",
-            "Complaints shows the status, claimed amount, and latest state of each dispute. This demo account may not have one yet.",
+            "Both example complaints are part of every judge account. Select either one to inspect its progress and outcome.",
+        ],
+        "complaint-detail": [
+            "Understand a complaint",
+            "Complaint details show what was reported, the current status, service dates, SLA state, and any resolution or compensation.",
         ],
         "profile-link": [
             "Review your profile",
@@ -55,6 +59,10 @@ const COPY = {
         profile: [
             "Keep your information current",
             "Contact and voice preferences can be changed here. The Factored ID remains read-only.",
+        ],
+        "shady-business": [
+            "Create activity at Shady Business",
+            "After the tour, visit Shady Business from Home and buy a funny item with the fake card. The store creates a purchase plus either a duplicate charge or an unrelated expensive transaction, giving you something realistic to find and dispute.",
         ],
         finish: [
             "You are ready",
@@ -93,7 +101,8 @@ const STEPS = [
     {
         id: "report-transaction",
         route: transactionDetailRoute,
-        target: "#report-button",
+        target: ".report-card",
+        actionTarget: "#report-button",
         action: "activate",
     },
     { id: "izzy", route: "/agent" },
@@ -106,9 +115,11 @@ const STEPS = [
     {
         id: "complaints",
         route: "/complaints",
-        target: ".complaint-item",
-        allowMissingTarget: true,
+        target: "#complaints-list",
+        actionTarget: ".complaint-item",
+        action: "activate",
     },
+    { id: "complaint-detail", route: complaintDetailRoute },
     {
         id: "profile-link",
         route: "/home",
@@ -116,6 +127,11 @@ const STEPS = [
         action: "activate",
     },
     { id: "profile", route: "/profile" },
+    {
+        id: "shady-business",
+        route: "/home",
+        target: "[data-tour='shady-business']",
+    },
     { id: "finish", route: "/home" },
 ];
 
@@ -125,6 +141,7 @@ let layer = null;
 let lastFocused = null;
 let targetElement = null;
 let targetContext = null;
+let activationElements = [];
 let targetActivationHandler = null;
 let repositionHandler = null;
 let transitioning = false;
@@ -133,6 +150,15 @@ async function transactionDetailRoute() {
     const transactions = await apiRequest("/transactions", { method: "GET" });
     const first = transactions[0];
     return first ? `/transactions/${encodeURIComponent(first.transaction_id)}` : null;
+}
+
+async function complaintDetailRoute() {
+    if (/^\/complaints\/[^/]+$/.test(window.location.pathname)) {
+        return window.location.pathname;
+    }
+    const complaints = await apiRequest("/complaints", { method: "GET" });
+    const first = complaints[0];
+    return first ? `/complaints/${encodeURIComponent(first.complaint_id)}` : null;
 }
 
 async function routeFor(step) {
@@ -201,8 +227,8 @@ function createLayer() {
 
 function focusableControls() {
     const controls = [...layer.querySelectorAll("button:not([disabled]):not([hidden])")];
-    if (STEPS[currentIndex]?.action === "activate" && targetElement) {
-        return [targetElement, ...controls];
+    if (STEPS[currentIndex]?.action === "activate" && activationElements.length > 0) {
+        return [...activationElements, ...controls];
     }
     return controls;
 }
@@ -232,8 +258,10 @@ function setControlsDisabled(disabled) {
         button.disabled = disabled;
     }
     targetElement?.classList.toggle("guided-tour-target-busy", disabled);
-    if (targetElement && disabled) targetElement.setAttribute("aria-disabled", "true");
-    else targetElement?.removeAttribute("aria-disabled");
+    for (const element of activationElements) {
+        if (disabled) element.setAttribute("aria-disabled", "true");
+        else element.removeAttribute("aria-disabled");
+    }
 }
 
 async function handleAction(action) {
@@ -259,31 +287,40 @@ async function handleAction(action) {
 }
 
 function clearTarget() {
-    if (targetElement && targetActivationHandler) {
-        targetElement.removeEventListener("click", targetActivationHandler, true);
+    if (targetActivationHandler) {
+        for (const element of activationElements) {
+            element.removeEventListener("click", targetActivationHandler, true);
+        }
     }
     targetElement?.classList.remove("guided-tour-target", "guided-tour-target-busy");
     targetElement?.removeAttribute("aria-disabled");
     targetContext?.classList.remove("guided-tour-target-context");
     targetElement = null;
     targetContext = null;
+    activationElements = [];
     targetActivationHandler = null;
 }
 
-function setTarget(target, interactive) {
+function setTarget(target, step) {
     clearTarget();
     targetElement = target;
     if (!target) return;
     target.classList.add("guided-tour-target");
     targetContext = target.closest(".app-header, .bottom-nav");
     targetContext?.classList.add("guided-tour-target-context");
-    if (!interactive) return;
+    if (step.action !== "activate") return;
+    activationElements = step.actionTarget
+        ? [...target.querySelectorAll(step.actionTarget)]
+        : [target];
+    if (activationElements.length === 0) return;
     targetActivationHandler = (event) => {
         event.preventDefault();
         event.stopPropagation();
-        handleAction(() => activateTarget(target));
+        handleAction(() => activateTarget(event.currentTarget));
     };
-    target.addEventListener("click", targetActivationHandler, true);
+    for (const element of activationElements) {
+        element.addEventListener("click", targetActivationHandler, true);
+    }
 }
 
 function tooltipPlacement(rect, tooltipRect) {
@@ -424,7 +461,7 @@ async function showCurrentStep() {
         }
     }
     if (target) target.scrollIntoView({ block: "center", behavior: "auto" });
-    setTarget(target, step.action === "activate");
+    setTarget(target, step);
     if (!layer) layer = createLayer();
 
     const [title, body] = COPY.steps[step.id];
@@ -436,10 +473,10 @@ async function showCurrentStep() {
     layer.querySelector(".guided-tour-error").hidden = true;
     const instruction = layer.querySelector(".guided-tour-instruction");
     instruction.textContent = COPY.controls.activate;
-    instruction.hidden = step.action !== "activate" || !target;
+    instruction.hidden = step.action !== "activate" || activationElements.length === 0;
     layer.classList.toggle(
         "guided-tour-action-step",
-        step.action === "activate" && Boolean(target),
+        step.action === "activate" && activationElements.length > 0,
     );
 
     setControlsDisabled(false);
@@ -450,13 +487,15 @@ async function showCurrentStep() {
     skip.textContent = COPY.controls.skip;
     const next = layer.querySelector(".guided-tour-next");
     next.textContent = currentIndex === STEPS.length - 1 ? COPY.controls.finish : COPY.controls.next;
-    next.hidden = step.action === "activate" && Boolean(target);
+    next.hidden = step.action === "activate" && activationElements.length > 0;
     previous.onclick = () => handleAction(previousStep);
     skip.onclick = () => handleAction(() => skipTour("button"));
     layer.querySelector(".guided-tour-close").onclick = () => handleAction(() => skipTour("close"));
     next.onclick = () => handleAction(nextStep);
     positionTour();
-    if (step.action === "activate" && target) target.focus();
+    if (step.action === "activate" && activationElements.length > 0) {
+        activationElements[0].focus();
+    }
     else next.focus();
     emitMetric("step_viewed", { presentation: target ? "targeted" : "untargeted" });
 }
