@@ -4,6 +4,12 @@ Issuer-side Visa dispute resolution for the call-center channel.
 
 Project documentation is maintained in the repository's [`docs`](../docs/README.md) directory. Open that directory as an Obsidian vault and start with `Home`.
 
+## Demo web login
+
+The web interface uses a searchable synthetic-customer selector instead of asking judges to remember a Factored ID. Search is case- and accent-insensitive, duplicate names have a safe profile label, and the browser receives no document numbers in search results. The selected opaque value is signed and resolved server-side before the normal isolated customer session is created.
+
+This shortcut is controlled impersonation for the hackathon demo, not production authentication. The in-memory repository and seeded profiles are replaceable through the `CustomerRepository` contract. The selected profile exposes a regional locale (`pt-BR`, `es-CO`, `es-MX`, `es-AR`, or `en-US`) for the interface-localization layer.
+
 ## Mock customer identification
 
 The default agent is orchestrated with LangGraph. The LLM extracts a caller-stated name and may answer an allowed dispute question directly. Whenever the conversation must choose a state-changing branch, the graph uses a local multilingual zero-shot classifier. The graph advances only when the top class is not `other`, meets the configured confidence threshold, and—during name confirmation—also meets the minimum score margin.

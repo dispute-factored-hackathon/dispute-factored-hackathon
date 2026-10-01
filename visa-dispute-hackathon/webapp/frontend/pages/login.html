@@ -51,8 +51,8 @@
                 </h1>
 
                 <p>
-                    Enter your six-digit Factored ID
-                    to access your demo account.
+                    Search for a synthetic customer and
+                    enter the demo as that profile.
                 </p>
             </div>
 
@@ -69,27 +69,46 @@
                         hidden
                     ></div>
 
-                    <div class="form-field">
-                        <label for="factored-id">
-                            Factored ID
+                    <div class="demo-warning" role="note">
+                        <strong>Demo access only.</strong>
+                        No password is required because every profile and transaction is synthetic.
+                        Never use this pattern for real banking access.
+                    </div>
+
+                    <div class="form-field customer-picker">
+                        <label for="customer-search">
+                            Customer name
                         </label>
 
                         <input
-                            id="factored-id"
-                            name="factoredId"
-                            type="text"
-                            inputmode="numeric"
-                            autocomplete="one-time-code"
-                            maxlength="6"
-                            pattern="[0-9]{6}"
-                            placeholder="123456"
-                            required
+                            id="customer-search"
+                            name="customerSearch"
+                            type="search"
+                            autocomplete="off"
+                            placeholder="Search by full name"
+                            role="combobox"
+                            aria-autocomplete="list"
+                            aria-controls="customer-options"
+                            aria-describedby="customer-help"
+                            aria-expanded="false"
+                            aria-required="true"
+                            aria-activedescendant=""
                         >
 
-                        <p class="field-help">
-                            This is the six-digit ID
-                            generated when you created
-                            your account.
+                        <div
+                            id="customer-options"
+                            class="customer-options"
+                            role="listbox"
+                            aria-label="Matching demo customers"
+                            aria-live="polite"
+                            hidden
+                        ></div>
+
+                        <input id="customer-selection" type="hidden" name="customerSelection">
+
+                        <p id="customer-help" class="field-help">
+                            Search ignores capitalization and accents. A short profile label distinguishes
+                            customers with the same name without exposing document numbers.
                         </p>
                     </div>
 
@@ -101,7 +120,7 @@
                         "
                         type="submit"
                     >
-                        Sign in
+                        Enter demo
                     </button>
                 </form>
 
