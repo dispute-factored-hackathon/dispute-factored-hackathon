@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from webapp.backend.models.customer import Customer
+from webapp.backend.models.customer import LOCALE_BY_ACCENT, Customer
 from webapp.backend.repositories.interfaces import CustomerRepository
 from webapp.backend.schemas.customer import CustomerProfileUpdateRequest
 
@@ -31,6 +31,8 @@ class CustomerProfileService:
                 "gender": request.gender,
                 "mobile_phone": request.mobile_phone,
                 "detected_accent": request.preferred_accent,
+                "preferred_locale": request.preferred_locale
+                or LOCALE_BY_ACCENT[request.preferred_accent],
                 "last_updated": datetime.now(UTC),
             }
         )

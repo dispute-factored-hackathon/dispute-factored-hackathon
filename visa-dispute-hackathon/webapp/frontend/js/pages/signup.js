@@ -2,7 +2,15 @@ import {
     ApiError,
     apiRequest,
 } from "../api.js";
+import {
+    getLocale,
+    i18nReady,
+    setLocale,
+    t,
+    translateValue,
+} from "../i18n.js?v=1";
 
+await i18nReady;
 
 const form =
     document.querySelector("#signup-form");
@@ -42,6 +50,9 @@ const cardStatus =
 
 const phoneInput =
     document.querySelector("#mobile-phone");
+
+const preferredLocaleInput =
+    document.querySelector("#preferred-locale");
 
 const firstNameInput =
     document.querySelector("#first-name");
@@ -196,10 +207,9 @@ function setSubmitting(
     generateIdButton.disabled =
         isSubmitting;
 
-    submitButton.textContent =
-        isSubmitting
-            ? "Creating account..."
-            : "Create account";
+    submitButton.textContent = t(
+        isSubmitting ? "signup.creating" : "signup.create",
+    );
 }
 
 
@@ -222,9 +232,7 @@ function validateBirthDate() {
         new Date();
 
     if (selectedDate >= today) {
-        showError(
-            "Birth date must be in the past.",
-        );
+        showError(t("signup.birth_error"));
 
         birthDateInput.focus();
 
@@ -252,10 +260,7 @@ function validatePhone() {
         /^\+[1-9]\d{7,14}$/;
 
     if (!pattern.test(phone)) {
-        showError(
-            "Enter the country code and phone number. "
-            + "For example: +5511981020050.",
-        );
+        showError(t("signup.phone_error"));
 
         phoneInput.focus();
 
@@ -283,10 +288,7 @@ function validateForm() {
     }
 
     if (!factoredIdInput.value) {
-        showError(
-            "Generate your Factored ID before "
-            + "creating the account.",
-        );
+        showError(t("signup.generate_error"));
 
         generateIdButton.focus();
 
@@ -321,12 +323,14 @@ function buildSignupRequest() {
             phoneInput.value,
         );
 
-    const preferredAccent =
-        document
-            .querySelector(
-                "#preferred-accent",
-            )
-            .value;
+    const preferredLocale =
+        preferredLocaleInput.value;
+
+    const preferredAccent = {
+        "en-US": "english",
+        "pt-BR": "portuguese",
+        "es-419": "mexican_spanish",
+    }[preferredLocale];
 
     return {
         first_name: firstName,
@@ -337,6 +341,8 @@ function buildSignupRequest() {
             mobilePhone || null,
         preferred_accent:
             preferredAccent,
+        preferred_locale:
+            preferredLocale,
         factored_id:
             factoredIdInput.value,
     };
@@ -356,20 +362,12 @@ function showSuccess(customer) {
     cardLastFour.textContent =
         customer.demo_card.last_four;
 
-    cardStatus.textContent =
-        customer
-            .demo_card
-            .product_status;
+    cardStatus.textContent = translateValue(customer.demo_card.product_status);
 
     if (customer.mobile_phone) {
-        phoneAuthMessage.textContent =
-            "When calling Izzy, you can authenticate "
-            + "using either your registered phone number "
-            + "or your six-digit Factored ID.";
+        phoneAuthMessage.textContent = t("signup.phone_or_id");
     } else {
-        phoneAuthMessage.textContent =
-            "When calling Izzy, use your six-digit "
-            + "Factored ID to authenticate.";
+        phoneAuthMessage.textContent = t("signup.phone_id");
     }
 
     successSection.scrollIntoView({
@@ -429,9 +427,7 @@ async function submitSignup(event) {
                 },
             );
 
-            showError(
-                error.message,
-            );
+            showError(translateValue(error.message));
 
         } else {
             console.error(
@@ -439,10 +435,7 @@ async function submitSignup(event) {
                 error,
             );
 
-            showError(
-                "We could not create your account. "
-                + "Please try again.",
-            );
+            showError(t("signup.generic_error"));
         }
 
     } finally {
@@ -514,6 +507,22 @@ phoneInput.addEventListener(
 form.addEventListener(
     "submit",
     submitSignup,
+);
+
+
+preferredLocaleInput.value =
+    getLocale().startsWith("pt")
+        ? "pt-BR"
+        : getLocale().startsWith("es")
+            ? "es-419"
+            : "en-US";
+
+
+preferredLocaleInput.addEventListener(
+    "change",
+    async () => {
+        await setLocale(preferredLocaleInput.value);
+    },
 );
 
 

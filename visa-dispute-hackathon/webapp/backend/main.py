@@ -14,6 +14,9 @@ from webapp.backend.api.routes.complaints import (
 from webapp.backend.api.routes.customers import (
     router as customers_router,
 )
+from webapp.backend.api.routes.localization import (
+    router as localization_router,
+)
 from webapp.backend.api.routes.onboarding import (
     router as onboarding_router,
 )
@@ -43,6 +46,7 @@ app = FastAPI(
 
 
 app.include_router(auth_router)
+app.include_router(localization_router)
 app.include_router(customers_router)
 app.include_router(products_router)
 app.include_router(transactions_router)

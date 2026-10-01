@@ -146,8 +146,8 @@ def test_navigation_uses_consistent_svg_icons_and_transactions_label() -> None:
     assert home.count('<svg viewBox="0 0 24 24"') >= 4
     assert '<circle cx="12" cy="12" r="9">' in home
     assert '<circle cx="12" cy="8" r="4">' in home
-    assert 'label: "Transactions"' in navigation
-    assert 'label: "Activity"' not in navigation
+    assert 'labelKey: "nav.transactions"' in navigation
+    assert 'labelKey: "nav.activity"' not in navigation
     assert 'icon: "↕"' not in navigation
 
 

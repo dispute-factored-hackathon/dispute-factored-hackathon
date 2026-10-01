@@ -2,6 +2,14 @@ import {
     ApiError,
     apiRequest,
 } from "../api.js";
+import {
+    getLocale,
+    i18nReady,
+    t,
+    translateValue,
+} from "../i18n.js?v=1";
+
+await i18nReady;
 
 import {
     requireCustomer,
@@ -9,11 +17,11 @@ import {
 
 import {
     renderBottomNavigation,
-} from "../components/bottom-nav.js?v=2";
+} from "../components/bottom-nav.js?v=4";
 
 import {
     initializeGuidedTour,
-} from "../components/guided-tour.js?v=5";
+} from "../components/guided-tour.js?v=6";
 
 
 const page =
@@ -80,7 +88,7 @@ function formatMoney(
 ) {
     try {
         return new Intl.NumberFormat(
-            undefined,
+            getLocale(),
             {
                 style: "currency",
                 currency,
@@ -98,7 +106,7 @@ function formatDate(value) {
         new Date(value);
 
     return new Intl.DateTimeFormat(
-        undefined,
+        getLocale(),
         {
             dateStyle: "medium",
             timeStyle: "short",
@@ -137,7 +145,7 @@ function locationText(transaction) {
     );
 
     if (parts.length === 0) {
-        return "Unknown";
+        return t("transaction.unknown");
     }
 
     return parts.join(", ");
@@ -149,7 +157,7 @@ function renderTransaction(
 ) {
     merchantName.textContent =
         transaction.merchant_name
-        || "Unknown merchant";
+        || t("transaction.unknown_merchant");
 
     transactionAmount.textContent =
         formatMoney(
@@ -162,24 +170,21 @@ function renderTransaction(
             transaction.transaction_date,
         );
 
-    transactionStatus.textContent =
-        transaction.transaction_status;
+    transactionStatus.textContent = translateValue(transaction.transaction_status);
 
     transactionCard.textContent =
         `•••• ${transaction.card_last_four}`;
 
-    transactionType.textContent =
-        transaction.transaction_type;
+    transactionType.textContent = translateValue(transaction.transaction_type);
 
     transactionCategory.textContent =
-        transaction.transaction_category
+        translateValue(transaction.transaction_category)
         || "—";
 
-    transactionChannel.textContent =
-        transaction.channel;
+    transactionChannel.textContent = translateValue(transaction.channel);
 
     merchantCategory.textContent =
-        transaction.merchant_category
+        translateValue(transaction.merchant_category)
         || "—";
 
     transactionLocation.textContent =
@@ -232,9 +237,7 @@ async function loadTransaction(
             error instanceof ApiError
             && error.status === 404
         ) {
-            showError(
-                "We couldn't find this transaction.",
-            );
+            showError(t("transaction.not_found"));
 
             return;
         }
@@ -244,10 +247,7 @@ async function loadTransaction(
             error,
         );
 
-        showError(
-            "We could not load this transaction. "
-            + "Please try again.",
-        );
+        showError(t("transaction.load_error"));
     }
 }
 
@@ -277,9 +277,7 @@ async function initialize() {
             transactionIdFromPath();
 
         if (!transactionId) {
-            showError(
-                "Invalid transaction.",
-            );
+            showError(t("transaction.invalid"));
 
             return;
         }

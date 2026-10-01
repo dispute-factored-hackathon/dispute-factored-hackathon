@@ -58,6 +58,7 @@ class SignupService:
             state="Factored Fields",
             country="Factoredland",
             detected_accent=request.preferred_accent,
+            preferred_locale=request.preferred_locale,
             segment="Factored",
             registration_date=now,
             registration_branch_id=1,
@@ -106,6 +107,7 @@ class SignupService:
             factored_id=customer.document_number,
             mobile_phone=customer.mobile_phone,
             preferred_accent=customer.detected_accent,
+            preferred_locale=customer.interface_locale,
             customer_status=customer.customer_status,
             demo_card=DemoCardResponse(
                 product_id=product.product_id,

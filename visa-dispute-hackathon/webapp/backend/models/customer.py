@@ -19,6 +19,24 @@ class Accent(StrEnum):
     ARGENTINE_SPANISH = "argentine_spanish"
 
 
+class InterfaceLocale(StrEnum):
+    ENGLISH = "en-US"
+    PORTUGUESE = "pt-BR"
+    SPANISH = "es-419"
+    MEXICAN_SPANISH = "es-MX"
+    COLOMBIAN_SPANISH = "es-CO"
+    ARGENTINE_SPANISH = "es-AR"
+
+
+LOCALE_BY_ACCENT = {
+    Accent.PORTUGUESE: InterfaceLocale.PORTUGUESE,
+    Accent.MEXICAN_SPANISH: InterfaceLocale.MEXICAN_SPANISH,
+    Accent.COLOMBIAN_SPANISH: InterfaceLocale.COLOMBIAN_SPANISH,
+    Accent.ARGENTINE_SPANISH: InterfaceLocale.ARGENTINE_SPANISH,
+    Accent.ENGLISH: InterfaceLocale.ENGLISH,
+}
+
+
 class TutorialStatus(StrEnum):
     NOT_STARTED = "not_started"
     IN_PROGRESS = "in_progress"
@@ -53,6 +71,8 @@ class Customer(BaseModel):
 
     customer_status: str
 
+    preferred_locale: InterfaceLocale | None = None
+
     onboarding_completed: bool = False
     tutorial_version: int = 0
     tutorial_status: TutorialStatus = TutorialStatus.NOT_STARTED
@@ -63,3 +83,7 @@ class Customer(BaseModel):
     @property
     def is_judge_profile(self) -> bool:
         return self.document_type == "FACTORED_ID"
+
+    @property
+    def interface_locale(self) -> InterfaceLocale:
+        return self.preferred_locale or LOCALE_BY_ACCENT[self.detected_accent]

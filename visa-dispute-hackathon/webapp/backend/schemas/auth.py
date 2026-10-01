@@ -32,6 +32,7 @@ class AuthenticatedCustomerResponse(BaseModel):
     factored_id: str
     preferred_accent: str
     locale: str
+    locale_source: str
     onboarding_completed: bool
     onboarding_eligible: bool
 
