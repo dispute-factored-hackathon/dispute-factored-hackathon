@@ -43,6 +43,12 @@ const cardStatus =
 const phoneInput =
     document.querySelector("#mobile-phone");
 
+const firstNameInput =
+    document.querySelector("#first-name");
+
+const lastNameInput =
+    document.querySelector("#last-name");
+
 const phoneAuthMessage =
     document.querySelector("#phone-auth-message");
 
@@ -117,6 +123,37 @@ function normalizePhone(value) {
     }
 
     return `+${digits.slice(0, 15)}`;
+}
+
+
+function normalizedName(value) {
+    return value
+        .normalize("NFKC")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+
+function normalizeAutofilledNames() {
+    let firstName = normalizedName(firstNameInput.value);
+    let lastName = normalizedName(lastNameInput.value);
+
+    if (firstName && !lastName) {
+        const parts = firstName.split(" ");
+        if (parts.length > 1) {
+            firstName = parts.shift();
+            lastName = parts.join(" ");
+        }
+    }
+
+    const repeatedLastName = lastName
+        && firstName.toLocaleLowerCase().endsWith(` ${lastName.toLocaleLowerCase()}`);
+    if (repeatedLastName) {
+        firstName = firstName.slice(0, -(lastName.length + 1));
+    }
+
+    firstNameInput.value = firstName;
+    lastNameInput.value = lastName;
 }
 
 
@@ -231,6 +268,7 @@ function validatePhone() {
 
 function validateForm() {
     clearError();
+    normalizeAutofilledNames();
 
     if (!form.reportValidity()) {
         return false;
@@ -260,21 +298,9 @@ function validateForm() {
 
 
 function buildSignupRequest() {
-    const firstName =
-        document
-            .querySelector(
-                "#first-name",
-            )
-            .value
-            .trim();
+    const firstName = firstNameInput.value;
 
-    const lastName =
-        document
-            .querySelector(
-                "#last-name",
-            )
-            .value
-            .trim();
+    const lastName = lastNameInput.value;
 
     const dateOfBirth =
         document

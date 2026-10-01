@@ -77,9 +77,11 @@ async function initialize() {
         render(product);
         emitStoreMetric("product_viewed", { product_id: product.product_id });
     } catch (requestError) {
-        error.textContent = requestError instanceof ApiError && requestError.status === 404
-            ? "That questionable product has disappeared from the van."
-            : "We could not load this product. Please try again.";
+        if (requestError instanceof ApiError && requestError.status === 404) {
+            window.location.replace("/shop");
+            return;
+        }
+        error.textContent = "We could not load this product. Please try again.";
         error.hidden = false;
     }
 }

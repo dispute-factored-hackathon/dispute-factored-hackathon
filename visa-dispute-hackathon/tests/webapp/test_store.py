@@ -104,6 +104,13 @@ def test_store_pages_are_available() -> None:
     assert "store-cart.js" in client.get("/shop/cart").text
 
 
+def test_missing_store_product_returns_customer_to_catalog() -> None:
+    client = TestClient(app)
+    script = client.get("/static/js/pages/store-product.js").text
+
+    assert 'window.location.replace("/shop")' in script
+
+
 def test_catalog_and_product_detail_use_typed_mock_products() -> None:
     client = TestClient(app)
 

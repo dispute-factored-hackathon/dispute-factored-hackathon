@@ -5,7 +5,7 @@ import {
 
 import {
     renderBottomNavigation,
-} from "../components/bottom-nav.js";
+} from "../components/bottom-nav.js?v=2";
 
 import {
     initializeGuidedTour,

@@ -1,6 +1,6 @@
 import { ApiError, apiRequest } from "../api.js";
 import { logout, requireCustomer } from "../auth.js";
-import { renderBottomNavigation } from "../components/bottom-nav.js";
+import { renderBottomNavigation } from "../components/bottom-nav.js?v=2";
 import { initializeGuidedTour } from "../components/guided-tour.js";
 
 const page = document.querySelector("#profile-page");

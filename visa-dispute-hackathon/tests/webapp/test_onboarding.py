@@ -57,7 +57,9 @@ def teardown_function() -> None:
 def test_legacy_onboarding_experience_is_removed() -> None:
     client = TestClient(app)
 
-    assert client.get("/onboarding").status_code == 404
+    response = client.get("/onboarding", follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login"
     assert client.get("/static/js/pages/onboarding.js").status_code == 404
     assert client.get("/static/css/pages/onboarding.css").status_code == 404
     assert client.get("/api/onboarding").status_code == 404

@@ -84,9 +84,11 @@
 
                                 <input
                                     id="first-name"
-                                    name="firstName"
+                                    name="given-name"
                                     type="text"
-                                    autocomplete="given-name"
+                                    autocomplete="section-signup given-name"
+                                    autocapitalize="words"
+                                    enterkeyhint="next"
                                     maxlength="100"
                                     required
                                 >
@@ -99,9 +101,11 @@
 
                                 <input
                                     id="last-name"
-                                    name="lastName"
+                                    name="family-name"
                                     type="text"
-                                    autocomplete="family-name"
+                                    autocomplete="section-signup family-name"
+                                    autocapitalize="words"
+                                    enterkeyhint="next"
                                     maxlength="100"
                                     required
                                 >
@@ -151,8 +155,8 @@
                                         Male
                                     </option>
 
-                                    <option value="non_binary">
-                                        Non-binary
+                                    <option value="other">
+                                        Other / non-binary
                                     </option>
 
                                     <option value="prefer_not_to_say">

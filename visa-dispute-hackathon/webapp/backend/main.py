@@ -1,9 +1,10 @@
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from webapp.backend.api.dependencies import SESSION_COOKIE_NAME, authentication_service
 from webapp.backend.api.routes.auth import (
     router as auth_router,
 )
@@ -150,3 +151,28 @@ def shop_product_page(product_id: str) -> FileResponse:
 @app.get("/shop/cart")
 def shop_cart_page() -> FileResponse:
     return page("store-cart.html")
+
+
+@app.api_route(
+    "/{unknown_path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    include_in_schema=False,
+)
+def redirect_unknown_page(
+    unknown_path: str,
+    request: Request,
+) -> RedirectResponse:
+    if request.method != "GET" or unknown_path == "api" or unknown_path.startswith("api/"):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Not found.",
+        )
+
+    if unknown_path.startswith("shop/"):
+        return RedirectResponse(url="/shop", status_code=status.HTTP_303_SEE_OTHER)
+
+    session_id = request.cookies.get(SESSION_COOKIE_NAME)
+    destination = (
+        "/home" if session_id and authentication_service.authenticate(session_id) else "/login"
+    )
+    return RedirectResponse(url=destination, status_code=status.HTTP_303_SEE_OTHER)
