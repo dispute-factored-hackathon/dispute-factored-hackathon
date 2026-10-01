@@ -16,8 +16,30 @@ let options = [];
 let activeIndex = -1;
 let searchTimer = null;
 let searchController = null;
-let loginMethod = "customer";
+let loginMethod = "factored-id";
 const startedAt = performance.now();
+
+const FACTORED_ID_COOKIE = "factored_id";
+
+function rememberedFactoredId() {
+    const prefix = `${FACTORED_ID_COOKIE}=`;
+    const cookie = document.cookie
+        .split(";")
+        .map((item) => item.trim())
+        .find((item) => item.startsWith(prefix));
+    if (!cookie) return null;
+    try {
+        const value = decodeURIComponent(cookie.slice(prefix.length));
+        return /^\d{6}$/.test(value) ? value : null;
+    } catch {
+        return null;
+    }
+}
+
+function prefillFactoredId() {
+    const remembered = rememberedFactoredId();
+    if (remembered) factoredIdInput.value = remembered;
+}
 
 function emitMetric(name, detail = {}) {
     window.dispatchEvent(new CustomEvent("factored:demo-login-metric", {
@@ -235,6 +257,8 @@ function handleSearchKeydown(event) {
 }
 
 async function initializeLogin() {
+    setLoginMethod("factored-id");
+    prefillFactoredId();
     try {
         const customer = await getCurrentCustomer();
         if (customer) redirectCustomer(customer);

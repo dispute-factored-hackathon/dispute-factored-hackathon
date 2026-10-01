@@ -51,8 +51,8 @@
                 </h1>
 
                 <p>
-                    Search for a synthetic customer and
-                    enter the demo as that profile.
+                    Sign in with your Factored ID or choose
+                    a synthetic customer profile.
                 </p>
             </div>
 
@@ -71,26 +71,26 @@
 
                     <div class="login-methods" role="tablist" aria-label="Sign-in method">
                         <button
-                            id="customer-method"
+                            id="factored-id-method"
                             class="login-method active"
                             type="button"
                             role="tab"
                             aria-selected="true"
-                            aria-controls="customer-login-panel"
-                            data-method="customer"
-                        >
-                            Choose customer
-                        </button>
-                        <button
-                            id="factored-id-method"
-                            class="login-method"
-                            type="button"
-                            role="tab"
-                            aria-selected="false"
                             aria-controls="factored-id-login-panel"
                             data-method="factored-id"
                         >
                             Use Factored ID
+                        </button>
+                        <button
+                            id="customer-method"
+                            class="login-method"
+                            type="button"
+                            role="tab"
+                            aria-selected="false"
+                            aria-controls="customer-login-panel"
+                            data-method="customer"
+                        >
+                            Choose customer
                         </button>
                     </div>
 
@@ -101,10 +101,33 @@
                     </div>
 
                     <div
+                        id="factored-id-login-panel"
+                        class="form-field"
+                        role="tabpanel"
+                        aria-labelledby="factored-id-method"
+                    >
+                        <label for="factored-id">Factored ID</label>
+                        <input
+                            id="factored-id"
+                            name="factoredId"
+                            type="text"
+                            inputmode="numeric"
+                            autocomplete="one-time-code"
+                            maxlength="6"
+                            pattern="[0-9]{6}"
+                            placeholder="123456"
+                        >
+                        <p class="field-help">
+                            Enter the six-digit ID generated when the demo account was created.
+                        </p>
+                    </div>
+
+                    <div
                         id="customer-login-panel"
                         class="form-field customer-picker"
                         role="tabpanel"
                         aria-labelledby="customer-method"
+                        hidden
                     >
                         <label for="customer-search">
                             Customer name
@@ -142,29 +165,6 @@
                         </p>
                     </div>
 
-                    <div
-                        id="factored-id-login-panel"
-                        class="form-field"
-                        role="tabpanel"
-                        aria-labelledby="factored-id-method"
-                        hidden
-                    >
-                        <label for="factored-id">Factored ID</label>
-                        <input
-                            id="factored-id"
-                            name="factoredId"
-                            type="text"
-                            inputmode="numeric"
-                            autocomplete="one-time-code"
-                            maxlength="6"
-                            pattern="[0-9]{6}"
-                            placeholder="123456"
-                        >
-                        <p class="field-help">
-                            Enter the six-digit ID generated when the demo account was created.
-                        </p>
-                    </div>
-
                     <button
                         id="login-button"
                         class="
@@ -173,7 +173,7 @@
                         "
                         type="submit"
                     >
-                        Enter demo
+                        Sign in
                     </button>
                 </form>
 
