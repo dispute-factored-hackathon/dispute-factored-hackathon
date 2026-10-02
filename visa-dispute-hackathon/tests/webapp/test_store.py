@@ -12,7 +12,11 @@ from webapp.backend.repositories.mock import (
     session_repository,
     transaction_repository,
 )
-from webapp.backend.services.store import SOUTH_ASIAN_LOCATIONS
+from webapp.backend.services.store import (
+    FOREIGN_FRAUD_MERCHANTS,
+    SOUTH_ASIAN_LOCATIONS,
+    RandomAnomalyStrategy,
+)
 
 
 class DuplicateStrategy:
@@ -46,6 +50,24 @@ class ForeignFraudStrategy:
                 "fraud_score": 0.97,
             }
         )
+
+
+class FraudMerchantSequenceGenerator:
+    def __init__(self) -> None:
+        self.merchant_index = 0
+
+    def choice(self, options):
+        if options == ("duplicate", "foreign_fraud"):
+            return "foreign_fraud"
+        if options == SOUTH_ASIAN_LOCATIONS:
+            return SOUTH_ASIAN_LOCATIONS[self.merchant_index % len(SOUTH_ASIAN_LOCATIONS)]
+        merchant = FOREIGN_FRAUD_MERCHANTS[self.merchant_index]
+        self.merchant_index += 1
+        return merchant
+
+    @staticmethod
+    def randrange(_start, _stop):
+        return 190000
 
 
 def clear_repositories() -> None:
@@ -174,6 +196,30 @@ def test_foreign_fraud_scenario_supports_every_configured_location(country: str,
     assert detail["transaction_country"] == country
     assert detail["transaction_city"] == city
     assert detail["amount"] == 1900.0
+
+
+def test_random_fraud_scenario_can_create_ten_searchable_merchants() -> None:
+    client = TestClient(app)
+    customer = create_customer(client)
+    login(client)
+    card_id = customer["demo_card"]["product_id"]
+    store_service.anomaly_strategy = RandomAnomalyStrategy(FraudMerchantSequenceGenerator())
+
+    for _merchant in FOREIGN_FRAUD_MERCHANTS:
+        response = client.post("/api/store/checkout", json=checkout_payload(card_id))
+        assert response.status_code == 200
+
+    transactions = client.get("/api/transactions").json()
+    generated_merchants = {
+        transaction["merchant_name"]
+        for transaction in transactions
+        if transaction["transaction_category"] == "Unrecognized luxury electronics"
+    }
+
+    assert len(FOREIGN_FRAUD_MERCHANTS) == 10
+    assert generated_merchants == {
+        merchant_name for merchant_name, _category in FOREIGN_FRAUD_MERCHANTS
+    }
 
 
 def test_blocked_card_rejects_checkout_without_writes() -> None:
