@@ -751,6 +751,15 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                 "tool_confirm_transaction",
                 {"confirmed": True},
             ),
+            tool_call_event(
+                "classify_dispute",
+                "tool_classify_dispute",
+                {
+                    "allegation": "UNAUTHORIZED_CARD",
+                    "customer_denies_authorization": True,
+                    "customer_reports_duplicate": False,
+                },
+            ),
         ]
         transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
         self.addCleanup(transactions.close)
@@ -765,19 +774,103 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         )
 
         state = gateway.calls.get("call_transaction_search")
-        self.assertEqual(state.stage, "transaction_selected")
+        self.assertEqual(state.stage, "dispute_classified")
         self.assertEqual(state.confirmed_transaction.merchant_name, "Lemon Drop Market")
+        self.assertEqual(state.dispute_classification.visa_condition_code, "10.4")
 
         configured_tools = {tool["name"] for tool in calls.accepted[0][1]["tools"]}
         self.assertIn("search_transactions", configured_tools)
         self.assertIn("confirm_transaction", configured_tools)
+        self.assertIn("classify_dispute", configured_tools)
 
         outbound = json.dumps(websocket.sent, ensure_ascii=False)
         self.assertIn("Lemon Drop Market", outbound)
         self.assertIn("12,49", outbound)
-        self.assertIn("Confirmei a transação", outbound)
+        self.assertIn("não fez nem autorizou", outbound)
+        self.assertIn("código Visa candidato é 10.4", outbound)
         self.assertNotIn("SELECT", outbound)
         self.assertNotIn(state.confirmed_transaction.transaction_id, outbound)
+
+    async def test_duplicate_report_maps_to_visa_12_6_1(self):
+        events = [
+            session_updated_event(),
+            tool_call_event("confirm_language", "tool_language", {}),
+            tool_call_event(
+                "set_authentication_method",
+                "tool_auth",
+                {"method": "phone"},
+            ),
+            tool_call_event(
+                "search_transactions",
+                "tool_search",
+                {"merchant_query": "lemon"},
+            ),
+            completed_transcript_event(speaker="customer", transcript="Sim."),
+            tool_call_event(
+                "confirm_transaction",
+                "tool_confirm",
+                {"confirmed": True},
+            ),
+            tool_call_event(
+                "classify_dispute",
+                "tool_classify",
+                {
+                    "allegation": "DUPLICATE_PROCESSING",
+                    "customer_denies_authorization": False,
+                    "customer_reports_duplicate": True,
+                },
+            ),
+        ]
+        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        self.addCleanup(transactions.close)
+        gateway, websocket, _ = self._gateway(events, transaction_repository=transactions)
+
+        await gateway.accept_and_control("call_duplicate_classification", "+5511999990001")
+
+        state = gateway.calls.get("call_duplicate_classification")
+        self.assertEqual(state.stage, "dispute_classified")
+        self.assertEqual(state.dispute_classification.visa_condition_code, "12.6.1")
+        outbound = json.dumps(websocket.sent, ensure_ascii=False)
+        self.assertIn("processamento duplicado", outbound)
+        self.assertIn("12.6.1", outbound)
+
+    async def test_ambiguous_problem_asks_for_clarification_without_code(self):
+        events = [
+            session_updated_event(),
+            tool_call_event("confirm_language", "tool_language", {}),
+            tool_call_event(
+                "set_authentication_method",
+                "tool_auth",
+                {"method": "phone"},
+            ),
+            tool_call_event(
+                "search_transactions",
+                "tool_search",
+                {"merchant_query": "lemon"},
+            ),
+            completed_transcript_event(speaker="customer", transcript="Sim."),
+            tool_call_event("confirm_transaction", "tool_confirm", {"confirmed": True}),
+            tool_call_event(
+                "classify_dispute",
+                "tool_classify",
+                {
+                    "allegation": "INSUFFICIENT_INFO",
+                    "customer_denies_authorization": False,
+                    "customer_reports_duplicate": False,
+                },
+            ),
+        ]
+        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        self.addCleanup(transactions.close)
+        gateway, websocket, _ = self._gateway(events, transaction_repository=transactions)
+
+        await gateway.accept_and_control("call_ambiguous_classification", "+5511999990001")
+
+        state = gateway.calls.get("call_ambiguous_classification")
+        self.assertEqual(state.stage, "needs_dispute_classification")
+        self.assertIsNone(state.dispute_classification.visa_condition_code)
+        outbound = json.dumps(websocket.sent, ensure_ascii=False)
+        self.assertIn("Não consegui distinguir", outbound)
 
     def test_confirmation_guard_requires_unambiguous_speech(self):
         self.assertIs(_explicit_confirmation_from_transcript("Sim."), True)
@@ -951,6 +1044,55 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                     ],
                     message,
                 )
+
+    def test_classification_is_voice_friendly_in_supported_languages(self):
+        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        self.addCleanup(transactions.close)
+        gateway, _, _ = self._gateway([], transaction_repository=transactions)
+        scenarios = {
+            "pt": ("brazilian", "não fez nem autorizou", "processamento duplicado"),
+            "es": ("colombian", "no hiciste ni autorizaste", "procesamiento duplicado"),
+            "en": ("american", "not make or authorize", "duplicate processing"),
+        }
+
+        for index, (language, (accent, question_text, result_text)) in enumerate(
+            scenarios.items(),
+            start=1,
+        ):
+            with self.subTest(language=language):
+                call_id = f"call_classification_{index}"
+                gateway.calls.start("+5511999990001", call_id=call_id)
+                gateway.calls.confirm_language(call_id)
+                gateway.calls.choose_authentication_method(call_id, method="phone")
+                gateway.calls.choose_language(call_id, language=language, accent=accent)
+                selection = gateway.calls.search_transactions(
+                    call_id,
+                    TransactionSearchCriteria(merchant_query="lemon"),
+                )
+                confirmed = gateway.calls.resolve_transaction_candidate(
+                    call_id,
+                    confirmed=True,
+                )
+                question = gateway._message_for(
+                    confirmed.state,
+                    "classification_question",
+                )
+                classified = gateway.calls.classify_dispute(
+                    call_id,
+                    allegation="DUPLICATE_PROCESSING",
+                    customer_reports_duplicate=True,
+                )
+                message = gateway._message_for(
+                    classified.state,
+                    "classification_complete",
+                )
+
+                self.assertEqual(
+                    selection.state.current_transaction.merchant_name, "Lemon Drop Market"
+                )
+                self.assertIn(question_text, question)
+                self.assertIn(result_text, message)
+                self.assertIn("12.6.1", message)
 
     async def test_realtime_tool_can_remove_and_clear_transaction_filters(self):
         events = [

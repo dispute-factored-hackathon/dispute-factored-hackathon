@@ -21,8 +21,10 @@ from webapp.backend.demo_seed import seed_demo_customers
 from webapp.backend.repositories.interfaces import CustomerRepository
 from webapp.backend.repositories.mock import customer_repository
 
+from .dispute_classification import DisputeAllegation
 from .transaction_search import TransactionSearchCriteria, TransactionSearchRepository
 from .voice_call import (
+    DisputeClassificationOutcome,
     TransactionSelectionOutcome,
     VoiceAuthenticationMethod,
     VoiceCallService,
@@ -400,6 +402,7 @@ class SipRealtimeGateway:
                     self._authentication_method_tool(),
                     self._transaction_search_tool(),
                     self._transaction_confirmation_tool(),
+                    self._dispute_classification_tool(),
                 ],
                 tool_choice="auto",
                 tracing={
@@ -881,8 +884,10 @@ class SipRealtimeGateway:
                         result = self._message_for(state, "transaction_candidate")
                     elif state.stage is VoiceCallStage.NEEDS_TRANSACTION_DETAILS:
                         result = self._message_for(state, "transaction_clarification")
-                    elif state.stage is VoiceCallStage.TRANSACTION_SELECTED:
-                        result = self._message_for(state, "transaction_confirmed")
+                    elif state.stage is VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION:
+                        result = self._message_for(state, "classification_question")
+                    elif state.stage is VoiceCallStage.DISPUTE_CLASSIFIED:
+                        result = self._message_for(state, "classification_complete")
                     else:
                         result = self._message_for(state, "language_changed")
 
@@ -1041,7 +1046,7 @@ class SipRealtimeGateway:
                             ),
                             TransactionSelectionOutcome.NO_MATCH: "transaction_no_match",
                             TransactionSelectionOutcome.CANDIDATE: "transaction_candidate",
-                            TransactionSelectionOutcome.CONFIRMED: "transaction_confirmed",
+                            TransactionSelectionOutcome.CONFIRMED: "classification_question",
                             TransactionSelectionOutcome.EXHAUSTED: "transaction_handoff",
                         }[selection.outcome]
                         result = self._message_for(state, reason)
@@ -1055,6 +1060,40 @@ class SipRealtimeGateway:
                                 spoken_confirmation is not model_confirmation
                             ),
                         }
+
+                elif tool_name == "classify_dispute":
+                    allegation = DisputeAllegation(arguments.get("allegation", ""))
+                    denies_authorization = arguments.get("customer_denies_authorization", False)
+                    reports_duplicate = arguments.get("customer_reports_duplicate", False)
+                    reported_environment = arguments.get("customer_reported_card_environment")
+                    if reported_environment == "UNKNOWN":
+                        reported_environment = None
+                    if not isinstance(denies_authorization, bool) or not isinstance(
+                        reports_duplicate, bool
+                    ):
+                        raise ValueError("classification evidence flags must be boolean")
+                    classification_result = self.calls.classify_dispute(
+                        call_id,
+                        allegation=allegation,
+                        customer_denies_authorization=denies_authorization,
+                        customer_reports_duplicate=reports_duplicate,
+                        customer_reported_card_environment=reported_environment,
+                    )
+                    state = classification_result.state
+                    reason = (
+                        "classification_complete"
+                        if classification_result.outcome is DisputeClassificationOutcome.CLASSIFIED
+                        else "classification_clarification"
+                    )
+                    result = self._message_for(state, reason)
+                    classification = state.dispute_classification
+                    assert classification is not None
+                    tool_metadata = {
+                        "outcome": classification_result.outcome.value,
+                        "allegation": classification.allegation.value,
+                        "visa_condition_code": classification.visa_condition_code,
+                        "clarification_key": classification.next_question_key,
+                    }
 
                 else:
                     continue
@@ -1079,10 +1118,18 @@ class SipRealtimeGateway:
                         state,
                         "invalid_auth_method",
                     )
-                elif tool_name in {"search_transactions", "confirm_transaction"}:
+                elif tool_name in {
+                    "search_transactions",
+                    "confirm_transaction",
+                    "classify_dispute",
+                }:
                     result = self._message_for(
                         state,
-                        "transaction_invalid",
+                        (
+                            "classification_clarification"
+                            if tool_name == "classify_dispute"
+                            else "transaction_invalid"
+                        ),
                     )
                 else:
                     continue
@@ -1368,6 +1415,62 @@ class SipRealtimeGateway:
         }
 
     @staticmethod
+    def _dispute_classification_tool() -> dict[str, Any]:
+        return {
+            "type": "function",
+            "name": "classify_dispute",
+            "description": (
+                "Classify the caller's problem with the confirmed transaction. Use "
+                "UNAUTHORIZED_CARD only when the caller explicitly says they did not make or "
+                "authorize it. Use DUPLICATE_PROCESSING only when the caller recognizes the "
+                "purchase but says the same purchase was charged more than once. Otherwise use "
+                "INSUFFICIENT_INFO."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "allegation": {
+                        "type": "string",
+                        "enum": [
+                            "UNAUTHORIZED_CARD",
+                            "DUPLICATE_PROCESSING",
+                            "INSUFFICIENT_INFO",
+                        ],
+                    },
+                    "customer_denies_authorization": {
+                        "type": "boolean",
+                        "description": (
+                            "True only when the caller explicitly says they did not make, "
+                            "approve, or authorize the selected transaction."
+                        ),
+                    },
+                    "customer_reports_duplicate": {
+                        "type": "boolean",
+                        "description": (
+                            "True only when the caller explicitly says one recognized purchase "
+                            "was charged or processed more than once."
+                        ),
+                    },
+                    "customer_reported_card_environment": {
+                        "type": "string",
+                        "enum": ["CARD_PRESENT", "CARD_ABSENT", "UNKNOWN"],
+                        "description": (
+                            "Use only when the caller explicitly says whether the purchase was "
+                            "in person with the card or online/remote. Otherwise use UNKNOWN."
+                        ),
+                    },
+                },
+                "required": [
+                    "allegation",
+                    "customer_denies_authorization",
+                    "customer_reports_duplicate",
+                    "customer_reported_card_environment",
+                ],
+                "additionalProperties": False,
+            },
+        }
+
+    @staticmethod
     def _system_instructions(state: VoiceCallState) -> str:
         language_name = {
             "pt": "Portuguese",
@@ -1449,6 +1552,17 @@ Transaction-search workflow:
 - If the caller cannot answer the focused question, call search_transactions with no invented values; the server will select a different missing detail to ask about. Never rerun an unchanged search.
 - Never disclose internal transaction IDs, SQL, hidden candidates, or another customer's transactions.
 - After three denied candidates the server ends in handoff. Explain honestly that human operators are unavailable and handoff is outside this demo.
+
+Dispute-classification workflow:
+- Classification starts only at needs_dispute_classification, after the caller confirms the transaction.
+- Ask whether the caller did not make or authorize this transaction, or recognizes the purchase but was charged more than once for the same purchase.
+- Call classify_dispute with UNAUTHORIZED_CARD only after an explicit authorization denial.
+- Call classify_dispute with DUPLICATE_PROCESSING only after an explicit statement that the same recognized purchase was charged more than once.
+- For ambiguity, uncertainty, both claims at once, or unrelated input, call classify_dispute with INSUFFICIENT_INFO and both evidence flags false.
+- Set customer_reported_card_environment only when the caller explicitly says the purchase was in person with the card or online/remote; otherwise use UNKNOWN.
+- The backend, not the model, maps the selected transaction channel to Visa 10.3 or 10.4 and maps duplicate processing to Visa 12.6.1.
+- A proposed Visa condition is a candidate for issuer review, not proof of fraud, a liability decision, or a submitted chargeback.
+- Call classify_dispute silently and wait for the authoritative server response.
 
 General behavior:
 - Introduce yourself as Izzy from Factored Bank.
@@ -1741,6 +1855,15 @@ General behavior:
         if reason == "transaction_candidate":
             return SipRealtimeGateway._transaction_candidate_message(state)
 
+        if reason == "classification_question":
+            return SipRealtimeGateway._classification_question_message(state)
+
+        if reason == "classification_clarification":
+            return SipRealtimeGateway._classification_clarification_message(state)
+
+        if reason == "classification_complete":
+            return SipRealtimeGateway._classification_complete_message(state)
+
         if reason == "transaction_clarification":
             return SipRealtimeGateway._transaction_clarification_message(state)
 
@@ -1802,10 +1925,144 @@ General behavior:
         if state.stage is VoiceCallStage.CONFIRM_TRANSACTION:
             return SipRealtimeGateway._transaction_candidate_message(state)
 
-        if state.stage is VoiceCallStage.TRANSACTION_SELECTED:
-            return messages["transaction_confirmed"]
+        if state.stage is VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION:
+            return SipRealtimeGateway._classification_question_message(state)
+
+        if state.stage is VoiceCallStage.DISPUTE_CLASSIFIED:
+            return SipRealtimeGateway._classification_complete_message(state)
 
         return messages["opening"]
+
+    @staticmethod
+    def _classification_question_message(state: VoiceCallState) -> str:
+        return {
+            "pt": (
+                "Encontrei e confirmei a transação. Para entender o problema: você não fez nem "
+                "autorizou essa compra, ou reconhece a compra, mas foi cobrado mais de uma vez "
+                "pela mesma compra?"
+            ),
+            "es": (
+                "Encontré y confirmé la transacción. Para entender el problema: ¿no hiciste ni "
+                "autorizaste esta compra, o reconoces la compra pero te cobraron más de una vez "
+                "por la misma compra?"
+            ),
+            "en": (
+                "I found and confirmed the transaction. To understand the problem: did you not "
+                "make or authorize this purchase, or do you recognize it but were charged more "
+                "than once for the same purchase?"
+            ),
+        }[state.locale.language]
+
+    @staticmethod
+    def _classification_clarification_message(state: VoiceCallState) -> str:
+        classification = state.dispute_classification
+        question_key = classification.next_question_key if classification is not None else None
+        questions = {
+            "pt": {
+                "confirm_authorization_denial": (
+                    "Só para confirmar: você não fez nem autorizou essa transação?"
+                ),
+                "confirm_duplicate_purchase": (
+                    "Só para confirmar: você reconhece a compra, mas a mesma compra foi cobrada "
+                    "mais de uma vez?"
+                ),
+                "resolve_fraud_or_duplicate": (
+                    "Preciso separar as duas situações. Você não autorizou a compra, ou autorizou "
+                    "uma única compra e ela foi cobrada mais de uma vez?"
+                ),
+                "verify_card_environment": (
+                    "Você fez essa compra presencialmente com o cartão, ou ela apareceu como uma "
+                    "compra on-line? Preciso desse dado antes de propor o código Visa."
+                ),
+                "choose_fraud_or_duplicate": (
+                    "Não consegui distinguir o problema. Você não autorizou essa compra, ou "
+                    "reconhece a compra, mas houve mais de uma cobrança pela mesma compra?"
+                ),
+            },
+            "es": {
+                "confirm_authorization_denial": (
+                    "Solo para confirmar: ¿no hiciste ni autorizaste esta transacción?"
+                ),
+                "confirm_duplicate_purchase": (
+                    "Solo para confirmar: ¿reconoces la compra, pero la misma compra se cobró "
+                    "más de una vez?"
+                ),
+                "resolve_fraud_or_duplicate": (
+                    "Necesito separar las dos situaciones. ¿No autorizaste la compra, o "
+                    "autorizaste una sola compra y se cobró más de una vez?"
+                ),
+                "verify_card_environment": (
+                    "¿Esta compra fue presencial con la tarjeta, o apareció como una compra en "
+                    "línea? Necesito ese dato antes de proponer el código Visa."
+                ),
+                "choose_fraud_or_duplicate": (
+                    "No pude distinguir el problema. ¿No autorizaste esta compra, o reconoces "
+                    "la compra pero hubo más de un cobro por la misma compra?"
+                ),
+            },
+            "en": {
+                "confirm_authorization_denial": (
+                    "Just to confirm: did you neither make nor authorize this transaction?"
+                ),
+                "confirm_duplicate_purchase": (
+                    "Just to confirm: do you recognize the purchase, but the same purchase was "
+                    "charged more than once?"
+                ),
+                "resolve_fraud_or_duplicate": (
+                    "I need to separate the two situations. Did you not authorize the purchase, "
+                    "or did you authorize one purchase that was charged more than once?"
+                ),
+                "verify_card_environment": (
+                    "Was this an in-person card purchase, or did it appear as an online purchase? "
+                    "I need that detail before proposing the Visa code."
+                ),
+                "choose_fraud_or_duplicate": (
+                    "I couldn't distinguish the problem. Did you not authorize this purchase, "
+                    "or do you recognize it but see more than one charge for the same purchase?"
+                ),
+            },
+        }
+        return questions[state.locale.language].get(
+            question_key,
+            questions[state.locale.language]["choose_fraud_or_duplicate"],
+        )
+
+    @staticmethod
+    def _classification_complete_message(state: VoiceCallState) -> str:
+        classification = state.dispute_classification
+        if classification is None or classification.visa_condition_code is None:
+            return SipRealtimeGateway._classification_clarification_message(state)
+        allegation = {
+            "pt": {
+                "UNAUTHORIZED_CARD": "possível transação não autorizada",
+                "DUPLICATE_PROCESSING": "possível processamento duplicado",
+            },
+            "es": {
+                "UNAUTHORIZED_CARD": "posible transacción no autorizada",
+                "DUPLICATE_PROCESSING": "posible procesamiento duplicado",
+            },
+            "en": {
+                "UNAUTHORIZED_CARD": "possible unauthorized transaction",
+                "DUPLICATE_PROCESSING": "possible duplicate processing",
+            },
+        }[state.locale.language][classification.allegation.value]
+        return {
+            "pt": (
+                f"Classifiquei seu relato como {allegation}. O código Visa candidato é "
+                f"{classification.visa_condition_code}. Isso ainda precisa de revisão do emissor. "
+                "Nenhuma contestação, estorno ou bloqueio foi executado nesta demonstração."
+            ),
+            "es": (
+                f"Clasifiqué tu relato como {allegation}. El código Visa candidato es "
+                f"{classification.visa_condition_code}. Todavía requiere revisión del emisor. "
+                "No se presentó ningún reclamo ni se ejecutó un reembolso o bloqueo en esta demo."
+            ),
+            "en": (
+                f"I classified your report as a {allegation}. The candidate Visa code is "
+                f"{classification.visa_condition_code}. It still requires issuer review. "
+                "No dispute, refund, or card block was submitted in this demonstration."
+            ),
+        }[state.locale.language]
 
     @staticmethod
     def _transaction_clarification_message(state: VoiceCallState) -> str:
