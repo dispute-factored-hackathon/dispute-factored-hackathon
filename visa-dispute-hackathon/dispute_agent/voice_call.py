@@ -153,9 +153,15 @@ class VoiceCallService:
         previous_stage = state.stage
         locale = ConversationLocaleContext.explicit_choice(language, accent)
 
+        next_stage = (
+            VoiceCallStage.NEEDS_AUTH_METHOD
+            if state.stage is VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION
+            else state.stage
+        )
+
         updated = replace(
             state,
-            stage=VoiceCallStage.NEEDS_AUTH_METHOD,
+            stage=next_stage,
             locale=locale,
         )
         self._calls[call_id] = updated

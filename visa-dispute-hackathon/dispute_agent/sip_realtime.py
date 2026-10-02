@@ -600,12 +600,18 @@ class SipRealtimeGateway:
                 arguments = json.loads(output.get("arguments", "{}"))
 
                 if tool_name == "set_language":
+                    before = self.calls.get(call_id)
                     state = self.calls.choose_language(
                         call_id,
                         language=arguments.get("language", ""),
                         accent=arguments.get("accent"),
                     )
-                    result = self._message_for(state, "auth_method_prompt")
+                    if before.stage is VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION:
+                        result = self._message_for(state, "auth_method_prompt")
+                    elif state.stage is VoiceCallStage.NEEDS_DOCUMENT:
+                        result = self._message_for(state, "document_prompt")
+                    else:
+                        result = self._message_for(state, "language_changed")
 
                     _telemetry(
                         "voice.language.selected",
@@ -944,6 +950,9 @@ General behavior:
                     "Os números foram apagados. Digite o documento novamente "
                     "e pressione jogo da velha."
                 ),
+                "language_changed": (
+                    "Idioma alterado. Podemos continuar sua contestação neste idioma."
+                ),
             },
             "es": {
                 "opening": (
@@ -997,6 +1006,9 @@ General behavior:
                 "cleared": (
                     "Borré los números. Ingresa el documento nuevamente y presiona numeral."
                 ),
+                "language_changed": (
+                    "Idioma cambiado. Podemos continuar tu reclamo en este idioma."
+                ),
             },
             "en": {
                 "opening": (
@@ -1043,6 +1055,9 @@ General behavior:
                 ),
                 "empty": ("No digits were entered. Enter your document and then press pound."),
                 "cleared": ("The digits were cleared. Enter your document again and press pound."),
+                "language_changed": (
+                    "Language changed. We can continue your card dispute in this language."
+                ),
             },
         }[language]
 
@@ -1054,6 +1069,9 @@ General behavior:
 
         if reason in {"auth_method_prompt", "language_selected"}:
             return messages["auth_method"]
+
+        if reason == "language_changed":
+            return messages["language_changed"]
 
         if reason == "phone_auth_success":
             return messages["phone_success"].format(name=customer_name)

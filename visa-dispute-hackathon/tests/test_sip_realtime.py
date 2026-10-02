@@ -434,6 +434,48 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Izzy", outbound)
         self.assertIn("Factored Bank", outbound)
 
+    async def test_language_change_after_authentication_keeps_authenticated_session(self):
+        events = [
+            session_updated_event(),
+            tool_call_event(
+                "confirm_language",
+                "tool_language",
+                {},
+            ),
+            tool_call_event(
+                "set_authentication_method",
+                "tool_auth",
+                {"method": "phone"},
+            ),
+            tool_call_event(
+                "set_language",
+                "tool_change_language",
+                {"language": "en", "accent": "american"},
+            ),
+        ]
+
+        gateway, websocket, _ = self._gateway(events)
+
+        await gateway.accept_and_control(
+            "call_authenticated_language_change",
+            "+5511999990001",
+        )
+
+        state = gateway.calls.get("call_authenticated_language_change")
+        self.assertEqual(state.stage, "authenticated")
+        self.assertEqual(state.identity.customer_id, "CLI-002")
+        self.assertEqual(state.locale.locale, "en-US")
+
+        outbound = json.dumps(websocket.sent, ensure_ascii=False)
+        self.assertIn(
+            "Language changed. We can continue your card dispute in this language.",
+            outbound,
+        )
+        self.assertNotIn(
+            "would you prefer to authenticate using the phone number",
+            outbound,
+        )
+
     async def test_phone_failure_falls_back_to_document_and_dtmf_authenticates(self):
         events = [
             session_updated_event(),

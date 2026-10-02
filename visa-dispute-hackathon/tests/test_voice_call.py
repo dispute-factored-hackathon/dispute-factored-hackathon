@@ -162,6 +162,63 @@ class VoiceCallServiceTests(unittest.TestCase):
         )
         self.assertEqual(state.document_digits, "")
 
+    def test_star_clears_document_entry_before_submission(self):
+        state = self.calls.start(
+            "+57 300 999 8877",
+            call_id="call_document_clear",
+        )
+        state = self.calls.confirm_language(state.call_id)
+        state = self.calls.choose_authentication_method(
+            state.call_id,
+            method="document",
+        )
+
+        for key in "999*123456789#":
+            state, _ = self.calls.receive_dtmf(state.call_id, key)
+
+        self.assertEqual(state.stage, VoiceCallStage.AUTHENTICATED)
+        self.assertEqual(state.identity.customer_id, "CLI-001")
+        self.assertEqual(state.document_digits, "")
+
+    def test_authenticated_customer_can_change_language_without_reauthentication(self):
+        state = self.calls.start(
+            "+55 11 99999-0001",
+            call_id="call_authenticated_language_change",
+        )
+        state = self.calls.confirm_language(state.call_id)
+        state = self.calls.choose_authentication_method(
+            state.call_id,
+            method="phone",
+        )
+
+        changed = self.calls.choose_language(
+            state.call_id,
+            language="en",
+            accent="american",
+        )
+
+        self.assertEqual(changed.stage, VoiceCallStage.AUTHENTICATED)
+        self.assertEqual(changed.identity.customer_id, "CLI-002")
+        self.assertEqual(
+            (changed.locale.language, changed.locale.accent),
+            ("en", "american"),
+        )
+
+    def test_incompatible_accent_does_not_change_call_state(self):
+        state = self.calls.start(
+            "+55 11 99999-0001",
+            call_id="call_invalid_accent",
+        )
+
+        with self.assertRaises(ValueError):
+            self.calls.choose_language(
+                state.call_id,
+                language="pt",
+                accent="mexican",
+            )
+
+        self.assertEqual(self.calls.get(state.call_id), state)
+
     def test_unknown_number_uses_calling_code_only_as_regional_hint(self):
         scenarios = {
             "+525599998877": ("es", "es-MX", "mexican"),
