@@ -78,6 +78,7 @@ class TransactionConfirmationIntent(StrEnum):
 
 
 class LanguageSelectionIntent(StrEnum):
+    KEEP = "keep"
     ENGLISH = "en"
     PORTUGUESE = "pt"
     SPANISH = "es"
@@ -94,6 +95,76 @@ class CsatResponseIntent(StrEnum):
     RATING = "RATING"
     DECLINE = "DECLINE"
     UNCLEAR = "UNCLEAR"
+
+
+_LANGUAGE_TERMS = {
+    LanguageSelectionIntent.ENGLISH: {"english", "ingles"},
+    LanguageSelectionIntent.PORTUGUESE: {"portuguese", "portugues"},
+    LanguageSelectionIntent.SPANISH: {"spanish", "espanhol", "espanol"},
+}
+_KEEP_LANGUAGE_TERMS = {
+    "yes",
+    "yeah",
+    "sim",
+    "si",
+    "continue",
+    "continuar",
+    "keep",
+    "manter",
+    "mismo",
+    "mesmo",
+    "same",
+    "current",
+    "atual",
+    "actual",
+    "this",
+    "este",
+}
+_ACCENT_TERMS = {
+    "american": ("american", "americano", "estados unidos"),
+    "brazilian": ("brazilian", "brasileiro", "brasileira", "brasil", "brazil"),
+    "portuguese": ("portugal", "portugues de portugal"),
+    "argentinian": ("argentin",),
+    "colombian": ("colombi",),
+    "mexican": ("mexic",),
+    "spanish": ("espanha", "espana", "spain"),
+    "neutral_latin_american": ("latino-americano", "latinoamericano", "latin american"),
+}
+
+
+def _language_intent_is_grounded(intent: LanguageSelectionIntent, transcript: str) -> bool:
+    """Reject model language changes unsupported by the caller's actual transcript."""
+
+    if not transcript.strip():
+        return True  # SDK/unit callers may invoke the validated tool without ASR text.
+    _, words = _normalized_words(transcript)
+    if intent is LanguageSelectionIntent.KEEP:
+        return bool(words.intersection(_KEEP_LANGUAGE_TERMS))
+    return bool(words.intersection(_LANGUAGE_TERMS.get(intent, set())))
+
+
+def _grounded_accent(transcript: str, language: LanguageSelectionIntent) -> str | None:
+    """Use a regional accent only when the caller explicitly named it."""
+
+    normalized, _ = _normalized_words(transcript)
+    compatible = {
+        LanguageSelectionIntent.ENGLISH: {"american"},
+        LanguageSelectionIntent.PORTUGUESE: {"brazilian", "portuguese"},
+        LanguageSelectionIntent.SPANISH: {
+            "argentinian",
+            "colombian",
+            "mexican",
+            "spanish",
+            "neutral_latin_american",
+        },
+    }.get(language, set())
+    matches = (
+        (normalized.rfind(term), accent)
+        for accent in compatible
+        for term in _ACCENT_TERMS[accent]
+        if term in normalized
+    )
+    return max(matches, default=(-1, None))[1]
 
 
 def _guard_extracted_numeric_filters(
@@ -631,7 +702,6 @@ class SipRealtimeGateway:
                     active_response = False
                     opening_sent = False
                     last_customer_transcript = ""
-                    terminal_followup_pending = False
 
                     async for raw_event in websocket:
                         try:
@@ -669,19 +739,6 @@ class SipRealtimeGateway:
                                 transcript=last_customer_transcript,
                                 item_id=str(event.get("item_id", "")),
                             )
-                            current_state = self.calls.get(call_id)
-                            if current_state.stage is VoiceCallStage.DISPUTE_CLASSIFIED:
-                                if last_customer_transcript.strip():
-                                    terminal_followup_pending = True
-                                    if not active_response:
-                                        await self._create_terminal_followup(websocket)
-                                        terminal_followup_pending = False
-                                else:
-                                    _telemetry(
-                                        "voice.empty_terminal_transcript.ignored",
-                                        call_id=call_id,
-                                    )
-
                         elif event_type in {
                             "response.output_audio_transcript.done",
                             "response.audio_transcript.done",
@@ -739,11 +796,6 @@ class SipRealtimeGateway:
                                 last_customer_transcript=last_customer_transcript,
                             )
                             last_customer_transcript = ""
-                            if terminal_followup_pending:
-                                current_state = self.calls.get(call_id)
-                                if current_state.stage is VoiceCallStage.DISPUTE_CLASSIFIED:
-                                    await self._create_terminal_followup(websocket)
-                                terminal_followup_pending = False
 
                         elif event_type in {
                             "input_audio_buffer.dtmf_event_received",
@@ -945,15 +997,39 @@ class SipRealtimeGateway:
                 if tool_name == "set_language":
                     before = self.calls.get(call_id)
                     language_intent = LanguageSelectionIntent(arguments.get("language", ""))
-                    if language_intent is LanguageSelectionIntent.UNCLEAR:
+                    if (
+                        language_intent is LanguageSelectionIntent.KEEP
+                        and before.stage is VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION
+                        and _language_intent_is_grounded(
+                            language_intent,
+                            last_customer_transcript,
+                        )
+                    ):
+                        state = self.calls.confirm_language(call_id)
+                        result = self._message_for(state, "auth_method_prompt")
+                        tool_metadata = {"outcome": "kept"}
+                    elif language_intent in {
+                        LanguageSelectionIntent.KEEP,
+                        LanguageSelectionIntent.UNCLEAR,
+                    } or not (
+                        _language_intent_is_grounded(
+                            language_intent,
+                            last_customer_transcript,
+                        )
+                    ):
                         state = before
                         result = self._message_for(state, "invalid_language")
                         tool_metadata = {"outcome": "unclear"}
                     else:
+                        accent = (
+                            _grounded_accent(last_customer_transcript, language_intent)
+                            if last_customer_transcript
+                            else arguments.get("accent")
+                        )
                         state = self.calls.choose_language(
                             call_id,
                             language=language_intent.value,
-                            accent=arguments.get("accent"),
+                            accent=accent,
                         )
                         if before.stage is VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION:
                             result = self._message_for(state, "auth_method_prompt")
@@ -1328,7 +1404,7 @@ class SipRealtimeGateway:
             {"model": self.input_transcription_model} if self.log_full_transcripts else None
         )
         input_configuration: dict[str, Any] = {"transcription": transcription}
-        if state is not None and state.stage is VoiceCallStage.DISPUTE_CLASSIFIED:
+        if state is not None and state.stage is VoiceCallStage.COMPLETED:
             input_configuration["turn_detection"] = {
                 "type": "server_vad",
                 "create_response": False,
@@ -1337,21 +1413,6 @@ class SipRealtimeGateway:
         return {
             "input": input_configuration,
         }
-
-    @staticmethod
-    async def _create_terminal_followup(websocket: Any) -> None:
-        """Respond once to a real post-resolution utterance, never to empty VAD turns."""
-        await websocket.send(
-            json.dumps(
-                {
-                    "type": "response.create",
-                    "response": {
-                        "output_modalities": ["audio"],
-                        "tool_choice": "none",
-                    },
-                }
-            )
-        )
 
     def _log_full_transcript(
         self,
@@ -1402,15 +1463,17 @@ class SipRealtimeGateway:
             "type": "function",
             "name": "set_language",
             "description": (
-                "Classify the caller's explicit language choice. Use unclear for "
-                "unintelligible, ambiguous, unrelated, or low-confidence speech; never guess."
+                "Classify the caller's language choice. Use keep when they clearly want the "
+                "language already proposed. Use en, pt, or es only when that language is "
+                "explicitly named. Use unclear for unintelligible, ambiguous, unrelated, or "
+                "low-confidence speech; never guess."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "language": {
                         "type": "string",
-                        "enum": ["en", "pt", "es", "unclear"],
+                        "enum": ["keep", "en", "pt", "es", "unclear"],
                     },
                     "accent": {
                         "type": "string",
@@ -1696,10 +1759,11 @@ Language workflow:
 - The current inferred language is {language_name}.
 - Ask whether the caller wants to continue in the current language or switch to {switch_options}.
 - Do not present {language_name} as a switch option because the conversation is already using it.
-- If the caller clearly wants to keep the proposed language, call confirm_language.
+- If the caller clearly wants to keep the proposed language, call set_language with language=keep.
 - If the caller explicitly chooses Portuguese, English, or Spanish, call set_language.
 - For unintelligible, ambiguous, unrelated, or low-confidence speech, call
   set_language with language=unclear. Never guess a language.
+- When changing language at any stage, produce only the set_language tool call. Do not acknowledge the change before the server response.
 - Do not claim that the caller's physical location or nationality is known. The language is only inferred from the telephone calling code.
 
 Authentication workflow:
@@ -1764,12 +1828,15 @@ General behavior:
 - Keep prompts concise and natural for a telephone call.
 - Stay within authentication and card-dispute support.
 - Do not claim a bank action occurred unless a server/tool result confirms it.
+- Whenever you call a tool, your response must contain only the tool call. Never speak an acknowledgement, plan, or assumed result before a tool result.
 """
 
     @staticmethod
     def _tool_choice_for(state: VoiceCallState) -> str | dict[str, str]:
         """Force only the state-valid tool when the backend needs a decision."""
         forced_tools = {
+            VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION: "set_language",
+            VoiceCallStage.NEEDS_AUTH_METHOD: "set_authentication_method",
             VoiceCallStage.CONFIRM_TRANSACTION: "confirm_transaction",
             VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION: "classify_dispute",
             VoiceCallStage.DISPUTE_CLASSIFIED: "record_csat",
@@ -2085,6 +2152,23 @@ General behavior:
             return messages["auth_method"]
 
         if reason == "language_changed":
+            locale_names = {
+                "pt-BR": "português brasileiro",
+                "pt-PT": "português de Portugal",
+                "en-US": "inglês americano",
+                "es-AR": "espanhol argentino",
+                "es-CO": "espanhol colombiano",
+                "es-MX": "espanhol mexicano",
+                "es-ES": "espanhol da Espanha",
+                "es-419": "espanhol latino-americano",
+            }
+            selected_locale = locale_names.get(state.locale.locale)
+            if selected_locale and language == "pt":
+                return f"Idioma alterado para {selected_locale}. Podemos continuar sua contestação."
+            if selected_locale and language == "es":
+                return f"Idioma cambiado a {selected_locale}. Podemos continuar con tu reclamo."
+            if selected_locale and language == "en":
+                return "Language changed to US English. We can continue your card dispute."
             return messages["language_changed"]
 
         if reason == "transaction_candidate":

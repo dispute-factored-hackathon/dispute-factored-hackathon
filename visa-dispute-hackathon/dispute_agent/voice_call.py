@@ -298,7 +298,24 @@ class VoiceCallService:
         started = time.monotonic()
         state = self.get(call_id)
         previous_stage = state.stage
-        locale = ConversationLocaleContext.explicit_choice(language, accent)
+        resolved_accent = accent
+        if resolved_accent is None:
+            if state.identity is not None:
+                profile_locale = ConversationLocaleContext.from_customer_record(
+                    country=state.identity.country,
+                    detected_accent=state.identity.detected_accent,
+                )
+                if profile_locale.language == language:
+                    resolved_accent = profile_locale.accent
+            if resolved_accent is None:
+                calling_code_locale = ConversationLocaleContext.from_calling_code(
+                    calling_code_from_phone(state.caller_phone)
+                )
+                if calling_code_locale.language == language:
+                    resolved_accent = calling_code_locale.accent
+            if resolved_accent is None and state.locale.language == language:
+                resolved_accent = state.locale.accent
+        locale = ConversationLocaleContext.explicit_choice(language, resolved_accent)
 
         next_stage = (
             VoiceCallStage.NEEDS_AUTH_METHOD

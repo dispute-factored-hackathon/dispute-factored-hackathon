@@ -232,6 +232,17 @@ class VoiceCallServiceTests(unittest.TestCase):
             ("en", "american"),
         )
 
+        changed_back = self.calls.choose_language(
+            state.call_id,
+            language="pt",
+        )
+
+        self.assertEqual(changed_back.stage, VoiceCallStage.AUTHENTICATED)
+        self.assertEqual(
+            (changed_back.locale.locale, changed_back.locale.accent),
+            ("pt-BR", "brazilian"),
+        )
+
     def test_incompatible_accent_does_not_change_call_state(self):
         state = self.calls.start(
             "+55 11 99999-0001",
