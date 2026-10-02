@@ -22,7 +22,6 @@ const COPY = {
         izzy: ["tour.izzy_title", "tour.izzy_body"],
         "complaints-link": ["tour.complaints_link_title", "tour.complaints_link_body"],
         complaints: ["tour.complaints_title", "tour.complaints_body"],
-        "complaint-detail": ["tour.complaint_title", "tour.complaint_body"],
         "profile-link": ["tour.profile_link_title", "tour.profile_link_body"],
         profile: ["tour.profile_title", "tour.profile_body"],
         finish: ["tour.finish_title", "tour.finish_body"],
@@ -73,10 +72,8 @@ const STEPS = [
     {
         id: "complaints",
         route: "/complaints",
-        target: ".complaint-item",
-        action: "activate",
+        target: ".page-heading",
     },
-    { id: "complaint-detail", route: complaintDetailRoute },
     {
         id: "profile-link",
         route: "/home",
@@ -111,15 +108,6 @@ async function transactionDetailRoute() {
     const transactions = await apiRequest("/transactions", { method: "GET" });
     const first = transactions[0];
     return first ? `/transactions/${encodeURIComponent(first.transaction_id)}` : null;
-}
-
-async function complaintDetailRoute() {
-    if (/^\/complaints\/[^/]+$/.test(window.location.pathname)) {
-        return window.location.pathname;
-    }
-    const complaints = await apiRequest("/complaints", { method: "GET" });
-    const first = complaints[0];
-    return first ? `/complaints/${encodeURIComponent(first.complaint_id)}` : null;
 }
 
 async function routeFor(step) {
