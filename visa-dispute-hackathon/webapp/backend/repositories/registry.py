@@ -11,9 +11,13 @@ from dataclasses import dataclass
 from webapp.backend.config import Settings, get_settings
 from webapp.backend.repositories import mock
 from webapp.backend.repositories.interfaces import (
+    CallCenterInteractionRepository,
+    CallTranscriptRepository,
     ComplaintRepository,
     CustomerRepository,
     ProductRepository,
+    SatisfactionSurveyRepository,
+    ServiceAgentRepository,
     SessionRepository,
     TransactionRepository,
 )
@@ -30,6 +34,10 @@ class Repositories:
     transactions: TransactionRepository
     complaints: ComplaintRepository
     sessions: SessionRepository
+    service_agents: ServiceAgentRepository
+    call_center_interactions: CallCenterInteractionRepository
+    call_transcripts: CallTranscriptRepository
+    satisfaction_surveys: SatisfactionSurveyRepository
     database: object | None = None  # the pooled Database for postgres, None for mock
 
     def close(self) -> None:
@@ -46,6 +54,10 @@ def build_repositories(settings: Settings) -> Repositories:
             transactions=mock.transaction_repository,
             complaints=mock.complaint_repository,
             sessions=mock.session_repository,
+            service_agents=mock.service_agent_repository,
+            call_center_interactions=mock.call_center_interaction_repository,
+            call_transcripts=mock.call_transcript_repository,
+            satisfaction_surveys=mock.satisfaction_survey_repository,
         )
 
     # Imported lazily so the default mock backend never opens a database connection.
@@ -73,6 +85,10 @@ def build_repositories(settings: Settings) -> Repositories:
         transactions=postgres.PostgresTransactionRepository(database),
         complaints=postgres.PostgresComplaintRepository(database),
         sessions=postgres.PostgresSessionRepository(database),
+        service_agents=postgres.PostgresServiceAgentRepository(database),
+        call_center_interactions=postgres.PostgresCallCenterInteractionRepository(database),
+        call_transcripts=postgres.PostgresCallTranscriptRepository(database),
+        satisfaction_surveys=postgres.PostgresSatisfactionSurveyRepository(database),
         database=database,
     )
 
@@ -85,6 +101,10 @@ product_repository = _repositories.products
 transaction_repository = _repositories.transactions
 complaint_repository = _repositories.complaints
 session_repository = _repositories.sessions
+service_agent_repository = _repositories.service_agents
+call_center_interaction_repository = _repositories.call_center_interactions
+call_transcript_repository = _repositories.call_transcripts
+satisfaction_survey_repository = _repositories.satisfaction_surveys
 
 
 def close_repositories() -> None:

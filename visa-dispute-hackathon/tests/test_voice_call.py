@@ -405,7 +405,10 @@ class VoiceCallServiceTests(unittest.TestCase):
         self.assertIsNotNone(complaint)
         self.assertEqual(complaint.customer_id, "CLI-002")
         self.assertEqual(complaint.affected_product_id, demo_card_product_id("CLI-002"))
-        self.assertEqual(complaint.origin_interaction_id, state.call_id)
+        self.assertEqual(
+            complaint.origin_interaction_id,
+            self.calls.call_interactions.interaction_id(state.call_id),
+        )
         self.assertEqual(complaint.subcategory, "Visa 10.4 · Other Fraud — Card-Absent Environment")
         self.assertEqual(complaint.reception_channel, "Call Center")
         self.assertEqual(complaint.assigned_agent_id, "IZZY")

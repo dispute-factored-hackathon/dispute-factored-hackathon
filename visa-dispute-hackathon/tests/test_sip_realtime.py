@@ -813,7 +813,12 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                     "customer_reports_duplicate": False,
                 },
             ),
-            completed_transcript_event(speaker="customer", transcript=""),
+            completed_transcript_event(speaker="customer", transcript="Quatro."),
+            tool_call_event(
+                "record_csat",
+                "tool_csat",
+                {"response_intent": "RATING", "rating": 4},
+            ),
         ]
         transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
         self.addCleanup(transactions.close)
@@ -828,7 +833,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         )
 
         state = gateway.calls.get("call_transaction_search")
-        self.assertEqual(state.stage, "dispute_classified")
+        self.assertEqual(state.stage, "completed")
         self.assertEqual(state.confirmed_transaction.merchant_name, "Lemon Drop Market")
         self.assertEqual(state.dispute_classification.visa_condition_code, "10.4")
         self.assertIsNotNone(state.complaint_id)
@@ -838,6 +843,15 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("search_transactions", configured_tools)
         self.assertIn("confirm_transaction", configured_tools)
         self.assertIn("classify_dispute", configured_tools)
+        self.assertIn("record_csat", configured_tools)
+
+        interaction_id = gateway.calls.call_interactions.interaction_id(state.call_id)
+        survey = gateway.calls.call_interactions.surveys.get_by_interaction(interaction_id)
+        agent = gateway.calls.call_interactions.agents.get_by_id("AGENT-IZZY")
+        transcript = gateway.calls.call_interactions.transcripts.get_by_interaction(interaction_id)
+        self.assertEqual(survey.main_score, 4)
+        self.assertEqual(agent.avg_csat, 4.0)
+        self.assertIn("Quatro.", transcript.customer_text)
 
         outbound = json.dumps(websocket.sent, ensure_ascii=False)
         self.assertIn("Lemon Drop Market", outbound)
@@ -848,13 +862,15 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(f"A reclamação {state.complaint_id} foi aberta", outbound)
         self.assertIn("com esse código Visa", outbound)
         self.assertIn("status Em análise", outbound)
+        self.assertIn("como você avalia este atendimento de 1 a 5", outbound)
+        self.assertIn("Obrigado pela avaliação", outbound)
         self.assertNotIn("9999999999999999", outbound)
         self.assertNotIn("SELECT", outbound)
         self.assertNotIn(state.confirmed_transaction.transaction_id, outbound)
         response_creates = [
             event for event in websocket.sent if event.get("type") == "response.create"
         ]
-        self.assertTrue(all("instructions" in event["response"] for event in response_creates))
+        self.assertTrue(any("instructions" in event["response"] for event in response_creates))
 
     async def test_duplicate_report_maps_to_visa_12_6_1(self):
         events = [

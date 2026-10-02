@@ -20,14 +20,22 @@ from openai import OpenAI
 
 from webapp.backend.demo_seed import seed_demo_customers
 from webapp.backend.repositories.interfaces import (
+    CallCenterInteractionRepository,
+    CallTranscriptRepository,
     ComplaintRepository,
     CustomerRepository,
     ProductRepository,
+    SatisfactionSurveyRepository,
+    ServiceAgentRepository,
 )
 from webapp.backend.repositories.registry import (
+    call_center_interaction_repository,
+    call_transcript_repository,
     complaint_repository,
     customer_repository,
     product_repository,
+    satisfaction_survey_repository,
+    service_agent_repository,
 )
 
 from .dispute_classification import DisputeAllegation
@@ -80,6 +88,12 @@ class AuthenticationMethodIntent(StrEnum):
     PHONE = "phone"
     DOCUMENT = "document"
     UNCLEAR = "unclear"
+
+
+class CsatResponseIntent(StrEnum):
+    RATING = "RATING"
+    DECLINE = "DECLINE"
+    UNCLEAR = "UNCLEAR"
 
 
 def _guard_extracted_numeric_filters(
@@ -323,6 +337,10 @@ class SipRealtimeGateway:
         transaction_repository: TransactionSearchRepository | None = None,
         product_repository: ProductRepository | None = None,
         complaint_repository: ComplaintRepository | None = None,
+        service_agent_repository: ServiceAgentRepository | None = None,
+        interaction_repository: CallCenterInteractionRepository | None = None,
+        transcript_repository: CallTranscriptRepository | None = None,
+        satisfaction_survey_repository: SatisfactionSurveyRepository | None = None,
         log_full_transcripts: bool | None = None,
     ) -> None:
 
@@ -351,6 +369,10 @@ class SipRealtimeGateway:
         self._transaction_repository = transaction_repository
         self._product_repository = product_repository
         self._complaint_repository = complaint_repository
+        self._service_agent_repository = service_agent_repository
+        self._interaction_repository = interaction_repository
+        self._transcript_repository = transcript_repository
+        self._satisfaction_survey_repository = satisfaction_survey_repository
 
         self._calls: VoiceCallService | None = None
 
@@ -366,6 +388,11 @@ class SipRealtimeGateway:
                 transaction_repository=self._transaction_repository,
                 product_repository=self._product_repository,
                 complaint_repository=self._complaint_repository,
+                service_agent_repository=self._service_agent_repository,
+                interaction_repository=self._interaction_repository,
+                transcript_repository=self._transcript_repository,
+                satisfaction_survey_repository=self._satisfaction_survey_repository,
+                transcription_model=self.input_transcription_model,
             )
 
         return self._calls
@@ -420,6 +447,7 @@ class SipRealtimeGateway:
                     self._transaction_search_tool(),
                     self._transaction_confirmation_tool(),
                     self._dispute_classification_tool(),
+                    self._csat_tool(),
                 ],
                 tool_choice="auto",
                 tracing={
@@ -521,6 +549,8 @@ class SipRealtimeGateway:
                 "Realtime sideband ended unexpectedly for call %s",
                 call_id,
             )
+        finally:
+            self.calls.finalize(call_id)
 
     def _connect(self, url: str) -> Any:
         connector = self._websocket_connect
@@ -630,6 +660,9 @@ class SipRealtimeGateway:
 
                         if event_type == "conversation.item.input_audio_transcription.completed":
                             last_customer_transcript = str(event.get("transcript", ""))
+                            self.calls.record_transcript_turn(
+                                call_id, speaker="customer", text=last_customer_transcript
+                            )
                             self._log_full_transcript(
                                 call_id=call_id,
                                 speaker="customer",
@@ -653,10 +686,14 @@ class SipRealtimeGateway:
                             "response.output_audio_transcript.done",
                             "response.audio_transcript.done",
                         }:
+                            agent_transcript = str(event.get("transcript", ""))
+                            self.calls.record_transcript_turn(
+                                call_id, speaker="agent", text=agent_transcript
+                            )
                             self._log_full_transcript(
                                 call_id=call_id,
                                 speaker="agent",
-                                transcript=str(event.get("transcript", "")),
+                                transcript=agent_transcript,
                                 item_id=str(event.get("item_id", "")),
                                 response_id=str(event.get("response_id", "")),
                             )
@@ -1149,6 +1186,24 @@ class SipRealtimeGateway:
                         ),
                     }
 
+                elif tool_name == "record_csat":
+                    intent = CsatResponseIntent(arguments.get("response_intent", ""))
+                    if intent is CsatResponseIntent.RATING:
+                        rating = arguments.get("rating")
+                        if not isinstance(rating, int) or isinstance(rating, bool):
+                            raise ValueError("rating must be an integer from 1 to 5")
+                        state = self.calls.record_csat(call_id, rating=rating)
+                        result = self._message_for(state, "csat_thanks")
+                        tool_metadata = {"outcome": "recorded", "rating": rating}
+                    elif intent is CsatResponseIntent.DECLINE:
+                        state = self.calls.decline_csat(call_id)
+                        result = self._message_for(state, "csat_declined")
+                        tool_metadata = {"outcome": "declined"}
+                    else:
+                        state = self.calls.get(call_id)
+                        result = self._message_for(state, "csat_unclear")
+                        tool_metadata = {"outcome": "unclear"}
+
                 else:
                     continue
 
@@ -1176,11 +1231,14 @@ class SipRealtimeGateway:
                     "search_transactions",
                     "confirm_transaction",
                     "classify_dispute",
+                    "record_csat",
                 }:
                     result = self._message_for(
                         state,
                         (
-                            "classification_clarification"
+                            "csat_unclear"
+                            if tool_name == "record_csat"
+                            else "classification_clarification"
                             if tool_name == "classify_dispute"
                             else "transaction_invalid"
                         ),
@@ -1189,6 +1247,7 @@ class SipRealtimeGateway:
                     continue
 
             else:
+                self.calls.sync_interaction(call_id)
                 _telemetry(
                     "voice.tool.completed",
                     call_id=call_id,
@@ -1570,6 +1629,30 @@ class SipRealtimeGateway:
         }
 
     @staticmethod
+    def _csat_tool() -> dict[str, Any]:
+        return {
+            "type": "function",
+            "name": "record_csat",
+            "description": (
+                "Classify the caller's answer to the optional 1-to-5 satisfaction question. "
+                "Use RATING only for an explicit integer from 1 through 5, DECLINE for a clear "
+                "refusal, and UNCLEAR otherwise. Never infer a rating."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "response_intent": {
+                        "type": "string",
+                        "enum": ["RATING", "DECLINE", "UNCLEAR"],
+                    },
+                    "rating": {"type": ["integer", "null"], "minimum": 1, "maximum": 5},
+                },
+                "required": ["response_intent", "rating"],
+                "additionalProperties": False,
+            },
+        }
+
+    @staticmethod
     def _system_instructions(state: VoiceCallState) -> str:
         language_name = {
             "pt": "Portuguese",
@@ -1670,6 +1753,11 @@ Dispute-classification workflow:
 - Call classify_dispute silently and wait for the authoritative server response.
 - At needs_dispute_classification, your response must contain only the classify_dispute tool call. Never produce audio before that tool call.
 
+Satisfaction workflow:
+- After the server reports the complaint result, it asks for an optional rating from 1 to 5.
+- At dispute_classified, respond only with record_csat. Never guess a rating.
+- A clear refusal uses DECLINE. Ambiguous, unrelated, or out-of-range input uses UNCLEAR.
+
 General behavior:
 - Introduce yourself as Izzy from Factored Bank.
 - Explain that you help with card disputes.
@@ -1684,6 +1772,7 @@ General behavior:
         forced_tools = {
             VoiceCallStage.CONFIRM_TRANSACTION: "confirm_transaction",
             VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION: "classify_dispute",
+            VoiceCallStage.DISPUTE_CLASSIFIED: "record_csat",
         }
         tool_name = forced_tools.get(state.stage)
         if tool_name is not None:
@@ -1948,6 +2037,34 @@ General behavior:
                 ),
             },
         }[language]
+
+        if reason in {"csat_thanks", "csat_declined", "csat_unclear"}:
+            return {
+                "pt": {
+                    "csat_thanks": "Obrigado pela avaliação. Ela foi registrada. Até logo.",
+                    "csat_declined": "Sem problema. A avaliação é opcional. Até logo.",
+                    "csat_unclear": (
+                        "Não consegui identificar uma nota. Diga um número inteiro de 1 a 5, "
+                        "ou diga que prefere não avaliar."
+                    ),
+                },
+                "es": {
+                    "csat_thanks": "Gracias por la evaluación. Quedó registrada. Hasta luego.",
+                    "csat_declined": "No hay problema. La evaluación es opcional. Hasta luego.",
+                    "csat_unclear": (
+                        "No pude identificar una puntuación. Di un número entero del 1 al 5, "
+                        "o indica que prefieres no evaluar."
+                    ),
+                },
+                "en": {
+                    "csat_thanks": "Thank you. Your rating was recorded. Goodbye.",
+                    "csat_declined": "No problem. The rating is optional. Goodbye.",
+                    "csat_unclear": (
+                        "I could not identify a rating. Say a whole number from 1 to 5, or say "
+                        "that you prefer not to rate the service."
+                    ),
+                },
+            }[language][reason]
 
         if (
             state.stage is VoiceCallStage.HANDOFF
@@ -2243,11 +2360,16 @@ General behavior:
 
     @staticmethod
     def _complaint_filing_message(state: VoiceCallState) -> str:
+        csat_question = {
+            "pt": " Antes de encerrar, como você avalia este atendimento de 1 a 5?",
+            "es": " Antes de terminar, ¿cómo calificas esta atención del 1 al 5?",
+            "en": " Before we finish, how would you rate this service from 1 to 5?",
+        }[state.locale.language]
         if (
             state.complaint_filing_status is ComplaintFilingStatus.FILED
             and state.complaint_id is not None
         ):
-            return {
+            message = {
                 "pt": (
                     f" A reclamação {state.complaint_id} foi aberta com esse código Visa e está "
                     "com status Em análise."
@@ -2261,7 +2383,8 @@ General behavior:
                     "currently In Review."
                 ),
             }[state.locale.language]
-        return {
+            return message + csat_question
+        message = {
             "pt": (
                 " Não consegui abrir a reclamação no backend desta demonstração. Nenhuma "
                 "reclamação foi registrada."
@@ -2275,6 +2398,7 @@ General behavior:
                 "was created."
             ),
         }[state.locale.language]
+        return message + csat_question
 
     @staticmethod
     def _transaction_clarification_message(state: VoiceCallState) -> str:
@@ -2561,6 +2685,10 @@ def create_sip_app(
             customer_repository,
             product_repository=product_repository,
             complaint_repository=complaint_repository,
+            service_agent_repository=service_agent_repository,
+            interaction_repository=call_center_interaction_repository,
+            transcript_repository=call_transcript_repository,
+            satisfaction_survey_repository=satisfaction_survey_repository,
         )
 
     verifier = webhook_client or resolved_gateway.client

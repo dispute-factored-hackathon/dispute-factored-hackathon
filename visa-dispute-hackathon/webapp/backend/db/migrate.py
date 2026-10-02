@@ -27,6 +27,10 @@ APP_ROLE = "factored_app"
 # transactions or complaints, or write the migration history.
 APP_GRANTS = (
     "GRANT SELECT, INSERT, UPDATE ON customers, products, transactions, complaints TO {role}",
+    (
+        "GRANT SELECT, INSERT, UPDATE ON service_agents, call_center_interactions, "
+        "call_transcripts, satisfaction_surveys TO {role}"
+    ),
     "GRANT SELECT, INSERT, DELETE ON sessions TO {role}",
     "GRANT SELECT ON alembic_version TO {role}",
 )
