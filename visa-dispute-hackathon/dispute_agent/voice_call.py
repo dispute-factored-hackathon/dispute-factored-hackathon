@@ -11,6 +11,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from webapp.backend.repositories.interfaces import CustomerRepository
+
 from .caller_identity import (
     CallerIdentity,
     CallerIdentityStatus,
@@ -61,12 +63,12 @@ class VoiceCallService:
 
     def __init__(
         self,
-        customers_csv: str | Path,
+        customer_source: str | Path | CustomerRepository,
         *,
         max_document_attempts: int = 3,
     ) -> None:
         started = time.monotonic()
-        self.identity = VoiceCallerIdentityService(customers_csv)
+        self.identity = VoiceCallerIdentityService(customer_source)
         self.max_document_attempts = max_document_attempts
         self._calls: dict[str, VoiceCallState] = {}
         _telemetry(

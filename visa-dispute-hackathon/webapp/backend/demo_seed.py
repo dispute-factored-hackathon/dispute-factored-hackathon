@@ -6,6 +6,19 @@ from webapp.backend.repositories.interfaces import CustomerRepository, ProductRe
 
 DEMO_CUSTOMERS = (
     {
+        "customer_id": "DEMO-BR-GABRIEL-123456",
+        "document_number": "123456",
+        "first_name": "Gabriel",
+        "last_name": "Silveira",
+        "country": "Brazil",
+        "city": "São Paulo",
+        "state": "SP",
+        "accent": Accent.PORTUGUESE,
+        "phone": "+5511981020050",
+        "date_of_birth": date(1999, 1, 1),
+        "gender": Gender.MALE,
+    },
+    {
         "customer_id": "DEMO-BR-ANA-1001",
         "document_number": "410001",
         "first_name": "Ana Júlia",
@@ -77,8 +90,8 @@ def seed_demo_customers(
                     document_type="DEMO_ID",
                     first_name=data["first_name"],
                     last_name=data["last_name"],
-                    date_of_birth=date(1990, 1, 1),
-                    gender=Gender.PREFER_NOT_TO_SAY,
+                    date_of_birth=data.get("date_of_birth", date(1990, 1, 1)),
+                    gender=data.get("gender", Gender.PREFER_NOT_TO_SAY),
                     mobile_phone=data["phone"],
                     city=data["city"],
                     state=data["state"],
