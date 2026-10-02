@@ -43,7 +43,8 @@ def _enabled(environment_value: str | None, *, default: bool) -> bool:
 
 
 def _normalized_words(text: str) -> tuple[str, set[str]]:
-    normalized = unicodedata.normalize("NFKD", text.casefold())
+    normalized = text.casefold().translate(str.maketrans({"\u0131": "i", "\u0130": "i"}))
+    normalized = unicodedata.normalize("NFKD", normalized)
     normalized = "".join(
         character for character in normalized if not unicodedata.combining(character)
     )
@@ -51,7 +52,12 @@ def _normalized_words(text: str) -> tuple[str, set[str]]:
     return normalized, set(normalized.split())
 
 
-def _explicit_confirmation_from_transcript(transcript: str) -> bool | None:
+def _explicit_confirmation_from_transcript(
+    transcript: str,
+    *,
+    model_confirmation: bool | None = None,
+    language: str | None = None,
+) -> bool | None:
     """Accept only an unambiguous spoken yes or no from the ASR transcript."""
     normalized, tokens = _normalized_words(transcript)
     denied = bool(tokens.intersection({"nao", "no", "nope"})) or any(
@@ -67,6 +73,19 @@ def _explicit_confirmation_from_transcript(transcript: str) -> bool | None:
         phrase in normalized for phrase in ("e essa", "es esa", "that is it", "thats it")
     )
     if confirmed == denied:
+        # Portuguese/Spanish phone ASR can render a short spoken "sim/sí" as
+        # Turkish-looking tokens containing a dotless-i or extra syllable.
+        # Accept this narrow
+        # phonetic family only when the Realtime model independently called the
+        # confirmation tool with true. Arbitrary short speech still cannot
+        # confirm a financial transaction.
+        if (
+            model_confirmation is True
+            and language in {"pt", "es"}
+            and len(tokens) == 1
+            and re.fullmatch(r"si[mnhir]*", next(iter(tokens), ""))
+        ):
+            return True
         return None
     return confirmed
 
@@ -993,7 +1012,9 @@ class SipRealtimeGateway:
                     if not isinstance(model_confirmation, bool):
                         raise ValueError("confirmed must be true or false")
                     spoken_confirmation = _explicit_confirmation_from_transcript(
-                        last_customer_transcript
+                        last_customer_transcript,
+                        model_confirmation=model_confirmation,
+                        language=self.calls.get(call_id).locale.language,
                     )
                     if spoken_confirmation is None:
                         state = self.calls.get(call_id)
@@ -1401,7 +1422,9 @@ class SipRealtimeGateway:
                 "candidate Izzy just described. Never infer confirmation from unrelated or "
                 "unclear speech. When the caller says no and provides a correction or another "
                 "detail in the same utterance, include those filter fields in this call so the "
-                "backend can reject the candidate and rerun retrieval atomically."
+                "backend can reject the candidate and rerun retrieval atomically. Call this "
+                "tool silently: do not say that confirmation was recorded or will be recorded. "
+                "The server will validate the transcript and provide the only response to speak."
             ),
             "parameters": {
                 "type": "object",
@@ -1545,6 +1568,7 @@ Transaction-search workflow:
 - When the caller adds or corrects any transaction detail, call search_transactions again so retrieval and reranking run again. Do not keep presenting a stale candidate.
 - If the tool asks for clarification, ask exactly one focused question and preserve details already collected.
 - At confirm_transaction, describe only the server-selected candidate and call confirm_transaction only after an explicit yes or no.
+- At confirm_transaction, never say that you recorded or will record a confirmation before the tool result. Call the tool silently and speak only the server-provided result.
 - If the caller rejects a candidate and supplies another detail in the same sentence, include that detail in confirm_transaction so rejection and reranking happen together. Never discard a correction such as a city, date, amount, or merchant.
 - A server-side transcript guard validates explicit confirmation. If the caller's answer is unclear, ask again instead of guessing.
 - Call search_transactions and confirm_transaction without first speaking an assumed result. Wait for the server-owned tool response, which supplies the authoritative message.

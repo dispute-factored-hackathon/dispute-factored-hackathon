@@ -879,6 +879,69 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(_explicit_confirmation_from_transcript("No, that is wrong."), False)
         self.assertIsNone(_explicit_confirmation_from_transcript("جتين"))
         self.assertIsNone(_explicit_confirmation_from_transcript("talvez"))
+        self.assertIs(
+            _explicit_confirmation_from_transcript(
+                "S\u0131n.",
+                model_confirmation=True,
+                language="pt",
+            ),
+            True,
+        )
+        self.assertIs(
+            _explicit_confirmation_from_transcript(
+                "Sihir.",
+                model_confirmation=True,
+                language="pt",
+            ),
+            True,
+        )
+        self.assertIsNone(
+            _explicit_confirmation_from_transcript(
+                "Sihir.",
+                model_confirmation=False,
+                language="pt",
+            )
+        )
+        self.assertIsNone(
+            _explicit_confirmation_from_transcript(
+                "Silva.",
+                model_confirmation=True,
+                language="pt",
+            )
+        )
+
+    async def test_asr_distorted_sim_reaches_problem_classification_question(self):
+        events = [
+            session_updated_event(),
+            tool_call_event("confirm_language", "tool_language", {}),
+            tool_call_event(
+                "set_authentication_method",
+                "tool_auth",
+                {"method": "phone"},
+            ),
+            tool_call_event(
+                "search_transactions",
+                "tool_search",
+                {"city": "São Paulo"},
+            ),
+            completed_transcript_event(speaker="customer", transcript="Sihir."),
+            tool_call_event(
+                "confirm_transaction",
+                "tool_confirm_transaction",
+                {"confirmed": True},
+            ),
+        ]
+        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        self.addCleanup(transactions.close)
+        gateway, websocket, _ = self._gateway(events, transaction_repository=transactions)
+
+        await gateway.accept_and_control("call_asr_distorted_sim", "+5511999990001")
+
+        state = gateway.calls.get("call_asr_distorted_sim")
+        self.assertEqual(state.stage, "needs_dispute_classification")
+        outbound = json.dumps(websocket.sent, ensure_ascii=False)
+        self.assertIn("você não fez nem autorizou essa compra", outbound)
+        self.assertNotIn("transação ainda não foi confirmada", outbound)
 
     async def test_unclear_speech_cannot_confirm_a_transaction(self):
         events = [
