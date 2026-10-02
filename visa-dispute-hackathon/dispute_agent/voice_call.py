@@ -20,6 +20,14 @@ from .caller_identity import (
     VoiceCallerIdentityService,
     calling_code_from_phone,
 )
+from .dispute_classification import (
+    CardEnvironment,
+    ClassificationStatus,
+    DisputeAllegation,
+    DisputeClassification,
+    DisputeClassificationService,
+    DisputeEvidence,
+)
 from .language_context import ConversationLocaleContext
 from .transaction_search import (
     InsufficientTransactionCriteriaError,
@@ -69,7 +77,8 @@ class VoiceCallStage(StrEnum):
     AUTHENTICATED = "authenticated"
     NEEDS_TRANSACTION_DETAILS = "needs_transaction_details"
     CONFIRM_TRANSACTION = "confirm_transaction"
-    TRANSACTION_SELECTED = "transaction_selected"
+    NEEDS_DISPUTE_CLASSIFICATION = "needs_dispute_classification"
+    DISPUTE_CLASSIFIED = "dispute_classified"
     HANDOFF = "handoff"
 
 
@@ -84,6 +93,11 @@ class TransactionSelectionOutcome(StrEnum):
     CANDIDATE = "candidate"
     CONFIRMED = "confirmed"
     EXHAUSTED = "exhausted"
+
+
+class DisputeClassificationOutcome(StrEnum):
+    NEEDS_CLARIFICATION = "needs_clarification"
+    CLASSIFIED = "classified"
 
 
 @dataclass(frozen=True)
@@ -105,6 +119,7 @@ class VoiceCallState:
     pending_transaction_detail: str | None = None
     current_transaction: Transaction | None = None
     confirmed_transaction: Transaction | None = None
+    dispute_classification: DisputeClassification | None = None
     transaction_guess_attempts: int = 0
     transaction_search_attempts: int = 0
     transaction_no_match_attempts: int = 0
@@ -116,6 +131,12 @@ class TransactionSelectionResult:
     state: VoiceCallState
     outcome: TransactionSelectionOutcome
     result_count: int = 0
+
+
+@dataclass(frozen=True)
+class DisputeClassificationResult:
+    state: VoiceCallState
+    outcome: DisputeClassificationOutcome
 
 
 class VoiceCallService:
@@ -134,6 +155,7 @@ class VoiceCallService:
         self.max_document_attempts = max_document_attempts
         self.max_transaction_guesses = max_transaction_guesses
         self.transactions = transaction_repository or SQLiteTransactionSearchRepository()
+        self.classifier = DisputeClassificationService()
         self._calls: dict[str, VoiceCallState] = {}
         _telemetry(
             "voice.service.initialized",
@@ -591,7 +613,7 @@ class VoiceCallService:
         if confirmed:
             updated = replace(
                 state,
-                stage=VoiceCallStage.TRANSACTION_SELECTED,
+                stage=VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION,
                 confirmed_transaction=state.current_transaction,
             )
             self._calls[call_id] = updated
@@ -624,6 +646,60 @@ class VoiceCallService:
             reason="candidate_denied",
             rejected_transaction_ids=rejected_ids,
         )
+
+    def classify_dispute(
+        self,
+        call_id: str,
+        *,
+        allegation: DisputeAllegation | str,
+        customer_denies_authorization: bool = False,
+        customer_reports_duplicate: bool = False,
+        customer_reported_card_environment: CardEnvironment | str | None = None,
+    ) -> DisputeClassificationResult:
+        """Validate the allegation and store an auditable Visa condition candidate."""
+        state = self.get(call_id)
+        if state.stage is not VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION:
+            raise ValueError("dispute classification requires a confirmed transaction")
+        if state.confirmed_transaction is None:
+            raise ValueError("the confirmed transaction is missing")
+
+        classification = self.classifier.classify(
+            state.confirmed_transaction,
+            allegation,
+            DisputeEvidence(
+                customer_denies_authorization=customer_denies_authorization,
+                customer_reports_duplicate=customer_reports_duplicate,
+                customer_reported_card_environment=(
+                    CardEnvironment(customer_reported_card_environment)
+                    if customer_reported_card_environment is not None
+                    else None
+                ),
+            ),
+        )
+        outcome = (
+            DisputeClassificationOutcome.CLASSIFIED
+            if classification.status is ClassificationStatus.VISA_CODE_CANDIDATE
+            else DisputeClassificationOutcome.NEEDS_CLARIFICATION
+        )
+        updated = replace(
+            state,
+            stage=(
+                VoiceCallStage.DISPUTE_CLASSIFIED
+                if outcome is DisputeClassificationOutcome.CLASSIFIED
+                else VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION
+            ),
+            dispute_classification=classification,
+        )
+        self._calls[call_id] = updated
+        _telemetry(
+            "voice.dispute.classification_stored",
+            call_id=call_id,
+            allegation=classification.allegation.value,
+            status=classification.status.value,
+            visa_condition_code=classification.visa_condition_code,
+            outcome=outcome.value,
+        )
+        return DisputeClassificationResult(updated, outcome)
 
     def _propose_transaction(
         self,

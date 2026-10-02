@@ -56,16 +56,28 @@ The retrieval boundary guarantees that:
 - no more than ten rows are returned;
 - denied candidates are excluded from later proposals.
 
-Izzy speaks one ranked candidate at a time with merchant, date, amount/currency, city, and country. Only an explicit confirmation selects it. After each denial, Izzy asks for exactly one useful detail that has not already been requested before running retrieval and reranking again. If the caller cannot provide that detail, Izzy moves to a different question instead of repeating the same search. Refining the current candidate does not consume an additional guess; only an explicit denial does. After three denied candidates, Izzy explains that a specialist would normally help, but human operators are unavailable and handoff is outside this demonstration. Dispute creation, Visa reason-code classification, real transaction systems, and real human transfer remain out of scope.
+Izzy speaks one ranked candidate at a time with merchant, date, amount/currency, city, and country. Only an explicit confirmation selects it. After each denial, Izzy asks for exactly one useful detail that has not already been requested before running retrieval and reranking again. If the caller cannot provide that detail, Izzy moves to a different question instead of repeating the same search. Refining the current candidate does not consume an additional guess; only an explicit denial does. After three denied candidates, Izzy explains that a specialist would normally help, but human operators are unavailable and handoff is outside this demonstration. Real transaction systems and real human transfer remain out of scope.
 
 Every search response states the active filters in the caller's selected language. The caller can correct a filter value, remove one named filter, or clear all filters and begin again. A correction reruns retrieval and reranking without consuming another candidate guess. Three rejected candidates or three searches with no matching transaction lead to the same simulated-human-handoff boundary.
 
 When a caller rejects a candidate and provides a new detail in the same sentence, the backend records both atomically: the rejected transaction is excluded and the new detail immediately reruns retrieval. A completed speech transcript must contain an explicit yes before a transaction can be confirmed; unclear transcription asks the caller to repeat instead of guessing. Amounts and dates inferred by the model are dropped when the spoken turn contains no matching numeric evidence, preventing unsupported filters from steering the ranker.
 
+### Mock Visa classification after transaction selection
+
+After the caller confirms a transaction, Izzy asks whether the customer did not make or authorize it, or recognizes the purchase but was charged more than once for the same purchase. The Realtime model returns one schema-constrained allegation: `UNAUTHORIZED_CARD`, `DUPLICATE_PROCESSING`, or `INSUFFICIENT_INFO`. The channel-agnostic `DisputeClassificationService` then validates the required evidence and owns the mapping:
+
+- unauthorized plus a card-present channel → Visa 10.3, Other Fraud — Card-Present Environment;
+- unauthorized plus a card-absent channel → Visa 10.4, Other Fraud — Card-Absent Environment;
+- one recognized purchase charged more than once → Visa 12.6.1, Duplicate Processing.
+
+Ambiguous, missing, or conflicting evidence produces no code and one neutral clarification question. The result is stored in the synthetic call state with the allegation, candidate Visa code, workflow, supporting evidence, missing evidence, transaction reference, and channel. Structured logs expose class, code, clarification rate, and latency without customer identity or transaction IDs.
+
+This is an intake recommendation, not a final fraud finding or Visa eligibility decision. The demo does not submit a chargeback, issue a refund, block a card, query VROL, or retrieve issuer/network evidence. The shared classifier is independent of SIP so a later GUI chat can call the same contract; the current `/agent` GUI remains a placeholder.
+
 Run the SQLite, state-machine, and SIP-sideband coverage with:
 
 ```bash
-uv run pytest tests/test_transaction_search.py tests/test_voice_call.py tests/test_sip_realtime.py -q
+uv run pytest tests/test_transaction_search.py tests/test_dispute_classification.py tests/test_voice_call.py tests/test_sip_realtime.py -q
 ```
 
 ### 1. Configure and start the backend

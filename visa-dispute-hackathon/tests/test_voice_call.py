@@ -7,6 +7,7 @@ from dispute_agent.transaction_search import (
     TransactionSearchCriteria,
 )
 from dispute_agent.voice_call import (
+    DisputeClassificationOutcome,
     TransactionSelectionOutcome,
     VoiceAuthenticationMethod,
     VoiceCallService,
@@ -365,11 +366,37 @@ class VoiceCallServiceTests(unittest.TestCase):
         )
 
         self.assertEqual(confirmed.outcome, TransactionSelectionOutcome.CONFIRMED)
-        self.assertEqual(confirmed.state.stage, VoiceCallStage.TRANSACTION_SELECTED)
+        self.assertEqual(
+            confirmed.state.stage,
+            VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION,
+        )
         self.assertEqual(
             confirmed.state.confirmed_transaction.transaction_id,
             selection.state.current_transaction.transaction_id,
         )
+
+        classified = self.calls.classify_dispute(
+            state.call_id,
+            allegation="UNAUTHORIZED_CARD",
+            customer_denies_authorization=True,
+        )
+
+        self.assertEqual(classified.outcome, DisputeClassificationOutcome.CLASSIFIED)
+        self.assertEqual(classified.state.stage, VoiceCallStage.DISPUTE_CLASSIFIED)
+        self.assertEqual(
+            classified.state.dispute_classification.visa_condition_code,
+            "10.4",
+        )
+
+    def test_dispute_classification_requires_a_confirmed_transaction(self):
+        state = self.authenticate_known_phone("call_classification_wrong_stage")
+
+        with self.assertRaisesRegex(ValueError, "confirmed transaction"):
+            self.calls.classify_dispute(
+                state.call_id,
+                allegation="DUPLICATE_PROCESSING",
+                customer_reports_duplicate=True,
+            )
 
     def test_missing_details_request_clarification_and_preserve_context(self):
         state = self.authenticate_known_phone("call_transaction_clarification")
