@@ -14,6 +14,7 @@ from dispute_agent.transaction_search import (
     SQLiteTransactionSearchRepository,
     TransactionSearchCriteria,
 )
+from dispute_agent.voice_call import TransactionSelectionOutcome
 
 FIXTURE = Path(__file__).parent / "fixtures" / "customers.csv"
 
@@ -713,6 +714,50 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("Lemon Drop Market", message)
                 self.assertNotIn("transaction_id", message)
 
+    def test_denial_asks_for_one_missing_detail_before_another_candidate(self):
+        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        self.addCleanup(transactions.close)
+        gateway, _, _ = self._gateway([], transaction_repository=transactions)
+        state = gateway.calls.start(
+            "+5511999990001",
+            call_id="call_refinement_question",
+        )
+        state = gateway.calls.confirm_language(state.call_id)
+        state = gateway.calls.choose_authentication_method(state.call_id, method="phone")
+        gateway.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(approximate_amount=13),
+        )
+
+        denied = gateway.calls.resolve_transaction_candidate(
+            state.call_id,
+            confirmed=False,
+        )
+        message = gateway._message_for(denied.state, "transaction_clarification")
+
+        self.assertEqual(denied.outcome, TransactionSelectionOutcome.NEEDS_CLARIFICATION)
+        self.assertIsNone(denied.state.current_transaction)
+        self.assertIn("não vou usar essa opção", message)
+        self.assertIn("nome do estabelecimento", message)
+        self.assertNotIn("Encontrei uma possibilidade", message)
+
+        refined = gateway.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(city="São Paulo"),
+        )
+        denied_again = gateway.calls.resolve_transaction_candidate(
+            state.call_id,
+            confirmed=False,
+        )
+        next_question = gateway._message_for(
+            denied_again.state,
+            "transaction_clarification",
+        )
+
+        self.assertEqual(refined.state.current_transaction.merchant_name, "Coconut Island Grocer")
+        self.assertIn("data", next_question)
+        self.assertNotIn("nome do estabelecimento", next_question)
+
     def test_three_denials_explain_that_human_handoff_is_unavailable(self):
         transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
         self.addCleanup(transactions.close)
@@ -728,11 +773,16 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             TransactionSearchCriteria(merchant_query="fruit"),
         )
 
-        for _ in range(3):
+        for refinement in ("grapes", "peach", None):
             selection = gateway.calls.resolve_transaction_candidate(
                 state.call_id,
                 confirmed=False,
             )
+            if refinement is not None:
+                selection = gateway.calls.search_transactions(
+                    state.call_id,
+                    TransactionSearchCriteria(merchant_query=refinement),
+                )
 
         message = gateway._message_for(selection.state, "transaction_handoff")
         self.assertIn("atendentes humanos não estão disponíveis", message)

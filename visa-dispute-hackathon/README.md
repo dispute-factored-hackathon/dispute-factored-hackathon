@@ -54,7 +54,7 @@ The retrieval boundary guarantees that:
 - no more than ten rows are returned;
 - denied candidates are excluded from later proposals.
 
-Izzy speaks one ranked candidate at a time with merchant, date, amount/currency, city, and country. Only an explicit confirmation selects it. After three denied candidates, Izzy explains that a specialist would normally help, but human operators are unavailable and handoff is outside this demonstration. Dispute creation, Visa reason-code classification, real transaction systems, and real human transfer remain out of scope.
+Izzy speaks one ranked candidate at a time with merchant, date, amount/currency, city, and country. Only an explicit confirmation selects it. After each denial, Izzy asks for exactly one useful detail that has not already been requested before running retrieval and reranking again. If the caller cannot provide that detail, Izzy moves to a different question instead of repeating the same search. Refining the current candidate does not consume an additional guess; only an explicit denial does. After three denied candidates, Izzy explains that a specialist would normally help, but human operators are unavailable and handoff is outside this demonstration. Dispute creation, Visa reason-code classification, real transaction systems, and real human transfer remain out of scope.
 
 Run the SQLite, state-machine, and SIP-sideband coverage with:
 

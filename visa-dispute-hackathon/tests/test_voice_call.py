@@ -410,6 +410,41 @@ class VoiceCallServiceTests(unittest.TestCase):
         self.assertEqual(refined.state.transaction_search_attempts, 2)
         self.assertEqual(refined.state.transaction_criteria.merchant_query, "fruit")
 
+    def test_refining_current_candidate_does_not_consume_an_extra_guess(self):
+        state = self.authenticate_known_phone("call_transaction_current_refinement")
+        initial = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(approximate_amount=13.0),
+        )
+        refined = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(city="Buenos Aires"),
+        )
+
+        self.assertEqual(initial.state.transaction_guess_attempts, 1)
+        self.assertEqual(refined.state.transaction_guess_attempts, 1)
+        self.assertEqual(refined.state.current_transaction.merchant_name, "Lemon Drop Market")
+
+    def test_cannot_answer_refinement_moves_to_a_different_missing_detail(self):
+        state = self.authenticate_known_phone("call_transaction_unknown_detail")
+        self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(approximate_amount=13.0),
+        )
+        first_question = self.calls.resolve_transaction_candidate(
+            state.call_id,
+            confirmed=False,
+        )
+        second_question = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(),
+        )
+
+        self.assertEqual(first_question.state.pending_transaction_detail, "merchant")
+        self.assertEqual(second_question.state.pending_transaction_detail, "date")
+        self.assertEqual(second_question.state.transaction_guess_attempts, 1)
+        self.assertIsNone(second_question.state.current_transaction)
+
     def test_no_match_can_be_corrected_without_losing_the_call(self):
         state = self.authenticate_known_phone("call_transaction_correction")
 
@@ -452,12 +487,23 @@ class VoiceCallServiceTests(unittest.TestCase):
         )
 
         proposed_ids = []
-        for _ in range(3):
+        refinements = ("grapes", "peach")
+        for refinement in (*refinements, None):
             proposed_ids.append(selection.state.current_transaction.transaction_id)
             selection = self.calls.resolve_transaction_candidate(
                 state.call_id,
                 confirmed=False,
             )
+            if refinement is not None:
+                self.assertEqual(
+                    selection.outcome,
+                    TransactionSelectionOutcome.NEEDS_CLARIFICATION,
+                )
+                self.assertIsNone(selection.state.current_transaction)
+                selection = self.calls.search_transactions(
+                    state.call_id,
+                    TransactionSearchCriteria(merchant_query=refinement),
+                )
 
         self.assertEqual(len(set(proposed_ids)), 3)
         self.assertEqual(selection.outcome, TransactionSelectionOutcome.EXHAUSTED)

@@ -31,6 +31,28 @@ from .transaction_search import (
 LOGGER = logging.getLogger(__name__)
 
 
+def _next_transaction_detail(
+    criteria: TransactionSearchCriteria,
+    requested_fields: tuple[str, ...],
+) -> str:
+    """Choose one useful missing detail without repeating an earlier question."""
+
+    missing = (
+        ("merchant", criteria.merchant_query is None),
+        ("amount", criteria.approximate_amount is None),
+        ("date", criteria.date_from is None and criteria.date_to is None),
+        ("location", criteria.country is None and criteria.city is None),
+        ("channel", criteria.channel is None),
+    )
+    for field_name, is_missing in missing:
+        if is_missing and field_name not in requested_fields:
+            return field_name
+    for field_name, is_missing in missing:
+        if is_missing:
+            return field_name
+    return "channel"
+
+
 def _telemetry(event: str, *, call_id: str | None = None, **fields: Any) -> None:
     """Emit structured state-machine telemetry without sensitive identity values."""
     payload: dict[str, Any] = {"event": event}
@@ -78,7 +100,9 @@ class VoiceCallState:
         default_factory=TransactionSearchCriteria
     )
     transaction_candidates: tuple[Transaction, ...] = ()
-    proposed_transaction_ids: tuple[str, ...] = ()
+    rejected_transaction_ids: tuple[str, ...] = ()
+    requested_transaction_fields: tuple[str, ...] = ()
+    pending_transaction_detail: str | None = None
     current_transaction: Transaction | None = None
     confirmed_transaction: Transaction | None = None
     transaction_guess_attempts: int = 0
@@ -467,49 +491,33 @@ class VoiceCallService:
         state = self.get(call_id)
         self._require_transaction_search_stage(state)
         assert state.identity is not None
+        if state.stage is VoiceCallStage.NEEDS_TRANSACTION_DETAILS and not criteria.has_any_filter:
+            return self._request_transaction_refinement(
+                state,
+                state.transaction_criteria,
+                reason="no_new_detail",
+            )
         merged = criteria if replace_existing else state.transaction_criteria.merged_with(criteria)
 
         if not merged.is_discriminative:
-            updated = replace(
+            return self._request_transaction_refinement(
                 state,
-                stage=VoiceCallStage.NEEDS_TRANSACTION_DETAILS,
-                transaction_criteria=merged,
-                transaction_candidates=(),
-                current_transaction=None,
-            )
-            self._calls[call_id] = updated
-            _telemetry(
-                "voice.transaction.clarification_requested",
-                call_id=call_id,
+                merged,
                 reason="insufficient_criteria",
             )
-            return TransactionSelectionResult(
-                updated,
-                TransactionSelectionOutcome.NEEDS_CLARIFICATION,
-            )
-
-        if state.transaction_guess_attempts >= self.max_transaction_guesses:
-            return self._transaction_handoff(state)
 
         search_attempts = state.transaction_search_attempts + 1
         try:
             search = self.transactions.search(
                 state.identity.customer_id,
                 merged,
-                excluded_transaction_ids=state.proposed_transaction_ids,
+                excluded_transaction_ids=state.rejected_transaction_ids,
             )
         except InsufficientTransactionCriteriaError:
-            updated = replace(
-                state,
-                stage=VoiceCallStage.NEEDS_TRANSACTION_DETAILS,
-                transaction_criteria=merged,
-                current_transaction=None,
-                transaction_search_attempts=search_attempts,
-            )
-            self._calls[call_id] = updated
-            return TransactionSelectionResult(
-                updated,
-                TransactionSelectionOutcome.NEEDS_CLARIFICATION,
+            return self._request_transaction_refinement(
+                replace(state, transaction_search_attempts=search_attempts),
+                merged,
+                reason="repository_requires_more_detail",
             )
 
         if not search.transactions:
@@ -583,34 +591,15 @@ class VoiceCallService:
         if state.transaction_guess_attempts >= self.max_transaction_guesses:
             return self._transaction_handoff(state)
 
-        assert state.identity is not None
-        reranked = self.transactions.search(
-            state.identity.customer_id,
-            state.transaction_criteria,
-            excluded_transaction_ids=state.proposed_transaction_ids,
+        rejected_ids = (
+            *state.rejected_transaction_ids,
+            state.current_transaction.transaction_id,
         )
-        if not reranked.transactions:
-            updated = replace(
-                state,
-                stage=VoiceCallStage.NEEDS_TRANSACTION_DETAILS,
-                transaction_candidates=(),
-                current_transaction=None,
-                transaction_search_attempts=state.transaction_search_attempts + 1,
-            )
-            self._calls[call_id] = updated
-            return TransactionSelectionResult(
-                updated,
-                TransactionSelectionOutcome.NEEDS_CLARIFICATION,
-            )
-
-        return self._propose_transaction(
-            replace(
-                state,
-                transaction_candidates=reranked.transactions,
-                transaction_search_attempts=state.transaction_search_attempts + 1,
-            ),
-            reranked.transactions[0],
-            result_count=len(reranked.transactions),
+        return self._request_transaction_refinement(
+            state,
+            state.transaction_criteria,
+            reason="candidate_denied",
+            rejected_transaction_ids=rejected_ids,
         )
 
     def _propose_transaction(
@@ -620,14 +609,18 @@ class VoiceCallService:
         *,
         result_count: int,
     ) -> TransactionSelectionResult:
-        attempts = state.transaction_guess_attempts + 1
-        proposed_ids = (*state.proposed_transaction_ids, transaction.transaction_id)
+        replacing_current_candidate = state.stage is VoiceCallStage.CONFIRM_TRANSACTION
+        attempts = (
+            state.transaction_guess_attempts
+            if replacing_current_candidate
+            else state.transaction_guess_attempts + 1
+        )
         updated = replace(
             state,
             stage=VoiceCallStage.CONFIRM_TRANSACTION,
-            proposed_transaction_ids=proposed_ids,
             current_transaction=transaction,
             transaction_guess_attempts=attempts,
+            pending_transaction_detail=None,
         )
         self._calls[state.call_id] = updated
         _telemetry(
@@ -640,6 +633,48 @@ class VoiceCallService:
             updated,
             TransactionSelectionOutcome.CANDIDATE,
             result_count=result_count,
+        )
+
+    def _request_transaction_refinement(
+        self,
+        state: VoiceCallState,
+        criteria: TransactionSearchCriteria,
+        *,
+        reason: str,
+        rejected_transaction_ids: tuple[str, ...] | None = None,
+    ) -> TransactionSelectionResult:
+        requested_field = _next_transaction_detail(
+            criteria,
+            state.requested_transaction_fields,
+        )
+        requested_fields = state.requested_transaction_fields
+        if requested_field not in requested_fields:
+            requested_fields = (*requested_fields, requested_field)
+        updated = replace(
+            state,
+            stage=VoiceCallStage.NEEDS_TRANSACTION_DETAILS,
+            transaction_criteria=criteria,
+            transaction_candidates=(),
+            current_transaction=None,
+            rejected_transaction_ids=(
+                rejected_transaction_ids
+                if rejected_transaction_ids is not None
+                else state.rejected_transaction_ids
+            ),
+            requested_transaction_fields=requested_fields,
+            pending_transaction_detail=requested_field,
+        )
+        self._calls[state.call_id] = updated
+        _telemetry(
+            "voice.transaction.refinement_requested",
+            call_id=state.call_id,
+            reason=reason,
+            requested_field=requested_field,
+            guess_number=state.transaction_guess_attempts,
+        )
+        return TransactionSelectionResult(
+            updated,
+            TransactionSelectionOutcome.NEEDS_CLARIFICATION,
         )
 
     def _transaction_handoff(self, state: VoiceCallState) -> TransactionSelectionResult:

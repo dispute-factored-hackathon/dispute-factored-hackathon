@@ -358,9 +358,9 @@ class SipRealtimeGateway:
                             )
                             continue
 
-                        # Temporary diagnostic logging. Keep this while DTMF and
-                        # startup sequencing are being validated in production.
-                        LOGGER.info(
+                        # Full protocol events are useful only during targeted local
+                        # diagnostics. Production INFO logs use bounded telemetry below.
+                        LOGGER.debug(
                             "REALTIME_EVENT call_id=%s event=%s",
                             call_id,
                             json.dumps(
@@ -766,6 +766,13 @@ class SipRealtimeGateway:
                     continue
 
             else:
+                _telemetry(
+                    "voice.tool.completed",
+                    call_id=call_id,
+                    tool=tool_name,
+                    stage=state.stage.value,
+                    **tool_metadata,
+                )
                 await websocket.send(
                     json.dumps(
                         {
@@ -1012,6 +1019,8 @@ Transaction-search workflow:
 - When the caller adds or corrects any transaction detail, call search_transactions again so retrieval and reranking run again. Do not keep presenting a stale candidate.
 - If the tool asks for clarification, ask exactly one focused question and preserve details already collected.
 - At confirm_transaction, describe only the server-selected candidate and call confirm_transaction only after an explicit yes or no.
+- After a denied candidate, do not present another candidate immediately. Ask exactly one focused question for a useful detail that has not been collected yet, then call search_transactions with the new answer.
+- If the caller cannot answer the focused question, call search_transactions with no invented values; the server will select a different missing detail to ask about. Never rerun an unchanged search.
 - Never disclose internal transaction IDs, SQL, hidden candidates, or another customer's transactions.
 - After three denied candidates the server ends in handoff. Explain honestly that human operators are unavailable and handoff is outside this demo.
 
@@ -1291,8 +1300,10 @@ General behavior:
         if reason == "transaction_candidate":
             return SipRealtimeGateway._transaction_candidate_message(state)
 
+        if reason == "transaction_clarification":
+            return SipRealtimeGateway._transaction_clarification_message(state)
+
         if reason in {
-            "transaction_clarification",
             "transaction_no_match",
             "transaction_invalid",
             "transaction_confirmed",
@@ -1342,7 +1353,7 @@ General behavior:
             return messages["document_success"].format(name=customer_name)
 
         if state.stage is VoiceCallStage.NEEDS_TRANSACTION_DETAILS:
-            return messages["transaction_clarification"]
+            return SipRealtimeGateway._transaction_clarification_message(state)
 
         if state.stage is VoiceCallStage.CONFIRM_TRANSACTION:
             return SipRealtimeGateway._transaction_candidate_message(state)
@@ -1351,6 +1362,75 @@ General behavior:
             return messages["transaction_confirmed"]
 
         return messages["opening"]
+
+    @staticmethod
+    def _transaction_clarification_message(state: VoiceCallState) -> str:
+        """Ask for one useful detail that has not already been collected."""
+
+        criteria = state.transaction_criteria
+        if state.pending_transaction_detail is not None:
+            missing_field = state.pending_transaction_detail
+        elif criteria.merchant_query is None:
+            missing_field = "merchant"
+        elif criteria.approximate_amount is None:
+            missing_field = "amount"
+        elif criteria.date_from is None and criteria.date_to is None:
+            missing_field = "date"
+        elif criteria.country is None and criteria.city is None:
+            missing_field = "location"
+        else:
+            missing_field = "channel"
+
+        after_denial = bool(state.rejected_transaction_ids)
+        prefixes = {
+            "pt": (
+                "Entendi, não vou usar essa opção. "
+                if after_denial
+                else "Preciso de mais um detalhe para refinar a busca. "
+            ),
+            "es": (
+                "Entiendo, no usaré esa opción. "
+                if after_denial
+                else "Necesito un dato más para refinar la búsqueda. "
+            ),
+            "en": (
+                "Understood, I won't use that option. "
+                if after_denial
+                else "I need one more detail to refine the search. "
+            ),
+        }
+        questions = {
+            "pt": {
+                "merchant": "Você se lembra do nome do estabelecimento ou de alguma palavra na fatura?",
+                "amount": "Qual era o valor aproximado da transação?",
+                "date": "Em que data, ou aproximadamente em qual dia, a transação aconteceu?",
+                "location": "Em qual cidade ou país a transação aconteceu?",
+                "channel": "A transação foi online ou presencial?",
+            },
+            "es": {
+                "merchant": "¿Recuerdas el nombre del comercio o alguna palabra del extracto?",
+                "amount": "¿Cuál era el valor aproximado de la transacción?",
+                "date": "¿En qué fecha, o aproximadamente qué día, ocurrió la transacción?",
+                "location": "¿En qué ciudad o país ocurrió la transacción?",
+                "channel": "¿La transacción fue en línea o presencial?",
+            },
+            "en": {
+                "merchant": "Do you remember the merchant name or any word from the statement?",
+                "amount": "What was the approximate transaction amount?",
+                "date": "On what date, or approximately what day, did the transaction occur?",
+                "location": "In which city or country did the transaction occur?",
+                "channel": "Was the transaction online or in person?",
+            },
+        }
+        language = state.locale.language
+        _telemetry(
+            "voice.transaction.refinement_question",
+            call_id=state.call_id,
+            requested_field=missing_field,
+            after_denial=after_denial,
+            guess_number=state.transaction_guess_attempts,
+        )
+        return prefixes[language] + questions[language][missing_field]
 
     @staticmethod
     def _transaction_candidate_message(state: VoiceCallState) -> str:

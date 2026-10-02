@@ -134,6 +134,10 @@ class TransactionSearchCriteria:
         return replace(self, **updates)
 
     @property
+    def has_any_filter(self) -> bool:
+        return any(getattr(self, field.name) is not None for field in fields(self))
+
+    @property
     def is_discriminative(self) -> bool:
         return any(
             (
