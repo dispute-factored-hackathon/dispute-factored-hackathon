@@ -12,7 +12,7 @@ from webapp.backend.api.dependencies import (
 )
 from webapp.backend.models.customer import Customer
 from webapp.backend.models.product import Product
-from webapp.backend.repositories.mock import (
+from webapp.backend.repositories.registry import (
     product_repository,
 )
 from webapp.backend.schemas.product import (

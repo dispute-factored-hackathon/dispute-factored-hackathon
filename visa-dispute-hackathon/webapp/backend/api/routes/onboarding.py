@@ -13,7 +13,7 @@ from webapp.backend.api.dependencies import (
 )
 from webapp.backend.models.customer import TutorialStatus
 from webapp.backend.models.session import AuthenticationMethod
-from webapp.backend.repositories.mock import (
+from webapp.backend.repositories.registry import (
     customer_repository,
 )
 from webapp.backend.schemas.onboarding import TutorialProgressRequest, TutorialStateResponse

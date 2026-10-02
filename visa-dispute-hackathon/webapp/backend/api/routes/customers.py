@@ -9,7 +9,7 @@ from fastapi import (
 
 from webapp.backend.api.dependencies import require_customer
 from webapp.backend.models.customer import Customer
-from webapp.backend.repositories.mock import (
+from webapp.backend.repositories.registry import (
     complaint_repository,
     customer_repository,
     product_repository,
