@@ -74,6 +74,25 @@ Ambiguous, missing, or conflicting evidence produces no code and one neutral cla
 
 This is an intake recommendation, not a final fraud finding or Visa eligibility decision. After a validated unauthorized-card classification, the call demo automatically blocks the server-resolved mock card ending in `9999`; duplicate and inconclusive reports never trigger or suggest a block. The state change uses the backend product service, validates customer ownership, is idempotent, and is available to the GUI only when both channels share the same in-memory repository. The demo does not submit a chargeback, issue a refund, query VROL, retrieve issuer/network evidence, or order a replacement card. The shared classifier is independent of SIP so a later GUI chat can call the same contract; the current `/agent` GUI remains a placeholder.
 
+### Complaint persistence after classification
+
+After a supported Visa condition is validated, the server—not the language model—creates a
+trackable complaint through the shared `ComplaintRepository` contract. The same filing service
+works with the thread-safe in-memory adapter used by the Lambda demo and the PostgreSQL adapter
+selected with `REPOSITORY_BACKEND=postgres`.
+
+The complaint follows the synthetic `complaints` table: it belongs to the authenticated customer,
+links the selected card product, records the Realtime call as its origin interaction, uses `Call
+Center` as the reception channel, copies the claimed transaction amount and currency, assigns
+`IZZY`, and starts in `In Review`. Its Visa-derived subcategory is one of Visa 10.3, 10.4, or
+12.6.1. A deterministic opaque complaint ID makes a repeated write for the same call idempotent.
+Only after the repository returns the stored complaint does Izzy speak its identifier, Visa code,
+and status. A storage failure is disclosed and must never be described as a successfully filed
+complaint.
+
+This creates a synthetic bank complaint, not a Visa chargeback or a final liability decision.
+PostgreSQL and memory behavior are covered by the same repository contract tests.
+
 Run the SQLite, state-machine, and SIP-sideband coverage with:
 
 ```bash

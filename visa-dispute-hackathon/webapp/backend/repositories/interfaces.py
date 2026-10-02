@@ -102,6 +102,12 @@ class ComplaintRepository(Protocol):
         customer_id: str,
     ) -> list[Complaint]: ...
 
+    def get_by_origin_interaction(
+        self,
+        customer_id: str,
+        origin_interaction_id: str,
+    ) -> Complaint | None: ...
+
     def update(
         self,
         complaint: Complaint,

@@ -11,7 +11,11 @@ import time
 from typing import Any
 
 from webapp.backend.demo_seed import seed_demo_customers
-from webapp.backend.repositories.mock import customer_repository, product_repository
+from webapp.backend.repositories.registry import (
+    complaint_repository,
+    customer_repository,
+    product_repository,
+)
 
 from .sip_realtime import SipRealtimeGateway, _value, extract_caller_phone
 
@@ -138,6 +142,7 @@ def _get_gateway() -> SipRealtimeGateway:
         _gateway = SipRealtimeGateway(
             customer_repository,
             product_repository=product_repository,
+            complaint_repository=complaint_repository,
             api_key=secret["OPENAI_API_KEY"],
             webhook_secret=secret["OPENAI_WEBHOOK_SECRET"],
         )

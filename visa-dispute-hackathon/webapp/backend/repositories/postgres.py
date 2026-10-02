@@ -269,6 +269,18 @@ class PostgresComplaintRepository(_Table[Complaint]):
             " ORDER BY creation_date DESC, complaint_id DESC",
         )
 
+    def get_by_origin_interaction(
+        self,
+        customer_id: str,
+        origin_interaction_id: str,
+    ) -> Complaint | None:
+        matches = self._fetch_many(
+            sql.SQL("customer_id = %s AND origin_interaction_id = %s"),
+            (customer_id, origin_interaction_id),
+            " ORDER BY creation_date DESC, complaint_id DESC LIMIT 1",
+        )
+        return matches[0] if matches else None
+
     def update(self, complaint: Complaint) -> Complaint:
         values = dump_model(complaint)
         with self.database.cursor() as cursor:
