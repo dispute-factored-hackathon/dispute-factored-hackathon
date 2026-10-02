@@ -89,7 +89,6 @@ Resources:
           OPENAI_SECRET_ARN: !Ref OpenAISecretArn
           LANGSMITH_SECRET_ARN: !Ref LangSmithSecretArn
 
-          CUSTOMERS_CSV: /var/task/demo_data/customers.csv
 
           OPENAI_REALTIME_MODEL: gpt-realtime-2.1
           OPENAI_REALTIME_VOICE: marin

@@ -59,17 +59,8 @@ elif [[ "${ACTION}" == "application" ]]; then
   DOCKER_HOST="$(docker context inspect "${DOCKER_DESKTOP_CONTEXT}" --format '{{.Endpoints.docker.Host}}')"
   export DOCKER_HOST
   DEPLOY_DOCKER_CONFIG="$(mktemp -d "${TMPDIR:-/tmp}/dispute-docker-config.XXXXXX")"
-  TEMP_CUSTOMERS_CONTEXT=""
-  DATA_CONTAINER_ID=""
   export DOCKER_CONFIG="${DEPLOY_DOCKER_CONFIG}"
   cleanup() {
-    if [[ -n "${DATA_CONTAINER_ID}" ]]; then
-      docker rm -f "${DATA_CONTAINER_ID}" >/dev/null 2>&1 || true
-    fi
-    if [[ -n "${TEMP_CUSTOMERS_CONTEXT}" && \
-      "$(basename "${TEMP_CUSTOMERS_CONTEXT}")" == dispute-customers.* ]]; then
-      rm -rf -- "${TEMP_CUSTOMERS_CONTEXT}"
-    fi
     if [[ "$(basename "${DEPLOY_DOCKER_CONFIG}")" == dispute-docker-config.* ]]; then
       rm -rf -- "${DEPLOY_DOCKER_CONFIG}"
     fi
@@ -79,38 +70,9 @@ elif [[ "${ACTION}" == "application" ]]; then
   aws ecr get-login-password --region "${AWS_REGION}" | \
     python3 infra/aws/write_docker_auth.py "${DOCKER_CONFIG}/config.json" "${REGISTRY}"
 
-  CUSTOMERS_BUILD_CONTEXT="${CUSTOMERS_BUILD_CONTEXT:-../data/raw}"
-  if [[ ! -f "${CUSTOMERS_BUILD_CONTEXT}/customers.csv" ]]; then
-    REPOSITORY_NAME="${REPOSITORY_URI#*/}"
-    BASE_IMAGE_TAG="$(aws ecr describe-images \
-      --region "${AWS_REGION}" \
-      --repository-name "${REPOSITORY_NAME}" \
-      --filter tagStatus=TAGGED \
-      --query 'reverse(sort_by(imageDetails,&imagePushedAt))[0].imageTags[0]' \
-      --output text)"
-    if [[ -z "${BASE_IMAGE_TAG}" || "${BASE_IMAGE_TAG}" == "None" ]]; then
-      echo "customers.csv is unavailable and ECR has no prior image to recover it from." >&2
-      echo "Set CUSTOMERS_BUILD_CONTEXT to a directory containing customers.csv for the first deploy." >&2
-      exit 1
-    fi
-
-    BASE_IMAGE_URI="${REPOSITORY_URI}:${BASE_IMAGE_TAG}"
-    TEMP_CUSTOMERS_CONTEXT="$(mktemp -d "${TMPDIR:-/tmp}/dispute-customers.XXXXXX")"
-    docker pull "${BASE_IMAGE_URI}" >/dev/null
-    DATA_CONTAINER_ID="$(docker create "${BASE_IMAGE_URI}")"
-    docker cp \
-      "${DATA_CONTAINER_ID}:/var/task/demo_data/customers.csv" \
-      "${TEMP_CUSTOMERS_CONTEXT}/customers.csv"
-    docker rm "${DATA_CONTAINER_ID}" >/dev/null
-    DATA_CONTAINER_ID=""
-    CUSTOMERS_BUILD_CONTEXT="${TEMP_CUSTOMERS_CONTEXT}"
-    echo "Recovered the synthetic customer table from the previous immutable ECR image."
-  fi
-
   docker buildx build \
     --platform linux/amd64 \
     --file Dockerfile.aws \
-    --build-context synthetic_data="${CUSTOMERS_BUILD_CONTEXT}" \
     --tag "${IMAGE_URI}" \
     --push .
 

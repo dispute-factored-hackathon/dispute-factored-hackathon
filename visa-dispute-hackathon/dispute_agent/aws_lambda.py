@@ -8,8 +8,10 @@ import json
 import logging
 import os
 import time
-from pathlib import Path
 from typing import Any
+
+from webapp.backend.demo_seed import seed_demo_customers
+from webapp.backend.repositories.mock import customer_repository
 
 from .sip_realtime import SipRealtimeGateway, _value, extract_caller_phone
 
@@ -24,8 +26,6 @@ def _telemetry(event: str, *, call_id: str | None = None, **fields: Any) -> None
     payload.update(fields)
     LOGGER.info(json.dumps(payload, ensure_ascii=False, default=str))
 
-
-DEFAULT_CUSTOMERS = Path(__file__).parents[1] / "demo_data" / "customers.csv"
 
 # The Lambda invokes itself asynchronously with this mode after the webhook
 # invocation has accepted the SIP call.
@@ -134,11 +134,9 @@ def _get_gateway() -> SipRealtimeGateway:
 
         secret = _load_openai_secret()
 
+        seed_demo_customers(customer_repository)
         _gateway = SipRealtimeGateway(
-            os.getenv(
-                "CUSTOMERS_CSV",
-                str(DEFAULT_CUSTOMERS),
-            ),
+            customer_repository,
             api_key=secret["OPENAI_API_KEY"],
             webhook_secret=secret["OPENAI_WEBHOOK_SECRET"],
         )

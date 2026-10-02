@@ -9,10 +9,9 @@ RUN uv export --frozen --no-dev --no-emit-project --output-file requirements.txt
 FROM public.ecr.aws/lambda/python:3.12
 COPY --from=build ${LAMBDA_TASK_ROOT} ${LAMBDA_TASK_ROOT}
 COPY dispute_agent ${LAMBDA_TASK_ROOT}/dispute_agent
-COPY --from=synthetic_data customers.csv ${LAMBDA_TASK_ROOT}/demo_data/customers.csv
+COPY webapp ${LAMBDA_TASK_ROOT}/webapp
 
-ENV CUSTOMERS_CSV=/var/task/demo_data/customers.csv \
-    OPENAI_REALTIME_MODEL=gpt-realtime-2.1 \
+ENV OPENAI_REALTIME_MODEL=gpt-realtime-2.1 \
     OPENAI_REALTIME_VOICE=marin \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1

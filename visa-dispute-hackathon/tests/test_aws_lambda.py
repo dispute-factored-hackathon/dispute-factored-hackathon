@@ -73,6 +73,37 @@ class AwsLambdaTests(unittest.TestCase):
     def setUp(self):
         self.context = SimpleNamespace(invoked_function_arn="arn:aws:lambda:test:function:sip")
 
+    def tearDown(self):
+        aws_lambda._gateway = None
+
+    def test_gateway_uses_shared_mock_backend(self):
+        gateway = object()
+        with (
+            patch.object(aws_lambda, "_configure_langsmith"),
+            patch.object(
+                aws_lambda,
+                "_load_openai_secret",
+                return_value={
+                    "OPENAI_API_KEY": "test-key",
+                    "OPENAI_WEBHOOK_SECRET": "test-secret",
+                },
+            ),
+            patch.object(
+                aws_lambda,
+                "SipRealtimeGateway",
+                return_value=gateway,
+            ) as gateway_type,
+        ):
+            resolved = aws_lambda._get_gateway()
+
+        self.assertIs(resolved, gateway)
+        customer_source = gateway_type.call_args.args[0]
+        customer = customer_source.get_by_phone("+5511981020050")
+        self.assertIsNotNone(customer)
+        self.assertEqual(customer.document_number, "123456")
+        self.assertEqual(customer.first_name, "Gabriel")
+        self.assertEqual(customer.last_name, "Silveira")
+
     def test_valid_webhook_accepts_then_invokes_worker(self):
         gateway = FakeGateway(incoming_event())
         request = {"body": "{}", "headers": {"webhook-signature": "test"}}
