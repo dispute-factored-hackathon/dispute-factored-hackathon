@@ -15,6 +15,7 @@ from dispute_agent.transaction_search import (
     TransactionSearchCriteria,
 )
 from dispute_agent.voice_call import TransactionSelectionOutcome
+from webapp.backend.repositories.mock import MockComplaintRepository
 
 FIXTURE = Path(__file__).parent / "fixtures" / "customers.csv"
 
@@ -268,9 +269,15 @@ class FakeAcceptCalls:
         )
 
 
+class FailingComplaintRepository(MockComplaintRepository):
+    def create(self, complaint):
+        del complaint
+        raise RuntimeError("synthetic complaint storage failure")
+
+
 class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
     @staticmethod
-    def _gateway(events, *, transaction_repository=None):
+    def _gateway(events, *, transaction_repository=None, complaint_repository=None):
         websocket = FakeWebsocket(events)
         calls = FakeAcceptCalls()
         client = SimpleNamespace(realtime=SimpleNamespace(calls=calls))
@@ -280,6 +287,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             openai_client=client,
             websocket_connect=FakeConnector(websocket),
             transaction_repository=transaction_repository,
+            complaint_repository=complaint_repository,
         )
         return gateway, websocket, calls
 
@@ -823,6 +831,8 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state.stage, "dispute_classified")
         self.assertEqual(state.confirmed_transaction.merchant_name, "Lemon Drop Market")
         self.assertEqual(state.dispute_classification.visa_condition_code, "10.4")
+        self.assertIsNotNone(state.complaint_id)
+        self.assertEqual(state.complaint_status, "In Review")
 
         configured_tools = {tool["name"] for tool in calls.accepted[0][1]["tools"]}
         self.assertIn("search_transactions", configured_tools)
@@ -835,6 +845,9 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("não fez nem autorizou", outbound)
         self.assertIn("código Visa candidato é 10.4", outbound)
         self.assertIn("cartão final 9999 foi bloqueado", outbound)
+        self.assertIn(f"A reclamação {state.complaint_id} foi aberta", outbound)
+        self.assertIn("com esse código Visa", outbound)
+        self.assertIn("status Em análise", outbound)
         self.assertNotIn("9999999999999999", outbound)
         self.assertNotIn("SELECT", outbound)
         self.assertNotIn(state.confirmed_transaction.transaction_id, outbound)
@@ -882,11 +895,43 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         state = gateway.calls.get("call_duplicate_classification")
         self.assertEqual(state.stage, "dispute_classified")
         self.assertEqual(state.dispute_classification.visa_condition_code, "12.6.1")
+        self.assertIsNotNone(state.complaint_id)
         outbound = json.dumps(websocket.sent, ensure_ascii=False)
         self.assertIn("processamento duplicado", outbound)
         self.assertIn("12.6.1", outbound)
+        self.assertIn(f"A reclamação {state.complaint_id} foi aberta", outbound)
         self.assertNotIn("cartão final", outbound)
         self.assertNotIn("foi bloqueado", outbound)
+
+    def test_complaint_storage_failure_is_disclosed_without_false_confirmation(self):
+        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        self.addCleanup(transactions.close)
+        gateway, _, _ = self._gateway(
+            [],
+            transaction_repository=transactions,
+            complaint_repository=FailingComplaintRepository(),
+        )
+        state = gateway.calls.start("+5511999990001", call_id="call_failed_complaint")
+        state = gateway.calls.confirm_language(state.call_id)
+        state = gateway.calls.choose_authentication_method(state.call_id, method="phone")
+        gateway.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(merchant_query="lemon"),
+        )
+        gateway.calls.resolve_transaction_candidate(state.call_id, confirmed=True)
+        classified = gateway.calls.classify_dispute(
+            state.call_id,
+            allegation="DUPLICATE_PROCESSING",
+            customer_reports_duplicate=True,
+        )
+
+        message = gateway._message_for(classified.state, "classification_complete")
+
+        self.assertEqual(classified.state.complaint_filing_status, "failed")
+        self.assertIsNone(classified.state.complaint_id)
+        self.assertIn("Não consegui abrir a reclamação", message)
+        self.assertIn("Nenhuma reclamação foi registrada", message)
+        self.assertNotIn("foi aberta", message)
 
     async def test_ambiguous_problem_asks_for_clarification_without_code(self):
         events = [

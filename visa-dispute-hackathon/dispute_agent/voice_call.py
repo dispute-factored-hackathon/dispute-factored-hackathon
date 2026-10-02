@@ -13,8 +13,13 @@ from typing import Any
 
 from webapp.backend.demo_card import seed_demo_card
 from webapp.backend.models.transaction import Transaction
-from webapp.backend.repositories.interfaces import CustomerRepository, ProductRepository
-from webapp.backend.repositories.mock import MockProductRepository
+from webapp.backend.repositories.interfaces import (
+    ComplaintRepository,
+    CustomerRepository,
+    ProductRepository,
+)
+from webapp.backend.repositories.mock import MockComplaintRepository, MockProductRepository
+from webapp.backend.services.complaint_filing import ComplaintFilingService
 from webapp.backend.services.products import (
     ProductAccessDeniedError,
     ProductNotFoundError,
@@ -113,6 +118,11 @@ class CardSecurityActionStatus(StrEnum):
     FAILED = "failed"
 
 
+class ComplaintFilingStatus(StrEnum):
+    FILED = "filed"
+    FAILED = "failed"
+
+
 @dataclass(frozen=True)
 class VoiceCallState:
     call_id: str
@@ -135,6 +145,9 @@ class VoiceCallState:
     dispute_classification: DisputeClassification | None = None
     card_security_action: CardSecurityActionStatus | None = None
     secured_card_last_four: str | None = None
+    complaint_id: str | None = None
+    complaint_status: str | None = None
+    complaint_filing_status: ComplaintFilingStatus | None = None
     transaction_guess_attempts: int = 0
     transaction_search_attempts: int = 0
     transaction_no_match_attempts: int = 0
@@ -164,6 +177,7 @@ class VoiceCallService:
         max_document_attempts: int = 3,
         transaction_repository: TransactionSearchRepository | None = None,
         product_repository: ProductRepository | None = None,
+        complaint_repository: ComplaintRepository | None = None,
         max_transaction_guesses: int = 3,
     ) -> None:
         started = time.monotonic()
@@ -173,6 +187,8 @@ class VoiceCallService:
         self.transactions = transaction_repository or SQLiteTransactionSearchRepository()
         self.products = product_repository or MockProductRepository()
         self.product_service = ProductService(self.products)
+        self.complaints = complaint_repository or MockComplaintRepository()
+        self.complaint_filing = ComplaintFilingService(self.complaints)
         self.classifier = DisputeClassificationService()
         self._calls: dict[str, VoiceCallState] = {}
         _telemetry(
@@ -715,6 +731,8 @@ class VoiceCallService:
             and classification.allegation is DisputeAllegation.UNAUTHORIZED_CARD
         ):
             updated = self._block_confirmed_transaction_card(updated)
+        if outcome is DisputeClassificationOutcome.CLASSIFIED:
+            updated = self._file_classified_complaint(updated)
         self._calls[call_id] = updated
         _telemetry(
             "voice.dispute.classification_stored",
@@ -725,6 +743,45 @@ class VoiceCallService:
             outcome=outcome.value,
         )
         return DisputeClassificationResult(updated, outcome)
+
+    def _file_classified_complaint(self, state: VoiceCallState) -> VoiceCallState:
+        """Persist the validated intake result without letting the model own the write."""
+        assert state.identity is not None
+        assert state.confirmed_transaction is not None
+        assert state.dispute_classification is not None
+        assert state.dispute_classification.visa_condition_code is not None
+        try:
+            complaint = self.complaint_filing.file_from_call(
+                call_id=state.call_id,
+                customer_id=state.identity.customer_id,
+                transaction=state.confirmed_transaction,
+                visa_condition_code=state.dispute_classification.visa_condition_code,
+            )
+        except Exception as error:
+            LOGGER.exception("Failed to file complaint for call %s", state.call_id)
+            _telemetry(
+                "voice.complaint.filing_failed",
+                call_id=state.call_id,
+                error_type=type(error).__name__,
+            )
+            return replace(
+                state,
+                complaint_filing_status=ComplaintFilingStatus.FAILED,
+            )
+
+        _telemetry(
+            "voice.complaint.filed",
+            call_id=state.call_id,
+            complaint_id=complaint.complaint_id,
+            status=complaint.status,
+            visa_condition_code=state.dispute_classification.visa_condition_code,
+        )
+        return replace(
+            state,
+            complaint_id=complaint.complaint_id,
+            complaint_status=complaint.status,
+            complaint_filing_status=ComplaintFilingStatus.FILED,
+        )
 
     def _block_confirmed_transaction_card(self, state: VoiceCallState) -> VoiceCallState:
         """Apply the deterministic safety action after validated fraud classification."""

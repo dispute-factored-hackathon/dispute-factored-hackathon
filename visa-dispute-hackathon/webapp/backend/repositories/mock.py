@@ -212,6 +212,8 @@ class MockComplaintRepository:
         complaint: Complaint,
     ) -> Complaint:
         with self._lock:
+            if complaint.complaint_id in self._complaints:
+                raise ValueError("Complaint already exists.")
             self._complaints[complaint.complaint_id] = complaint
 
         return complaint
@@ -236,6 +238,21 @@ class MockComplaintRepository:
             complaints,
             key=lambda complaint: complaint.creation_date,
             reverse=True,
+        )
+
+    def get_by_origin_interaction(
+        self,
+        customer_id: str,
+        origin_interaction_id: str,
+    ) -> Complaint | None:
+        return next(
+            (
+                complaint
+                for complaint in self._complaints.values()
+                if complaint.customer_id == customer_id
+                and complaint.origin_interaction_id == origin_interaction_id
+            ),
+            None,
         )
 
     def update(

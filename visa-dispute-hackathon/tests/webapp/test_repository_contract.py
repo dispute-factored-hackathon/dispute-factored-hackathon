@@ -23,6 +23,10 @@ from webapp.backend.demo_seed import DEMO_CUSTOMERS, seed_demo_customers
 from webapp.backend.models.customer import InterfaceLocale, TutorialStatus
 from webapp.backend.repositories import mock
 from webapp.backend.repositories.registry import Repositories, build_repositories
+from webapp.backend.services.complaint_filing import (
+    ComplaintFilingService,
+    UnsupportedVisaConditionError,
+)
 
 
 @dataclass
@@ -291,6 +295,7 @@ def test_complaints_are_newest_first_scoped_and_keep_resolution_fields(backend: 
     assert [c.complaint_id for c in complaints.list_by_customer("C1")] == ["K-open", "K-resolved"]
     assert complaints.get_by_id("K-resolved") == resolved
     assert complaints.get_by_id("missing") is None
+    assert complaints.get_by_origin_interaction("C1", "missing") is None
 
     escalated = resolved.model_copy(update={"status": "Escalated"})
     complaints.update(escalated)
@@ -300,6 +305,109 @@ def test_complaints_are_newest_first_scoped_and_keep_resolution_fields(backend: 
 def test_update_of_an_unknown_complaint_fails(backend: Backend):
     with pytest.raises(ValueError, match=r"Complaint does not exist."):
         backend.repos.complaints.update(make_complaint("ghost"))
+
+
+def test_duplicate_complaint_id_is_rejected(backend: Backend):
+    backend.repos.customers.create(make_customer("C1"))
+    backend.repos.complaints.create(make_complaint("K-duplicate"))
+
+    with pytest.raises(ValueError, match="Complaint already exists"):
+        backend.repos.complaints.create(make_complaint("K-duplicate"))
+
+
+def test_call_center_complaint_filing_contract_is_idempotent(backend: Backend):
+    backend.repos.customers.create(make_customer("C1"))
+    transaction = make_transaction(
+        "T-VOICE",
+        merchant_name="Lemon Drop Market",
+        channel="E-commerce",
+        amount=12.49,
+    )
+    service = ComplaintFilingService(backend.repos.complaints)
+
+    filed = service.file_from_call(
+        call_id="rtc-demo-call",
+        customer_id="C1",
+        transaction=transaction,
+        visa_condition_code="10.4",
+        now=NOW,
+    )
+    repeated = service.file_from_call(
+        call_id="rtc-demo-call",
+        customer_id="C1",
+        transaction=transaction,
+        visa_condition_code="10.4",
+        now=NOW + timedelta(minutes=1),
+    )
+
+    assert repeated == filed
+    assert len(backend.repos.complaints.list_by_customer("C1")) == 1
+    assert filed.customer_id == "C1"
+    assert filed.case_type == "Claim"
+    assert filed.category == "Card Purchase"
+    assert filed.subcategory == "Visa 10.4 · Other Fraud — Card-Absent Environment"
+    assert filed.reception_channel == "Call Center"
+    assert filed.affected_product_id == "P1"
+    assert filed.origin_interaction_id == "rtc-demo-call"
+    assert filed.claimed_amount == 12.49
+    assert filed.currency == "USD"
+    assert filed.priority == "High"
+    assert filed.status == "In Review"
+    assert filed.assigned_agent_id == "IZZY"
+    assert filed.assignment_date == NOW
+    assert filed.first_response_date == NOW
+    assert "Candidate Visa condition: 10.4" in filed.description
+    assert backend.repos.complaints.get_by_origin_interaction("C1", "rtc-demo-call") == filed
+
+
+def test_complaint_filing_rejects_an_unsupported_visa_condition(backend: Backend):
+    service = ComplaintFilingService(backend.repos.complaints)
+
+    with pytest.raises(UnsupportedVisaConditionError, match="unsupported Visa condition"):
+        service.file_from_call(
+            call_id="rtc-unsupported",
+            customer_id="C1",
+            transaction=make_transaction(),
+            visa_condition_code="99.9",
+            now=NOW,
+        )
+
+
+@pytest.mark.parametrize(
+    ("visa_code", "expected_subcategory", "expected_priority"),
+    [
+        (
+            "10.3",
+            "Visa 10.3 · Other Fraud — Card-Present Environment",
+            "High",
+        ),
+        (
+            "10.4",
+            "Visa 10.4 · Other Fraud — Card-Absent Environment",
+            "High",
+        ),
+        ("12.6.1", "Visa 12.6.1 · Duplicate Processing", "Medium"),
+    ],
+)
+def test_complaint_filing_maps_supported_visa_codes(
+    backend: Backend,
+    visa_code: str,
+    expected_subcategory: str,
+    expected_priority: str,
+):
+    backend.repos.customers.create(make_customer("C1"))
+    service = ComplaintFilingService(backend.repos.complaints)
+
+    complaint = service.file_from_call(
+        call_id=f"rtc-{visa_code}",
+        customer_id="C1",
+        transaction=make_transaction(channel="POS"),
+        visa_condition_code=visa_code,
+        now=NOW,
+    )
+
+    assert complaint.subcategory == expected_subcategory
+    assert complaint.priority == expected_priority
 
 
 # ----------------------------------------------------------------------------- sessions

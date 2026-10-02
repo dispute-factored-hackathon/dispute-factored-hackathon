@@ -19,13 +19,22 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from openai import OpenAI
 
 from webapp.backend.demo_seed import seed_demo_customers
-from webapp.backend.repositories.interfaces import CustomerRepository, ProductRepository
-from webapp.backend.repositories.mock import customer_repository, product_repository
+from webapp.backend.repositories.interfaces import (
+    ComplaintRepository,
+    CustomerRepository,
+    ProductRepository,
+)
+from webapp.backend.repositories.registry import (
+    complaint_repository,
+    customer_repository,
+    product_repository,
+)
 
 from .dispute_classification import DisputeAllegation
 from .transaction_search import TransactionSearchCriteria, TransactionSearchRepository
 from .voice_call import (
     CardSecurityActionStatus,
+    ComplaintFilingStatus,
     DisputeClassificationOutcome,
     TransactionSelectionOutcome,
     VoiceAuthenticationMethod,
@@ -313,6 +322,7 @@ class SipRealtimeGateway:
         websocket_connect: Callable[..., Any] | None = None,
         transaction_repository: TransactionSearchRepository | None = None,
         product_repository: ProductRepository | None = None,
+        complaint_repository: ComplaintRepository | None = None,
         log_full_transcripts: bool | None = None,
     ) -> None:
 
@@ -340,6 +350,7 @@ class SipRealtimeGateway:
         self._customer_source = customer_source
         self._transaction_repository = transaction_repository
         self._product_repository = product_repository
+        self._complaint_repository = complaint_repository
 
         self._calls: VoiceCallService | None = None
 
@@ -354,6 +365,7 @@ class SipRealtimeGateway:
                 self._customer_source,
                 transaction_repository=self._transaction_repository,
                 product_repository=self._product_repository,
+                complaint_repository=self._complaint_repository,
             )
 
         return self._calls
@@ -1126,6 +1138,13 @@ class SipRealtimeGateway:
                         "card_security_action": (
                             state.card_security_action.value
                             if state.card_security_action is not None
+                            else None
+                        ),
+                        "complaint_id": state.complaint_id,
+                        "complaint_status": state.complaint_status,
+                        "complaint_filing_status": (
+                            state.complaint_filing_status.value
+                            if state.complaint_filing_status is not None
                             else None
                         ),
                     }
@@ -2151,7 +2170,7 @@ General behavior:
                 CardSecurityActionStatus.ALREADY_BLOCKED,
             }
             if state.card_security_action not in successful_actions:
-                return {
+                message = {
                     "pt": (
                         f"Classifiquei seu relato como {allegation}. O código Visa candidato é "
                         f"{classification.visa_condition_code}. Não consegui bloquear o cartão "
@@ -2171,11 +2190,12 @@ General behavior:
                         "dispute still requires issuer review."
                     ),
                 }[state.locale.language]
+                return message + SipRealtimeGateway._complaint_filing_message(state)
 
             assert state.secured_card_last_four is not None
             last_four = state.secured_card_last_four
             already_blocked = state.card_security_action is CardSecurityActionStatus.ALREADY_BLOCKED
-            return {
+            message = {
                 "pt": (
                     f"Classifiquei seu relato como {allegation}. O código Visa candidato é "
                     f"{classification.visa_condition_code}. Por segurança, o cartão final "
@@ -2201,21 +2221,58 @@ General behavior:
                     "review."
                 ),
             }[state.locale.language]
-        return {
+            return message + SipRealtimeGateway._complaint_filing_message(state)
+        message = {
             "pt": (
                 f"Classifiquei seu relato como {allegation}. O código Visa candidato é "
-                f"{classification.visa_condition_code}. Isso ainda precisa de revisão do emissor. "
-                "Nenhuma contestação ou estorno foi executado nesta demonstração."
+                f"{classification.visa_condition_code}. A reclamação ainda precisa de revisão "
+                "do emissor e nenhum estorno foi executado nesta demonstração."
             ),
             "es": (
                 f"Clasifiqué tu relato como {allegation}. El código Visa candidato es "
-                f"{classification.visa_condition_code}. Todavía requiere revisión del emisor. "
-                "No se presentó ningún reclamo ni se ejecutó un reembolso en esta demo."
+                f"{classification.visa_condition_code}. El reclamo todavía requiere revisión "
+                "del emisor y no se ejecutó ningún reembolso en esta demostración."
             ),
             "en": (
                 f"I classified your report as a {allegation}. The candidate Visa code is "
-                f"{classification.visa_condition_code}. It still requires issuer review. "
-                "No dispute or refund was submitted in this demonstration."
+                f"{classification.visa_condition_code}. The complaint still requires issuer "
+                "review, and no refund was issued in this demonstration."
+            ),
+        }[state.locale.language]
+        return message + SipRealtimeGateway._complaint_filing_message(state)
+
+    @staticmethod
+    def _complaint_filing_message(state: VoiceCallState) -> str:
+        if (
+            state.complaint_filing_status is ComplaintFilingStatus.FILED
+            and state.complaint_id is not None
+        ):
+            return {
+                "pt": (
+                    f" A reclamação {state.complaint_id} foi aberta com esse código Visa e está "
+                    "com status Em análise."
+                ),
+                "es": (
+                    f" El reclamo {state.complaint_id} fue registrado con este código Visa y "
+                    "tiene estado En revisión."
+                ),
+                "en": (
+                    f" Complaint {state.complaint_id} was filed with this Visa code and is "
+                    "currently In Review."
+                ),
+            }[state.locale.language]
+        return {
+            "pt": (
+                " Não consegui abrir a reclamação no backend desta demonstração. Nenhuma "
+                "reclamação foi registrada."
+            ),
+            "es": (
+                " No pude registrar el reclamo en el backend de esta demostración. No se creó "
+                "ningún reclamo."
+            ),
+            "en": (
+                " I could not file the complaint in this demonstration backend. No complaint "
+                "was created."
             ),
         }[state.locale.language]
 
@@ -2503,6 +2560,7 @@ def create_sip_app(
         resolved_gateway = SipRealtimeGateway(
             customer_repository,
             product_repository=product_repository,
+            complaint_repository=complaint_repository,
         )
 
     verifier = webhook_client or resolved_gateway.client

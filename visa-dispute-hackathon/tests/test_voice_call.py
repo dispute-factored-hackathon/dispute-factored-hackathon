@@ -8,6 +8,7 @@ from dispute_agent.transaction_search import (
 )
 from dispute_agent.voice_call import (
     CardSecurityActionStatus,
+    ComplaintFilingStatus,
     DisputeClassificationOutcome,
     TransactionSelectionOutcome,
     VoiceAuthenticationMethod,
@@ -395,6 +396,20 @@ class VoiceCallServiceTests(unittest.TestCase):
         )
         self.assertEqual(classified.state.secured_card_last_four, "9999")
         self.assertEqual(
+            classified.state.complaint_filing_status,
+            ComplaintFilingStatus.FILED,
+        )
+        self.assertIsNotNone(classified.state.complaint_id)
+        self.assertEqual(classified.state.complaint_status, "In Review")
+        complaint = self.calls.complaints.get_by_id(classified.state.complaint_id)
+        self.assertIsNotNone(complaint)
+        self.assertEqual(complaint.customer_id, "CLI-002")
+        self.assertEqual(complaint.affected_product_id, demo_card_product_id("CLI-002"))
+        self.assertEqual(complaint.origin_interaction_id, state.call_id)
+        self.assertEqual(complaint.subcategory, "Visa 10.4 · Other Fraud — Card-Absent Environment")
+        self.assertEqual(complaint.reception_channel, "Call Center")
+        self.assertEqual(complaint.assigned_agent_id, "IZZY")
+        self.assertEqual(
             self.calls.products.get_by_id(demo_card_product_id("CLI-002")).product_status,
             "Blocked",
         )
@@ -416,6 +431,13 @@ class VoiceCallServiceTests(unittest.TestCase):
         self.assertEqual(classified.outcome, DisputeClassificationOutcome.CLASSIFIED)
         self.assertIsNone(classified.state.card_security_action)
         self.assertIsNone(classified.state.secured_card_last_four)
+        self.assertEqual(
+            classified.state.complaint_filing_status,
+            ComplaintFilingStatus.FILED,
+        )
+        complaint = self.calls.complaints.get_by_id(classified.state.complaint_id)
+        self.assertEqual(complaint.subcategory, "Visa 12.6.1 · Duplicate Processing")
+        self.assertEqual(complaint.priority, "Medium")
         self.assertEqual(
             self.calls.products.get_by_id(demo_card_product_id("CLI-002")).product_status,
             "Active",
@@ -439,6 +461,8 @@ class VoiceCallServiceTests(unittest.TestCase):
             DisputeClassificationOutcome.NEEDS_CLARIFICATION,
         )
         self.assertIsNone(classified.state.card_security_action)
+        self.assertIsNone(classified.state.complaint_filing_status)
+        self.assertIsNone(classified.state.complaint_id)
         self.assertEqual(
             self.calls.products.get_by_id(demo_card_product_id("CLI-002")).product_status,
             "Active",
