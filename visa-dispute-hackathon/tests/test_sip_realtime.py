@@ -7,7 +7,6 @@ from fastapi.testclient import TestClient
 
 from dispute_agent.sip_realtime import (
     SipRealtimeGateway,
-    _explicit_confirmation_from_transcript,
     create_sip_app,
     extract_caller_phone,
 )
@@ -749,7 +748,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             tool_call_event(
                 "confirm_transaction",
                 "tool_confirm_transaction",
-                {"confirmed": True},
+                {"confirmation_intent": "CONFIRM"},
             ),
             tool_call_event(
                 "classify_dispute",
@@ -811,7 +810,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             tool_call_event(
                 "confirm_transaction",
                 "tool_confirm",
-                {"confirmed": True},
+                {"confirmation_intent": "CONFIRM"},
             ),
             tool_call_event(
                 "classify_dispute",
@@ -853,7 +852,11 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                 {"merchant_query": "lemon"},
             ),
             completed_transcript_event(speaker="customer", transcript="Sim."),
-            tool_call_event("confirm_transaction", "tool_confirm", {"confirmed": True}),
+            tool_call_event(
+                "confirm_transaction",
+                "tool_confirm",
+                {"confirmation_intent": "CONFIRM"},
+            ),
             tool_call_event(
                 "classify_dispute",
                 "tool_classify",
@@ -876,43 +879,35 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         outbound = json.dumps(websocket.sent, ensure_ascii=False)
         self.assertIn("Não consegui distinguir", outbound)
 
-    def test_confirmation_guard_requires_unambiguous_speech(self):
-        self.assertIs(_explicit_confirmation_from_transcript("Sim."), True)
-        self.assertIs(_explicit_confirmation_from_transcript("Sí, es esa."), True)
-        self.assertIs(_explicit_confirmation_from_transcript("Não, foi em Lima."), False)
-        self.assertIs(_explicit_confirmation_from_transcript("No, that is wrong."), False)
-        self.assertIsNone(_explicit_confirmation_from_transcript("جتين"))
-        self.assertIsNone(_explicit_confirmation_from_transcript("talvez"))
-        self.assertIs(
-            _explicit_confirmation_from_transcript(
-                "S\u0131n.",
-                model_confirmation=True,
-                language="pt",
-            ),
-            True,
+    def test_confirmation_tool_uses_language_agnostic_intent_classes(self):
+        tool = SipRealtimeGateway._transaction_confirmation_tool()
+        properties = tool["parameters"]["properties"]
+        intent = properties["confirmation_intent"]
+
+        self.assertEqual(intent["enum"], ["CONFIRM", "DENY", "UNCLEAR"])
+        self.assertIn("complete response", intent["description"])
+        self.assertNotIn("confirmed", properties)
+
+    def test_server_requires_tool_only_turns_for_confirmation_and_classification(self):
+        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        self.addCleanup(transactions.close)
+        gateway, _, _ = self._gateway([], transaction_repository=transactions)
+        state = gateway.calls.start("+5511999990001", call_id="call_tool_choice")
+        self.assertEqual(gateway._tool_choice_for(state), "auto")
+
+        state = gateway.calls.confirm_language(state.call_id)
+        state = gateway.calls.choose_authentication_method(state.call_id, method="phone")
+        selection = gateway.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(merchant_query="lemon"),
         )
-        self.assertIs(
-            _explicit_confirmation_from_transcript(
-                "Sihir.",
-                model_confirmation=True,
-                language="pt",
-            ),
-            True,
+        self.assertEqual(gateway._tool_choice_for(selection.state), "required")
+
+        confirmed = gateway.calls.resolve_transaction_candidate(
+            state.call_id,
+            confirmed=True,
         )
-        self.assertIsNone(
-            _explicit_confirmation_from_transcript(
-                "Sihir.",
-                model_confirmation=False,
-                language="pt",
-            )
-        )
-        self.assertIsNone(
-            _explicit_confirmation_from_transcript(
-                "Silva.",
-                model_confirmation=True,
-                language="pt",
-            )
-        )
+        self.assertEqual(gateway._tool_choice_for(confirmed.state), "required")
 
     async def test_asr_distorted_sim_reaches_problem_classification_question(self):
         events = [
@@ -932,7 +927,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             tool_call_event(
                 "confirm_transaction",
                 "tool_confirm_transaction",
-                {"confirmed": True},
+                {"confirmation_intent": "CONFIRM"},
             ),
         ]
         transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
@@ -968,7 +963,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             tool_call_event(
                 "confirm_transaction",
                 "tool_false_positive",
-                {"confirmed": True},
+                {"confirmation_intent": "UNCLEAR"},
             ),
         ]
         transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
@@ -989,7 +984,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         outbound = json.dumps(websocket.sent, ensure_ascii=False)
         self.assertIn("transação ainda não foi confirmada", outbound)
 
-    async def test_denial_overrides_model_and_keeps_new_detail_for_reranking(self):
+    async def test_denial_intent_keeps_new_detail_for_reranking(self):
         events = [
             session_updated_event(),
             tool_call_event("confirm_language", "tool_language", {}),
@@ -1010,7 +1005,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             tool_call_event(
                 "confirm_transaction",
                 "tool_denial_with_city",
-                {"confirmed": True, "city": "Lima"},
+                {"confirmation_intent": "DENY", "city": "Lima"},
             ),
         ]
         transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")

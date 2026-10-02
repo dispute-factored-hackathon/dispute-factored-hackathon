@@ -11,6 +11,7 @@ import time
 import unicodedata
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import date
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -53,42 +54,10 @@ def _normalized_words(text: str) -> tuple[str, set[str]]:
     return normalized, set(normalized.split())
 
 
-def _explicit_confirmation_from_transcript(
-    transcript: str,
-    *,
-    model_confirmation: bool | None = None,
-    language: str | None = None,
-) -> bool | None:
-    """Accept only an unambiguous spoken yes or no from the ASR transcript."""
-    normalized, tokens = _normalized_words(transcript)
-    denied = bool(tokens.intersection({"nao", "no", "nope"})) or any(
-        phrase in normalized
-        for phrase in (
-            "not that",
-            "wrong transaction",
-            "transacao errada",
-            "transaccion incorrecta",
-        )
-    )
-    confirmed = bool(tokens.intersection({"sim", "si", "yes", "yeah", "yep"})) or any(
-        phrase in normalized for phrase in ("e essa", "es esa", "that is it", "thats it")
-    )
-    if confirmed == denied:
-        # Portuguese/Spanish phone ASR can render a short spoken "sim/sí" as
-        # Turkish-looking tokens containing a dotless-i or extra syllable.
-        # Accept this narrow
-        # phonetic family only when the Realtime model independently called the
-        # confirmation tool with true. Arbitrary short speech still cannot
-        # confirm a financial transaction.
-        if (
-            model_confirmation is True
-            and language in {"pt", "es"}
-            and len(tokens) == 1
-            and re.fullmatch(r"si[mnhir]*", next(iter(tokens), ""))
-        ):
-            return True
-        return None
-    return confirmed
+class TransactionConfirmationIntent(StrEnum):
+    CONFIRM = "CONFIRM"
+    DENY = "DENY"
+    UNCLEAR = "UNCLEAR"
 
 
 def _guard_extracted_numeric_filters(
@@ -587,6 +556,7 @@ class SipRealtimeGateway:
                                     "type": "realtime",
                                     "instructions": self._system_instructions(state),
                                     "audio": self._input_audio_configuration(),
+                                    "tool_choice": self._tool_choice_for(state),
                                 },
                             }
                         )
@@ -1012,29 +982,28 @@ class SipRealtimeGateway:
                     }
 
                 elif tool_name == "confirm_transaction":
-                    model_confirmation = arguments.get("confirmed")
-                    if not isinstance(model_confirmation, bool):
-                        raise ValueError("confirmed must be true or false")
-                    spoken_confirmation = _explicit_confirmation_from_transcript(
-                        last_customer_transcript,
-                        model_confirmation=model_confirmation,
-                        language=self.calls.get(call_id).locale.language,
-                    )
-                    if spoken_confirmation is None:
+                    try:
+                        confirmation_intent = TransactionConfirmationIntent(
+                            arguments.get("confirmation_intent", "")
+                        )
+                    except ValueError as error:
+                        raise ValueError("invalid confirmation intent") from error
+                    if confirmation_intent is TransactionConfirmationIntent.UNCLEAR:
                         state = self.calls.get(call_id)
                         result = self._message_for(state, "transaction_confirmation_unclear")
                         tool_metadata = {
                             "outcome": "confirmation_unclear",
                             "candidate_count": len(state.transaction_candidates),
                             "guess_number": state.transaction_guess_attempts,
-                            "model_confirmation": model_confirmation,
+                            "confirmation_intent": confirmation_intent.value,
                         }
                     else:
+                        confirmed = confirmation_intent is TransactionConfirmationIntent.CONFIRM
                         selection = self.calls.resolve_transaction_candidate(
                             call_id,
-                            confirmed=spoken_confirmation,
+                            confirmed=confirmed,
                         )
-                        if not spoken_confirmation:
+                        if not confirmed:
                             criteria, replace_existing, clear_filters, remove_filters = (
                                 self._transaction_search_arguments(arguments)
                             )
@@ -1079,11 +1048,7 @@ class SipRealtimeGateway:
                             "outcome": selection.outcome.value,
                             "candidate_count": selection.result_count,
                             "guess_number": state.transaction_guess_attempts,
-                            "model_confirmation": model_confirmation,
-                            "spoken_confirmation": spoken_confirmation,
-                            "confirmation_overridden": (
-                                spoken_confirmation is not model_confirmation
-                            ),
+                            "confirmation_intent": confirmation_intent.value,
                         }
 
                 elif tool_name == "classify_dispute":
@@ -1180,6 +1145,7 @@ class SipRealtimeGateway:
                                 "type": "realtime",
                                 "instructions": self._system_instructions(state),
                                 "audio": self._input_audio_configuration(),
+                                "tool_choice": self._tool_choice_for(state),
                             },
                         }
                     )
@@ -1427,9 +1393,10 @@ class SipRealtimeGateway:
             "type": "function",
             "name": "confirm_transaction",
             "description": (
-                "Record the caller's explicit yes or no answer about the transaction "
-                "candidate Izzy just described. Never infer confirmation from unrelated or "
-                "unclear speech. When the caller says no and provides a correction or another "
+                "Classify the caller's semantic intent about the transaction candidate Izzy "
+                "just described, using the full response rather than matching specific words. "
+                "Never infer confirmation from unrelated or unclear speech. When the caller "
+                "denies the candidate and provides a correction or another "
                 "detail in the same utterance, include those filter fields in this call so the "
                 "backend can reject the candidate and rerun retrieval atomically. Call this "
                 "tool silently: do not say that confirmation was recorded or will be recorded. "
@@ -1438,10 +1405,19 @@ class SipRealtimeGateway:
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "confirmed": {"type": "boolean"},
+                    "confirmation_intent": {
+                        "type": "string",
+                        "enum": ["CONFIRM", "DENY", "UNCLEAR"],
+                        "description": (
+                            "Classify the meaning of the caller's complete response, independent "
+                            "of its exact wording or language. CONFIRM means they identify the "
+                            "presented transaction as the one they meant; DENY means it is not; "
+                            "UNCLEAR means neither intent is sufficiently clear."
+                        ),
+                    },
                     **refinement_properties,
                 },
-                "required": ["confirmed"],
+                "required": ["confirmation_intent"],
                 "additionalProperties": False,
             },
         }
@@ -1456,7 +1432,9 @@ class SipRealtimeGateway:
                 "UNAUTHORIZED_CARD only when the caller explicitly says they did not make or "
                 "authorize it. Use DUPLICATE_PROCESSING only when the caller recognizes the "
                 "purchase but says the same purchase was charged more than once. Otherwise use "
-                "INSUFFICIENT_INFO."
+                "INSUFFICIENT_INFO. Call this tool immediately and silently: do not acknowledge, "
+                "summarize, or promise to classify before the call. The server response is the "
+                "only message that should be spoken."
             ),
             "parameters": {
                 "type": "object",
@@ -1576,10 +1554,11 @@ Transaction-search workflow:
 - On every search turn, the backend retrieves up to ten customer-scoped candidates, reranks them against all collected details, and returns only the Top-1 candidate for presentation.
 - When the caller adds or corrects any transaction detail, call search_transactions again so retrieval and reranking run again. Do not keep presenting a stale candidate.
 - If the tool asks for clarification, ask exactly one focused question and preserve details already collected.
-- At confirm_transaction, describe only the server-selected candidate and call confirm_transaction only after an explicit yes or no.
+- At confirm_transaction, classify the meaning of the caller's full response as CONFIRM, DENY, or UNCLEAR without relying on exact keywords.
 - At confirm_transaction, never say that you recorded or will record a confirmation before the tool result. Call the tool silently and speak only the server-provided result.
+- At confirm_transaction, your response must contain only the confirm_transaction tool call. Never produce audio before that tool call.
 - If the caller rejects a candidate and supplies another detail in the same sentence, include that detail in confirm_transaction so rejection and reranking happen together. Never discard a correction such as a city, date, amount, or merchant.
-- A server-side transcript guard validates explicit confirmation. If the caller's answer is unclear, ask again instead of guessing.
+- If the caller's intent is unclear, use UNCLEAR so the server asks again instead of guessing.
 - Call search_transactions and confirm_transaction without first speaking an assumed result. Wait for the server-owned tool response, which supplies the authoritative message.
 - After a denied candidate, do not present another candidate immediately. Ask exactly one focused question for a useful detail that has not been collected yet, then call search_transactions with the new answer.
 - If the caller cannot answer the focused question, call search_transactions with no invented values; the server will select a different missing detail to ask about. Never rerun an unchanged search.
@@ -1596,6 +1575,7 @@ Dispute-classification workflow:
 - The backend, not the model, maps the selected transaction channel to Visa 10.3 or 10.4 and maps duplicate processing to Visa 12.6.1.
 - A proposed Visa condition is a candidate for issuer review, not proof of fraud, a liability decision, or a submitted chargeback.
 - Call classify_dispute silently and wait for the authoritative server response.
+- At needs_dispute_classification, your response must contain only the classify_dispute tool call. Never produce audio before that tool call.
 
 General behavior:
 - Introduce yourself as Izzy from Factored Bank.
@@ -1604,6 +1584,16 @@ General behavior:
 - Stay within authentication and card-dispute support.
 - Do not claim a bank action occurred unless a server/tool result confirms it.
 """
+
+    @staticmethod
+    def _tool_choice_for(state: VoiceCallState) -> str:
+        """Force a tool-only turn where the backend must decide the next state."""
+        if state.stage in {
+            VoiceCallStage.CONFIRM_TRANSACTION,
+            VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION,
+        }:
+            return "required"
+        return "auto"
 
     @staticmethod
     def _message_for(
