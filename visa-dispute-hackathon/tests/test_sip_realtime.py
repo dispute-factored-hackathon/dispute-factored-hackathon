@@ -461,6 +461,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("Izzy", instructions)
         self.assertIn("Factored Bank", instructions)
+        self.assertEqual(opening["response"]["tool_choice"], "none")
 
     async def test_confirm_language_then_phone_authentication_succeeds(self):
         events = [
@@ -901,13 +902,19 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             state.call_id,
             TransactionSearchCriteria(merchant_query="lemon"),
         )
-        self.assertEqual(gateway._tool_choice_for(selection.state), "required")
+        self.assertEqual(
+            gateway._tool_choice_for(selection.state),
+            {"type": "function", "name": "confirm_transaction"},
+        )
 
         confirmed = gateway.calls.resolve_transaction_candidate(
             state.call_id,
             confirmed=True,
         )
-        self.assertEqual(gateway._tool_choice_for(confirmed.state), "required")
+        self.assertEqual(
+            gateway._tool_choice_for(confirmed.state),
+            {"type": "function", "name": "classify_dispute"},
+        )
 
     async def test_asr_distorted_sim_reaches_problem_classification_question(self):
         events = [

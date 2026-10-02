@@ -1244,6 +1244,7 @@ class SipRealtimeGateway:
                     "type": "response.create",
                     "response": {
                         "output_modalities": ["audio"],
+                        "tool_choice": "none",
                         "instructions": (
                             "Say exactly the following message. Do not add or omit information: "
                             f"{message}"
@@ -1586,13 +1587,15 @@ General behavior:
 """
 
     @staticmethod
-    def _tool_choice_for(state: VoiceCallState) -> str:
-        """Force a tool-only turn where the backend must decide the next state."""
-        if state.stage in {
-            VoiceCallStage.CONFIRM_TRANSACTION,
-            VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION,
-        }:
-            return "required"
+    def _tool_choice_for(state: VoiceCallState) -> str | dict[str, str]:
+        """Force only the state-valid tool when the backend needs a decision."""
+        forced_tools = {
+            VoiceCallStage.CONFIRM_TRANSACTION: "confirm_transaction",
+            VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION: "classify_dispute",
+        }
+        tool_name = forced_tools.get(state.stage)
+        if tool_name is not None:
+            return {"type": "function", "name": tool_name}
         return "auto"
 
     @staticmethod
