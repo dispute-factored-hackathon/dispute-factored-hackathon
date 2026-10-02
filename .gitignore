@@ -1,14 +1,19 @@
 # macOS
 .DS_Store
 **/.DS_Store
+.AppleDouble
+.LSOverride
 
 # Python
 __pycache__/
 *.py[cod]
 *.pyo
+*$py.class
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
 .coverage
+.coverage.*
 coverage.xml
 htmlcov/
 
@@ -16,6 +21,7 @@ htmlcov/
 .venv/
 venv/
 env/
+ENV/
 
 # Environment / secrets
 .env
@@ -32,6 +38,8 @@ successful-call*.log
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
 
 # Jupyter
 .ipynb_checkpoints/
@@ -41,7 +49,20 @@ build/
 dist/
 *.egg-info/
 
-# Temporary files
+# Local temporary files
 *.tmp
-*.swp
+*.temp
+*.bak
 *~
+
+# Terraform / AWS local artifacts
+.terraform/
+*.tfstate
+*.tfstate.*
+.aws-sam/
+
+# Coverage / test artifacts
+junit.xml
+
+# Python tooling
+.python-version

@@ -1,0 +1,23 @@
+language: en-US
+early_access: false
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  path_instructions:
+    - path: "visa-dispute-hackathon/dispute_agent/**/*.py"
+      instructions: >-
+        Prioritize authorization boundaries, cross-customer isolation, deterministic state
+        transitions, prompt-abuse handling, synthetic-data labeling, trace privacy, and tests for
+        positive, negative, ambiguous, and failure paths.
+    - path: "visa-dispute-hackathon/tests/**/*.py"
+      instructions: >-
+        Check that tests cover consequential transitions and cannot pass by weakening safety gates.
+  auto_review:
+    enabled: true
+    drafts: false
+chat:
+  auto_reply: true

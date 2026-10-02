@@ -253,20 +253,42 @@ def test_contextual_tour_is_interactive_and_english_only() -> None:
         'id: "report-transaction"',
         'id: "izzy"',
         'id: "complaints-link"',
-        'id: "complaint-detail"',
+        'target: ".page-heading"',
         'id: "profile-link"',
         "target: \"[data-tour='shady-business']\"",
         'id: "finish"',
         'action: "finish-and-activate"',
         'action: "activate"',
         'actionTarget: "#report-button"',
-        'target: ".complaint-item"',
         "element.addEventListener",
         "guided-tour-no-target",
     ):
         assert expected in content
     assert "pt:" not in content
     assert "es:" not in content
+    assert 'id: "complaint-detail"' not in content
+    assert 'target: ".complaint-item"' not in content
+
+
+def test_empty_complaint_history_does_not_block_contextual_tour() -> None:
+    client = TestClient(app)
+    create_customer(client)
+    login(client)
+    complaint_repository._complaints.clear()
+
+    assert client.get("/api/complaints").json() == []
+    javascript = client.get("/static/js/components/guided-tour.js").text
+    assert 'id: "complaints"' in javascript
+    assert 'target: ".page-heading"' in javascript
+    assert 'id: "complaint-detail"' not in javascript
+    assert 'target: ".complaint-item"' not in javascript
+
+    progress = client.patch(
+        "/api/onboarding/tour",
+        json={"status": "in_progress", "last_completed_step": "complaints"},
+    )
+    assert progress.status_code == 200
+    assert progress.json()["last_completed_step"] == "complaints"
 
 
 def test_demo_selector_login_does_not_offer_or_update_tutorial() -> None:
@@ -313,7 +335,7 @@ def test_complaint_details_resume_the_contextual_tour() -> None:
     client = TestClient(app)
     content = client.get("/static/js/pages/complaint-detail.js").text
 
-    assert 'from "../components/guided-tour.js?v=6"' in content
+    assert 'from "../components/guided-tour.js?v=7"' in content
     assert "await initializeGuidedTour();" in content
 
 

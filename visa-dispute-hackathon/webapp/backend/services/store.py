@@ -22,6 +22,19 @@ SOUTH_ASIAN_LOCATIONS = (
     ("Sri Lanka", "Colombo"),
 )
 
+FOREIGN_FRAUD_MERCHANTS = (
+    ("Royal Bengal Electronics Export", "Electronics"),
+    ("Himalayan Tech Bazaar", "Electronics"),
+    ("Ganges Gadget House", "Electronics"),
+    ("Colombo Sapphire Devices", "Electronics"),
+    ("Kathmandu Prestige Gadgets", "Electronics"),
+    ("Dhaka Platinum Imports", "Electronics"),
+    ("Karachi Elite Electronics", "Electronics"),
+    ("Thimphu Smart Goods", "Electronics"),
+    ("Malé Oceanic Gadgets", "Electronics"),
+    ("Mumbai Luxury Devices", "Electronics"),
+)
+
 
 class StoreProductNotFoundError(Exception):
     pass
@@ -51,6 +64,7 @@ class RandomAnomalyStrategy:
             )
 
         country, city = self.generator.choice(SOUTH_ASIAN_LOCATIONS)
+        merchant_name, merchant_category = self.generator.choice(FOREIGN_FRAUD_MERCHANTS)
         amount = float(self.generator.randrange(90000, 250001) / 100)
         return purchase.model_copy(
             update={
@@ -59,8 +73,8 @@ class RandomAnomalyStrategy:
                 "transaction_category": "Unrecognized luxury electronics",
                 "amount": amount,
                 "amount_usd": amount,
-                "merchant_name": "Royal Bengal Electronics Export",
-                "merchant_category": "Electronics",
+                "merchant_name": merchant_name,
+                "merchant_category": merchant_category,
                 "transaction_country": country,
                 "transaction_city": city,
                 "is_fraud": True,

@@ -20,11 +20,10 @@ Before changing a directory, inspect its README and nearby tests. More deeply ne
 Run Python commands from `visa-dispute-hackathon/`:
 
 ```bash
-uv sync --extra ml
-uv run --extra ml dispute-auth-setup
+uv sync --dev
 uv run ruff check .
 uv run ruff format --check .
-uv run --extra ml python -m unittest discover -s tests -v
+uv run python -m unittest discover -s tests -v
 ```
 
 Use `uv`; do not introduce a second package-management workflow without explicit approval.
@@ -34,8 +33,8 @@ Use `uv`; do not introduce a second package-management workflow without explicit
 - Keep changes within the user's requested scope.
 - Preserve unrelated files and worktree changes.
 - Use explicit LangGraph nodes and state transitions for meaningful workflow decisions.
-- Use the local zero-shot classifier for state-changing intent classification.
-- Advance only when a non-`other` class passes configured confidence and ambiguity gates.
+- Use the schema-constrained LLM classifier for raw customer turns.
+- Advance only when a non-`other` class passes the configured confidence gate.
 - Do not allow low-confidence output to authenticate, cancel, restart, disclose data, or trigger handoff.
 - Handle global human, cancel, and restart controls before phase-specific decisions.
 - Avoid unbounded substring matching for commands. Use bounded, command-shaped rules and negative tests.

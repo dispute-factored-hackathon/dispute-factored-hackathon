@@ -1,10 +1,23 @@
 from datetime import UTC, date, datetime
 
+from webapp.backend.demo_card import seed_demo_card
 from webapp.backend.models.customer import Accent, Customer, Gender
-from webapp.backend.models.product import Product
 from webapp.backend.repositories.interfaces import CustomerRepository, ProductRepository
 
 DEMO_CUSTOMERS = (
+    {
+        "customer_id": "DEMO-BR-GABRIEL-123456",
+        "document_number": "123456",
+        "first_name": "Gabriel",
+        "last_name": "Silveira",
+        "country": "Brazil",
+        "city": "São Paulo",
+        "state": "SP",
+        "accent": Accent.PORTUGUESE,
+        "phone": "+5511981020050",
+        "date_of_birth": date(1999, 1, 1),
+        "gender": Gender.MALE,
+    },
     {
         "customer_id": "DEMO-BR-ANA-1001",
         "document_number": "410001",
@@ -77,8 +90,8 @@ def seed_demo_customers(
                     document_type="DEMO_ID",
                     first_name=data["first_name"],
                     last_name=data["last_name"],
-                    date_of_birth=date(1990, 1, 1),
-                    gender=Gender.PREFER_NOT_TO_SAY,
+                    date_of_birth=data.get("date_of_birth", date(1990, 1, 1)),
+                    gender=data.get("gender", Gender.PREFER_NOT_TO_SAY),
                     mobile_phone=data["phone"],
                     city=data["city"],
                     state=data["state"],
@@ -93,20 +106,4 @@ def seed_demo_customers(
                 )
             )
         if products and not products.list_by_customer(data["customer_id"]):
-            products.create(
-                Product(
-                    product_id=f"CARD-{data['customer_id']}",
-                    customer_id=data["customer_id"],
-                    product_type="Credit Card",
-                    product_number=f"4111111111{data['document_number']}",
-                    currency="USD",
-                    current_balance=0.0,
-                    credit_limit=10_000.0,
-                    opening_date=now.date(),
-                    opening_branch_id=1,
-                    product_status="Active",
-                    opening_channel="Web",
-                    has_linked_app=True,
-                    last_updated=now,
-                )
-            )
+            seed_demo_card(products, data["customer_id"])

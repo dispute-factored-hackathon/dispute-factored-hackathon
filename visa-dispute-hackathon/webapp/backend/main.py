@@ -1,3 +1,5 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, status
@@ -29,7 +31,11 @@ from webapp.backend.api.routes.transactions import (
 )
 from webapp.backend.config import get_settings
 from webapp.backend.demo_seed import seed_demo_customers
-from webapp.backend.repositories.mock import customer_repository, product_repository
+from webapp.backend.repositories.registry import (
+    close_repositories,
+    customer_repository,
+    product_repository,
+)
 
 settings = get_settings()
 
@@ -37,11 +43,19 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 FRONTEND_DIR = BASE_DIR / "frontend"
 PAGES_DIR = FRONTEND_DIR / "pages"
 
-seed_demo_customers(customer_repository, product_repository)
+if settings.seed_demo_customers:
+    seed_demo_customers(customer_repository, product_repository)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    yield
+    close_repositories()
 
 
 app = FastAPI(
     title=settings.app_name,
+    lifespan=lifespan,
 )
 
 

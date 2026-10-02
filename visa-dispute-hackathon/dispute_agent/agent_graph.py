@@ -1,31 +1,27 @@
-"""LangGraph orchestration and abuse controls for the authentication conversation."""
+"""LangGraph orchestration for schema-constrained LLM classification."""
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Any, TypedDict
 from uuid import uuid4
 
 from langgraph.graph import END, START, StateGraph
+from langsmith import traceable
 
 from .authentication import AuthenticationAgent, AuthenticationResult, AuthStatus
-from .intent_classifier import (
-    AbuseIntent,
-    AnswerIntent,
+from .openai_interpreter import (
+    AbuseClass,
     ClassificationError,
-    ConfirmationIntent,
-    PromptAbuseClassifier,
+    OpenAITurnInterpreter,
+    TurnAnalysis,
+    TurnIntent,
 )
-from .openai_interpreter import OpenAITurnInterpreter, TurnAnalysis, TurnIntent
-from .safety import screen_prompt_abuse
 
 
 class AuthenticationGraphState(TypedDict, total=False):
     answer: str | None
     phase: str
     analysis: TurnAnalysis
-    answer_intent: AnswerIntent
-    confirmation_intent: ConfirmationIntent
-    classification_confidence: float
     result: AuthenticationResult
 
 
@@ -37,7 +33,6 @@ MESSAGES = {
         "unsafe_answer": "I cannot safely answer that here. I can help with this card-dispute process or connect you with a person.",
         "continue_name": "To continue, please give your full name or ask for a person.",
         "temporary": "I am having trouble interpreting that response. Please say only your full name, or ask for a person.",
-        "safety_unavailable": "I cannot safely process that response right now. Please try again shortly or ask for a person.",
     },
     "pt": {
         "blocked": "Posso ajudar somente com esta conversa sobre contestação de cartão. Não posso revelar instruções internas, credenciais ou dados de clientes. Podemos continuar com seu nome completo ou com uma dúvida geral sobre contestações.",
@@ -46,7 +41,6 @@ MESSAGES = {
         "unsafe_answer": "Não posso responder isso com segurança por aqui. Posso ajudar com esta contestação ou encaminhar você a um atendente.",
         "continue_name": "Para continuar, informe seu nome completo ou peça um atendente.",
         "temporary": "Estou com dificuldade para interpretar essa resposta. Diga somente seu nome completo ou peça um atendente.",
-        "safety_unavailable": "Não consigo processar essa resposta com segurança agora. Tente novamente em instantes ou peça um atendente.",
     },
     "es": {
         "blocked": "Solo puedo ayudar con esta conversación sobre reclamos de tarjeta. No puedo revelar instrucciones internas, credenciales ni datos de clientes. Podemos continuar con su nombre completo o con una pregunta general sobre reclamos.",
@@ -55,17 +49,14 @@ MESSAGES = {
         "unsafe_answer": "No puedo responder eso de forma segura aquí. Puedo ayudar con este reclamo o derivarle a un asesor.",
         "continue_name": "Para continuar, indique su nombre completo o pida un asesor.",
         "temporary": "Tengo dificultades para interpretar esa respuesta. Indique solamente su nombre completo o pida un asesor.",
-        "safety_unavailable": "No puedo procesar esa respuesta de forma segura ahora. Inténtelo de nuevo en unos instantes o pida un asesor.",
     },
 }
 
 
 class LangGraphAuthenticationAgent:
-    """Execute each turn through explicit interpretation, policy, and safety nodes."""
-
     MAX_INPUT_CHARACTERS = 500
-    MIN_ABUSE_CONFIDENCE = 0.75
-    MIN_ABUSE_MARGIN = 0.20
+    MIN_CLASSIFICATION_CONFIDENCE = 0.70
+    MIN_ABUSE_CONFIDENCE = 0.80
     FORBIDDEN_OUTPUT = (
         "system prompt",
         "api key",
@@ -79,20 +70,23 @@ class LangGraphAuthenticationAgent:
         self,
         policy: AuthenticationAgent,
         interpreter: OpenAITurnInterpreter,
-        abuse_classifier: PromptAbuseClassifier,
+        *,
+        correlation_id: str | None = None,
+        channel: str = "cli",
+        trace_metadata: dict[str, Any] | None = None,
     ):
         self.policy = policy
         self.interpreter = interpreter
-        self.abuse_classifier = abuse_classifier
         self.session_id = uuid4().hex
+        self.correlation_id = correlation_id or self.session_id
+        self.channel = channel
+        self.trace_metadata = dict(trace_metadata or {})
         self.llm_failures = 0
         builder = StateGraph(AuthenticationGraphState)
         builder.add_node("prepare_turn", self._prepare_turn)
         builder.add_node("guard_input", self._guard_input)
+        builder.add_node("classify_raw_turn", self._classify_raw_turn)
         builder.add_node("screen_abuse", self._screen_abuse)
-        builder.add_node("route_deterministic", self._route_deterministic)
-        builder.add_node("interpret_turn", self._interpret_turn)
-        builder.add_node("classify_turn", self._classify_turn)
         builder.add_node("answer_question", self._answer_question)
         builder.add_node("refuse_out_of_scope", self._refuse_out_of_scope)
         builder.add_node("apply_policy", self._apply_policy)
@@ -101,34 +95,23 @@ class LangGraphAuthenticationAgent:
         builder.add_edge("prepare_turn", "guard_input")
         builder.add_conditional_edges(
             "guard_input",
-            lambda s: "done" if "result" in s else "screen",
+            lambda state: "done" if "result" in state else "classify",
+            {"done": "validate_response", "classify": "classify_raw_turn"},
+        )
+        builder.add_conditional_edges(
+            "classify_raw_turn",
+            lambda state: "done" if "result" in state else "screen",
             {"done": "validate_response", "screen": "screen_abuse"},
         )
         builder.add_conditional_edges(
             "screen_abuse",
-            lambda s: "done" if "result" in s else "deterministic",
-            {"done": "validate_response", "deterministic": "route_deterministic"},
-        )
-        builder.add_conditional_edges(
-            "route_deterministic",
-            lambda s: "policy" if s.get("phase") == "deterministic_policy" else "interpret",
-            {"policy": "apply_policy", "interpret": "interpret_turn"},
-        )
-        builder.add_conditional_edges(
-            "interpret_turn",
             self._route_analysis,
             {
                 "done": "validate_response",
                 "question": "answer_question",
                 "out_of_scope": "refuse_out_of_scope",
-                "classify": "classify_turn",
                 "policy": "apply_policy",
             },
-        )
-        builder.add_conditional_edges(
-            "classify_turn",
-            lambda s: "done" if "result" in s else "policy",
-            {"done": "validate_response", "policy": "apply_policy"},
         )
         builder.add_edge("answer_question", "validate_response")
         builder.add_edge("refuse_out_of_scope", "validate_response")
@@ -136,64 +119,60 @@ class LangGraphAuthenticationAgent:
         builder.add_edge("validate_response", END)
         self.graph = builder.compile()
 
+    def _trace_metadata(self, **extra: Any) -> dict[str, Any]:
+        """Return non-sensitive correlation metadata shared by LangSmith runs."""
+
+        metadata: dict[str, Any] = {
+            "thread_id": self.session_id,
+            "correlation_id": self.correlation_id,
+            "channel": self.channel,
+            "locale": self.policy.locale,
+            "language": self.policy.language,
+            "synthetic_data": True,
+            **self.trace_metadata,
+        }
+        metadata.update(extra)
+        return metadata
+
+    @staticmethod
+    def _analysis_metadata(analysis: TurnAnalysis) -> dict[str, Any]:
+        """Expose classifier decisions without raw utterances or extracted names."""
+
+        return {
+            "intent": analysis.intent.value,
+            "confidence": analysis.confidence,
+            "language": analysis.language,
+            "abuse": analysis.abuse.value,
+            "abuse_confidence": analysis.abuse_confidence,
+            "has_extracted_name": bool(analysis.extracted_name),
+            "has_direct_answer": bool(analysis.direct_answer),
+        }
+
     def _text(self, key: str) -> str:
         language = self.policy.language if self.policy.language in MESSAGES else "en"
         return MESSAGES[language][key]
 
+    @traceable(name="prepare-authentication-turn", run_type="chain")
     def _prepare_turn(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
-        phase = "name_confirmation" if self.policy.pending_customer else "name_collection"
+        if self.policy.language == "auto":
+            phase = "language_selection"
+        else:
+            phase = "name_confirmation" if self.policy.pending_customer else "name_collection"
         self.interpreter.set_context(phase=phase, locale=self.policy.locale)
         return {"phase": phase}
 
     def _guard_input(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
         answer = (state.get("answer") or "").strip()
         if not answer:
-            return {"result": self.policy.handle_answer(answer)}
+            return {"result": self.policy.handle_empty_answer()}
         if len(answer) > self.MAX_INPUT_CHARACTERS:
-            return {"result": AuthenticationResult(AuthStatus.NEEDS_NAME, self._text("too_long"))}
+            return {
+                "result": AuthenticationResult(self._continuation_status(), self._text("too_long"))
+            }
         return {}
 
-    def _screen_abuse(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
-        """Enforce screening for direct graph calls as well as the public facade."""
-
-        result = self._check_prompt_abuse(state.get("answer"))
-        return {"result": result} if result is not None else {}
-
-    def _check_prompt_abuse(self, answer: str | None) -> AuthenticationResult | None:
-        """Screen one valid customer message before it enters the graph."""
-
-        text = (answer or "").strip()
-        if not text or len(text) > self.MAX_INPUT_CHARACTERS:
-            return None
-        try:
-            decision = self.abuse_classifier.classify(text)
-        except ClassificationError:
-            message = self._contextual_safety_message("safety_unavailable")
-            result = AuthenticationResult(self._continuation_status(), message)
-            self.policy.last_customer_utterance = text
-            self.policy.last_agent_message = result.message
-            return result
-        scores = sorted(decision.probabilities.values(), reverse=True)
-        margin = scores[0] - scores[1] if len(scores) > 1 else decision.confidence
-        if (
-            decision.intent is AbuseIntent.PROMPT_ABUSE
-            and decision.confidence >= self.MIN_ABUSE_CONFIDENCE
-            and margin >= self.MIN_ABUSE_MARGIN
-        ):
-            message = self._contextual_safety_message("blocked")
-            result = AuthenticationResult(self._continuation_status(), message)
-            self.policy.last_customer_utterance = text
-            self.policy.last_agent_message = result.message
-            return result
-        return None
-
-    def _contextual_safety_message(self, key: str) -> str:
-        message = self._text(key)
-        if self.policy.pending_customer:
-            message = f"{message} {self.policy._message('confirmation_unclear', name=self.policy.pending_customer.full_name)}"
-        return message
-
-    def _interpret_turn(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
+    @traceable(name="classify-authentication-turn", run_type="chain")
+    def _classify_raw_turn(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
         try:
             analysis = self.interpreter.analyze(state.get("answer") or "")
             self.llm_failures = 0
@@ -208,108 +187,49 @@ class LangGraphAuthenticationAgent:
                 }
             return {
                 "result": self.policy._handoff(
-                    "handoff_system", "llm_interpretation_unavailable_or_limit_reached"
+                    "handoff_system", "llm_classification_unavailable_or_limit_reached"
                 )
             }
 
-    def _route_deterministic(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
-        """Keep simple menu, exact-name, and explicit control turns independent of the API."""
-
-        answer = state.get("answer") or ""
-        if self.policy.language == "auto" or self.policy.directory.find_by_full_name(answer):
-            return {"phase": "deterministic_policy"}
-        explicit = (
-            self.policy.intent_classifier._explicit_intent(answer)
-            if hasattr(self.policy.intent_classifier, "_explicit_intent")
-            else None
-        )
-        if explicit in {AnswerIntent.REQUESTS_HUMAN, AnswerIntent.CANCELS, AnswerIntent.RESTARTS}:
-            return {"phase": "deterministic_policy"}
+    @traceable(name="screen-authentication-abuse", run_type="chain")
+    def _screen_abuse(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
+        analysis = state["analysis"]
+        if (
+            analysis.abuse is AbuseClass.PROMPT_ABUSE
+            and analysis.abuse_confidence >= self.MIN_ABUSE_CONFIDENCE
+        ):
+            message = self._text("blocked")
+            if self.policy.pending_customer:
+                message = (
+                    f"{message} "
+                    f"{self.policy._message('confirmation_unclear', name=self.policy.pending_customer.full_name)}"
+                )
+            return {"result": AuthenticationResult(self._continuation_status(), message)}
         return {}
 
     def _route_analysis(self, state: AuthenticationGraphState) -> str:
         if "result" in state:
             return "done"
-        # Language selection is its own deterministic gate before authentication.
+        analysis = state["analysis"]
+        if analysis.confidence < self.MIN_CLASSIFICATION_CONFIDENCE:
+            return "policy"
+        if analysis.intent in {
+            TurnIntent.REQUESTS_HUMAN,
+            TurnIntent.CANCELS,
+            TurnIntent.RESTARTS,
+        }:
+            return "policy"
         if self.policy.language == "auto":
             return "policy"
-        # A grounded name always takes priority, even if the same utterance also asks a question.
-        if (state["analysis"].extracted_name or "").strip():
+        if analysis.extracted_name:
             return "policy"
-        if (state["analysis"].direct_answer or "").strip():
+        if analysis.direct_answer:
             return "question"
-        # Understanding that a request is outside this agent's work does not require a
-        # state-changing classifier. Return a scoped answer and preserve the current phase.
-        if state["analysis"].intent is TurnIntent.OUT_OF_SCOPE:
+        if analysis.intent is TurnIntent.OUT_OF_SCOPE:
             return "out_of_scope"
-        return "classify"
+        return "policy"
 
-    @staticmethod
-    def _has_margin(probabilities: dict[str, float], minimum: float) -> bool:
-        scores = sorted(probabilities.values(), reverse=True)
-        return len(scores) < 2 or scores[0] - scores[1] >= minimum
-
-    def _classify_turn(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
-        """Permit state changes only for a confident, non-OTHER zero-shot class."""
-
-        answer = state.get("answer") or ""
-        try:
-            if self.policy.pending_customer:
-                control_intent = self.policy.classify_global_control(answer)
-                if control_intent is not None:
-                    return {"result": self.policy.apply_global_control(control_intent)}
-                classifier = self.policy.confirmation_classifier
-                if classifier is None:
-                    return {
-                        "result": self.policy._handoff(
-                            "handoff_system", "confirmation_model_unavailable"
-                        )
-                    }
-                decision = classifier.classify(answer)
-                accepted = (
-                    decision.intent is not ConfirmationIntent.OTHER
-                    and decision.confidence >= self.policy.min_confirmation_confidence
-                    and self._has_margin(
-                        decision.probabilities, self.policy.min_confirmation_margin
-                    )
-                )
-                if not accepted:
-                    return {
-                        "result": AuthenticationResult(
-                            AuthStatus.NEEDS_CONFIRMATION,
-                            self.policy._message(
-                                "confirmation_unclear", name=self.policy.pending_customer.full_name
-                            ),
-                        )
-                    }
-                return {
-                    "confirmation_intent": decision.intent,
-                    "classification_confidence": decision.confidence,
-                }
-            else:
-                decision = self.policy.intent_classifier.classify(answer)
-                accepted = (
-                    decision.intent is not AnswerIntent.OTHER
-                    and decision.confidence >= self.policy.min_intent_confidence
-                )
-                if not accepted:
-                    return self._refuse_out_of_scope(state)
-                return {
-                    "answer_intent": decision.intent,
-                    "classification_confidence": decision.confidence,
-                }
-        except ClassificationError:
-            return {
-                "result": self.policy._handoff(
-                    "handoff_system", "zero_shot_classification_unavailable"
-                )
-            }
-
-    def _continuation_status(self) -> AuthStatus:
-        return (
-            AuthStatus.NEEDS_CONFIRMATION if self.policy.pending_customer else AuthStatus.NEEDS_NAME
-        )
-
+    @traceable(name="answer-authentication-question", run_type="chain")
     def _answer_question(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
         answer = (state["analysis"].direct_answer or "").strip()
         normalized = answer.casefold()
@@ -319,31 +239,36 @@ class LangGraphAuthenticationAgent:
             or any(marker in normalized for marker in self.FORBIDDEN_OUTPUT)
         ):
             answer = self._text("unsafe_answer")
-        if self.policy.pending_customer:
-            answer = f"{answer} {self.policy._message('confirmation_unclear', name=self.policy.pending_customer.full_name)}"
-        else:
-            answer = f"{answer} {self._text('continue_name')}"
+        continuation = (
+            self.policy._message(
+                "confirmation_unclear", name=self.policy.pending_customer.full_name
+            )
+            if self.policy.pending_customer
+            else self._text("continue_name")
+        )
         self.policy.questions_answered += 1
-        return {"result": AuthenticationResult(self._continuation_status(), answer)}
+        return {
+            "result": AuthenticationResult(self._continuation_status(), f"{answer} {continuation}")
+        }
 
+    @traceable(name="refuse-authentication-out-of-scope", run_type="chain")
     def _refuse_out_of_scope(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
         del state
-        message = self._text("out_of_scope")
-        if self.policy.pending_customer:
-            message = f"{message} {self.policy._message('confirmation_unclear', name=self.policy.pending_customer.full_name)}"
-        return {"result": AuthenticationResult(self._continuation_status(), message)}
+        return {
+            "result": AuthenticationResult(self._continuation_status(), self._text("out_of_scope"))
+        }
 
+    @traceable(name="apply-authentication-policy", run_type="chain")
     def _apply_policy(self, state: AuthenticationGraphState) -> AuthenticationGraphState:
-        answer = state.get("answer") or ""
-        if "confirmation_intent" in state:
-            return {
-                "result": self.policy.apply_validated_confirmation(
-                    answer, state["confirmation_intent"]
-                )
-            }
-        if "answer_intent" in state:
-            return {"result": self.policy.apply_validated_intent(answer, state["answer_intent"])}
-        return {"result": self.policy.handle_answer(state.get("answer"))}
+        analysis = state["analysis"]
+        if analysis.confidence < self.MIN_CLASSIFICATION_CONFIDENCE:
+            return {"result": self.policy.handle_unclear_classification()}
+        return {"result": self.policy.apply_llm_classification(analysis)}
+
+    def _continuation_status(self) -> AuthStatus:
+        return (
+            AuthStatus.NEEDS_CONFIRMATION if self.policy.pending_customer else AuthStatus.NEEDS_NAME
+        )
 
     @staticmethod
     def _validate_response(state: AuthenticationGraphState) -> AuthenticationGraphState:
@@ -351,25 +276,68 @@ class LangGraphAuthenticationAgent:
             raise RuntimeError("Conversation policy returned an empty customer response")
         return {}
 
+    @traceable(
+        name="start-dispute-call",
+        run_type="chain",
+        metadata={"component": "authentication_graph"},
+    )
     def start(self) -> AuthenticationResult:
-        result = self.policy.start()
+        if self.policy.language == "auto" and self.policy.country_code:
+            try:
+                result = self.policy.apply_opening(
+                    self.interpreter.generate_opening(self.policy.country_code)
+                )
+            except ClassificationError:
+                result = AuthenticationResult(
+                    AuthStatus.NEEDS_NAME,
+                    f"Hi! You've reached Bank Factored. Your calling code is "
+                    f"{self.policy.country_code}. Would you like to continue in English, "
+                    "Spanish, or Portuguese?",
+                )
+        else:
+            result = self.policy.start()
         self.policy.last_agent_message = result.message
         return result
 
-    @screen_prompt_abuse
+    @traceable(
+        name="handle-customer-turn",
+        run_type="chain",
+        metadata={"component": "authentication_graph"},
+    )
     def handle_answer(self, answer: str | None) -> AuthenticationResult:
         self.policy.last_customer_utterance = (answer or "").strip() or None
+
+        phase = (
+            "language_selection"
+            if self.policy.language == "auto"
+            else "name_confirmation"
+            if self.policy.pending_customer
+            else "name_collection"
+        )
+
         config = {
             "run_name": "card-dispute-authentication-turn",
-            "tags": ["call-center", "synthetic-data", self.policy.locale],
-            "metadata": {
-                "thread_id": self.session_id,
-                "phase": "name_confirmation" if self.policy.pending_customer else "name_collection",
-                "channel": "cli",
-                "synthetic_data": True,
-            },
+            "tags": [
+                "call-center",
+                "synthetic-data",
+                "llm-classifier",
+                self.channel,
+                self.policy.locale,
+            ],
+            "metadata": self._trace_metadata(
+                phase=phase,
+                input_present=bool((answer or "").strip()),
+                input_length=len(answer or ""),
+                llm_failures_before=self.llm_failures,
+            ),
         }
-        result = self.graph.invoke({"answer": answer}, config=config)["result"]
+
+        final_state = self.graph.invoke(
+            {"answer": answer},
+            config=config,
+        )
+
+        result = final_state["result"]
         self.policy.last_agent_message = result.message
         return result
 

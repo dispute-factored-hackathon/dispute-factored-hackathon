@@ -5,8 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from webapp.backend.api.dependencies import require_customer
 from webapp.backend.models.customer import Customer
 from webapp.backend.models.store import StoreCartItem, StoreProduct
-from webapp.backend.repositories.mock import (
-    MockStoreCatalogRepository,
+from webapp.backend.repositories.mock import MockStoreCatalogRepository
+from webapp.backend.repositories.registry import (
     product_repository,
     transaction_repository,
 )
