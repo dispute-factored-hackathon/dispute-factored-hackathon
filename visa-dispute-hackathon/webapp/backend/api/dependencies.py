@@ -5,7 +5,7 @@ from fastapi import Cookie, Depends, HTTPException, status
 
 from webapp.backend.models.customer import Customer
 from webapp.backend.models.session import CustomerSession
-from webapp.backend.repositories.mock import (
+from webapp.backend.repositories.registry import (
     customer_repository,
     session_repository,
 )
