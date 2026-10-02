@@ -394,6 +394,22 @@ class VoiceCallServiceTests(unittest.TestCase):
         self.assertEqual(refined.state.transaction_criteria.currency, "USD")
         self.assertEqual(refined.state.current_transaction.merchant_name, "Mango Gold Store")
 
+    def test_added_details_repeat_retrieval_and_change_the_top_one(self):
+        state = self.authenticate_known_phone("call_transaction_rerank")
+        broad = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(merchant_query="fruit"),
+        )
+        refined = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(approximate_amount=13.0),
+        )
+
+        self.assertEqual(broad.state.current_transaction.merchant_name, "Mango Gold Store")
+        self.assertEqual(refined.state.current_transaction.merchant_name, "Lemon Drop Market")
+        self.assertEqual(refined.state.transaction_search_attempts, 2)
+        self.assertEqual(refined.state.transaction_criteria.merchant_query, "fruit")
+
     def test_no_match_can_be_corrected_without_losing_the_call(self):
         state = self.authenticate_known_phone("call_transaction_correction")
 

@@ -583,20 +583,19 @@ class VoiceCallService:
         if state.transaction_guess_attempts >= self.max_transaction_guesses:
             return self._transaction_handoff(state)
 
-        proposed = set(state.proposed_transaction_ids)
-        next_candidate = next(
-            (
-                transaction
-                for transaction in state.transaction_candidates
-                if transaction.transaction_id not in proposed
-            ),
-            None,
+        assert state.identity is not None
+        reranked = self.transactions.search(
+            state.identity.customer_id,
+            state.transaction_criteria,
+            excluded_transaction_ids=state.proposed_transaction_ids,
         )
-        if next_candidate is None:
+        if not reranked.transactions:
             updated = replace(
                 state,
                 stage=VoiceCallStage.NEEDS_TRANSACTION_DETAILS,
+                transaction_candidates=(),
                 current_transaction=None,
+                transaction_search_attempts=state.transaction_search_attempts + 1,
             )
             self._calls[call_id] = updated
             return TransactionSelectionResult(
@@ -605,9 +604,13 @@ class VoiceCallService:
             )
 
         return self._propose_transaction(
-            state,
-            next_candidate,
-            result_count=len(state.transaction_candidates),
+            replace(
+                state,
+                transaction_candidates=reranked.transactions,
+                transaction_search_attempts=state.transaction_search_attempts + 1,
+            ),
+            reranked.transactions[0],
+            result_count=len(reranked.transactions),
         )
 
     def _propose_transaction(

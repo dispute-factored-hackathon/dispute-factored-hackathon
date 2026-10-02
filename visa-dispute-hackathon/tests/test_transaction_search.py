@@ -60,17 +60,19 @@ class SQLiteTransactionSearchTests(unittest.TestCase):
             with self.subTest(fruit=fruit):
                 self.assertIn(fruit, searchable_text)
 
-    def test_approximate_amount_uses_tolerance_instead_of_exact_equality(self):
+    def test_approximate_amount_retrieval_ranks_closest_candidate_first(self):
         result = self.repository.search(
             CUSTOMER_ID,
             TransactionSearchCriteria(approximate_amount=13.0, currency="USD"),
         )
 
-        self.assertEqual(
-            [transaction.merchant_name for transaction in result.transactions],
-            ["Lemon Drop Market"],
+        self.assertEqual(result.retrieved_count, 10)
+        self.assertEqual(result.transactions[0].merchant_name, "Lemon Drop Market")
+        self.assertGreater(
+            result.ranked_transactions[0].score,
+            result.ranked_transactions[1].score,
         )
-        self.assertIn("abs(amount - ?)", result.sql)
+        self.assertIn("customer_id = ?", result.sql)
         self.assertNotIn("13.0", result.sql)
 
         percentage_tolerance = self.repository.search(
@@ -78,8 +80,28 @@ class SQLiteTransactionSearchTests(unittest.TestCase):
             TransactionSearchCriteria(approximate_amount=136.0),
         )
         self.assertEqual(
-            [transaction.merchant_name for transaction in percentage_tolerance.transactions],
-            ["Mango Gold Store"],
+            percentage_tolerance.transactions[0].merchant_name,
+            "Mango Gold Store",
+        )
+
+    def test_new_information_retrieves_and_reranks_top_one_again(self):
+        broad = self.repository.search(
+            CUSTOMER_ID,
+            TransactionSearchCriteria(merchant_query="fruit"),
+        )
+        refined = self.repository.search(
+            CUSTOMER_ID,
+            TransactionSearchCriteria(
+                merchant_query="fruit",
+                approximate_amount=13.0,
+                country="Argentina",
+            ),
+        )
+
+        self.assertEqual(broad.transactions[0].merchant_name, "Mango Gold Store")
+        self.assertEqual(refined.transactions[0].merchant_name, "Lemon Drop Market")
+        self.assertEqual(
+            refined.ranked_transactions[0].matched_fields, ("merchant", "amount", "country")
         )
 
     def test_results_are_limited_to_ten_and_scoped_to_authenticated_customer(self):
@@ -145,6 +167,7 @@ class SQLiteTransactionSearchTests(unittest.TestCase):
         payload = json.loads(captured.records[-1].getMessage())
         self.assertEqual(payload["event"], "transaction.search.completed")
         self.assertEqual(payload["result_count"], 0)
+        self.assertEqual(payload["retrieved_count"], 10)
         self.assertGreaterEqual(payload["latency_ms"], 0)
         self.assertNotIn("private synthetic merchant", captured.output[-1])
 

@@ -12,6 +12,7 @@ import unicodedata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, fields, replace
 from datetime import UTC, date, datetime, timedelta
+from difflib import SequenceMatcher
 from pathlib import Path
 from threading import RLock
 from typing import Any, Protocol
@@ -24,6 +25,7 @@ DEFAULT_DEMO_CUSTOMER_ID = "DEMO-BR-GABRIEL-123456"
 MAX_RESULTS = 10
 AMOUNT_TOLERANCE_RATE = 0.10
 MIN_AMOUNT_TOLERANCE = 5.0
+MIN_RELEVANCE_SCORE = 0.35
 
 TRANSACTION_COLUMNS = (
     "transaction_id",
@@ -146,11 +148,27 @@ class TransactionSearchCriteria:
 
 
 @dataclass(frozen=True)
+class RankedTransaction:
+    """One retrieved transaction with an explainable relevance score."""
+
+    transaction: Transaction
+    score: float
+    matched_fields: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class TransactionSearchResult:
     criteria: TransactionSearchCriteria
-    transactions: tuple[Transaction, ...]
+    ranked_transactions: tuple[RankedTransaction, ...]
     sql: str
+    retrieved_count: int
     latency_ms: float
+
+    @property
+    def transactions(self) -> tuple[Transaction, ...]:
+        """Keep callers independent from ranker metadata."""
+
+        return tuple(item.transaction for item in self.ranked_transactions)
 
 
 class TransactionSearchRepository(Protocol):
@@ -209,7 +227,7 @@ class SQLiteTransactionSearchRepository:
         excluded_transaction_ids: tuple[str, ...] = (),
         limit: int = MAX_RESULTS,
     ) -> TransactionSearchResult:
-        """Compile and execute one parameterized, customer-scoped SELECT."""
+        """Retrieve a safe candidate set, rerank it, and return the best matches."""
 
         if not customer_id.strip():
             raise ValueError("customer_id is required")
@@ -228,13 +246,27 @@ class SQLiteTransactionSearchRepository:
         with self._lock:
             rows = self._connection.execute(sql, parameters).fetchall()
         latency_ms = round((time.monotonic() - started) * 1000, 2)
-        transactions = tuple(self._to_transaction(row) for row in rows)
+        retrieved = tuple(self._to_transaction(row) for row in rows)
+        ranked = tuple(
+            candidate
+            for candidate in sorted(
+                (_rank_transaction(transaction, criteria) for transaction in retrieved),
+                key=lambda candidate: (
+                    candidate.score,
+                    candidate.transaction.transaction_date,
+                ),
+                reverse=True,
+            )
+            if candidate.score >= MIN_RELEVANCE_SCORE
+        )[:bounded_limit]
         LOGGER.info(
             json.dumps(
                 {
                     "event": "transaction.search.completed",
                     "latency_ms": latency_ms,
-                    "result_count": len(transactions),
+                    "retrieved_count": len(retrieved),
+                    "result_count": len(ranked),
+                    "top_score": ranked[0].score if ranked else None,
                     "limit": bounded_limit,
                     "has_merchant": criteria.merchant_query is not None,
                     "has_amount": criteria.approximate_amount is not None,
@@ -244,7 +276,13 @@ class SQLiteTransactionSearchRepository:
                 }
             )
         )
-        return TransactionSearchResult(criteria, transactions, sql, latency_ms)
+        return TransactionSearchResult(
+            criteria=criteria,
+            ranked_transactions=ranked,
+            sql=sql,
+            retrieved_count=len(retrieved),
+            latency_ms=latency_ms,
+        )
 
     @staticmethod
     def _compile_query(
@@ -257,55 +295,14 @@ class SQLiteTransactionSearchRepository:
         clauses = ["customer_id = ?"]
         parameters: list[Any] = [customer_id]
 
-        if criteria.merchant_query:
-            merchant_pattern = f"%{_escape_like(_normalize_text(criteria.merchant_query))}%"
-            clauses.append(
-                "(normalize_text(coalesce(merchant_name, '')) LIKE ? ESCAPE '\\' "
-                "OR normalize_text(coalesce(merchant_category, '')) LIKE ? ESCAPE '\\' "
-                "OR normalize_text(coalesce(transaction_category, '')) LIKE ? ESCAPE '\\')"
-            )
-            parameters.extend([merchant_pattern, merchant_pattern, merchant_pattern])
-        if criteria.approximate_amount is not None:
-            clauses.append("abs(amount - ?) <= max(?, abs(?) * ?)")
-            parameters.extend(
-                [
-                    criteria.approximate_amount,
-                    MIN_AMOUNT_TOLERANCE,
-                    criteria.approximate_amount,
-                    AMOUNT_TOLERANCE_RATE,
-                ]
-            )
-        if criteria.currency:
-            clauses.append("upper(currency) = upper(?)")
-            parameters.append(criteria.currency)
-        if criteria.date_from:
-            clauses.append("date(transaction_date) >= date(?)")
-            parameters.append(criteria.date_from.isoformat())
-        if criteria.date_to:
-            clauses.append("date(transaction_date) <= date(?)")
-            parameters.append(criteria.date_to.isoformat())
-        for column, value in (
-            ("transaction_country", criteria.country),
-            ("transaction_city", criteria.city),
-            ("channel", criteria.channel),
-            ("transaction_type", criteria.transaction_type),
-        ):
-            if value:
-                clauses.append(f"normalize_text({column}) = ?")
-                parameters.append(_normalize_text(value))
         if excluded_transaction_ids:
             placeholders = ", ".join("?" for _ in excluded_transaction_ids)
             clauses.append(f"transaction_id NOT IN ({placeholders})")
             parameters.extend(excluded_transaction_ids)
 
-        order_by = "transaction_date DESC"
-        if criteria.approximate_amount is not None:
-            order_by = "abs(amount - ?) ASC, transaction_date DESC"
-            parameters.append(criteria.approximate_amount)
-
         sql = (
             f"SELECT {', '.join(TRANSACTION_COLUMNS)} FROM transactions "
-            f"WHERE {' AND '.join(clauses)} ORDER BY {order_by} LIMIT ?"
+            f"WHERE {' AND '.join(clauses)} ORDER BY transaction_date DESC LIMIT ?"
         )
         parameters.append(limit)
         return sql, tuple(parameters)
@@ -440,8 +437,87 @@ def _sqlite_value(value: Any) -> Any:
     return value
 
 
-def _escape_like(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+def _rank_transaction(
+    transaction: Transaction,
+    criteria: TransactionSearchCriteria,
+) -> RankedTransaction:
+    """Score one candidate using only caller-provided, explainable features."""
+
+    weighted_scores: list[tuple[str, float, float]] = []
+
+    if criteria.merchant_query:
+        haystack = " ".join(
+            value
+            for value in (
+                transaction.merchant_name,
+                transaction.merchant_category,
+                transaction.transaction_category,
+            )
+            if value
+        )
+        weighted_scores.append(
+            ("merchant", 5.0, _text_similarity(criteria.merchant_query, haystack))
+        )
+    if criteria.approximate_amount is not None:
+        tolerance = max(
+            MIN_AMOUNT_TOLERANCE,
+            abs(criteria.approximate_amount) * AMOUNT_TOLERANCE_RATE,
+        )
+        distance = abs(transaction.amount - criteria.approximate_amount)
+        weighted_scores.append(("amount", 4.0, 1 / (1 + distance / tolerance)))
+    if criteria.date_from or criteria.date_to:
+        transaction_day = transaction.transaction_date.date()
+        lower = criteria.date_from or criteria.date_to
+        upper = criteria.date_to or criteria.date_from
+        assert lower is not None and upper is not None
+        if lower <= transaction_day <= upper:
+            date_score = 1.0
+        else:
+            distance_days = min(
+                abs((transaction_day - lower).days), abs((transaction_day - upper).days)
+            )
+            date_score = 1 / (1 + distance_days)
+        weighted_scores.append(("date", 3.0, date_score))
+
+    for field_name, expected, actual, weight in (
+        ("country", criteria.country, transaction.transaction_country, 2.5),
+        ("city", criteria.city, transaction.transaction_city, 2.5),
+        ("currency", criteria.currency, transaction.currency, 1.0),
+        ("channel", criteria.channel, transaction.channel, 1.0),
+        ("transaction_type", criteria.transaction_type, transaction.transaction_type, 1.0),
+    ):
+        if expected:
+            weighted_scores.append(
+                (field_name, weight, float(_normalize_text(expected) == _normalize_text(actual)))
+            )
+
+    total_weight = sum(weight for _, weight, _ in weighted_scores)
+    score = (
+        sum(weight * field_score for _, weight, field_score in weighted_scores) / total_weight
+        if total_weight
+        else 0.0
+    )
+    matched_fields = tuple(name for name, _, field_score in weighted_scores if field_score >= 0.75)
+    return RankedTransaction(
+        transaction=transaction,
+        score=round(score, 4),
+        matched_fields=matched_fields,
+    )
+
+
+def _text_similarity(expected: str, actual: str) -> float:
+    query = _normalize_text(expected)
+    candidate = _normalize_text(actual)
+    if not query or not candidate:
+        return 0.0
+    if query in candidate:
+        return 1.0
+
+    query_tokens = set(query.split())
+    candidate_tokens = set(candidate.split())
+    token_overlap = len(query_tokens & candidate_tokens) / len(query_tokens)
+    sequence_similarity = SequenceMatcher(None, query, candidate).ratio()
+    return max(token_overlap, sequence_similarity)
 
 
 def _normalize_text(value: str | None) -> str:

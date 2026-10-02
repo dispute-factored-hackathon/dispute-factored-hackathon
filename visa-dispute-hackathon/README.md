@@ -38,10 +38,17 @@ After authentication, Izzy asks whether the caller is having a problem with a tr
 
 `SQLiteTransactionSearchRepository` creates a replaceable SQLite database with the same 22 columns as the synthetic `transactions` table. Its ten demonstration rows cover lemon, strawberry, coconut, passion fruit, banana, apple, papaya, peach, grapes, and mango purchases. Merchants and amounts are distinct. Countries and cities are assigned pseudo-randomly from a fixed synthetic catalog using a fixed seed, so the demo is varied but reproducible.
 
-The backend compiles the model's criteria into one parameterized `SELECT`:
+The backend uses a small, structured RAG pipeline for every search turn:
+
+1. **Retrieve:** a parameterized `SELECT` retrieves up to ten recent, untried transactions belonging to the authenticated customer.
+2. **Rerank:** an explainable ranker scores the retrieved candidates against only the details supplied by the caller. Merchant similarity has the greatest weight, followed by amount proximity, date, location, currency, channel, and transaction type.
+3. **Top-1:** only the highest-ranked relevant transaction is given to Izzy for presentation and explicit confirmation.
+4. **Refine:** whenever the caller adds or corrects a detail, the backend merges the new criteria and repeats retrieval, reranking, and Top-1 selection from the beginning.
+
+The retrieval boundary guarantees that:
 
 - the authenticated `customer_id` is always injected by trusted server state;
-- approximate amounts match within the greater of five currency units or 10%;
+- approximate amounts are ranked by their distance using the greater of five currency units or 10% as the scale;
 - values are bound parameters and cannot alter the statement;
 - only the known `transactions` table and supported filters are used;
 - no more than ten rows are returned;
