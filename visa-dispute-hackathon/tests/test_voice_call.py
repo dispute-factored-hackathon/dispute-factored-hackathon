@@ -1,7 +1,13 @@
 import unittest
+from datetime import date
 from pathlib import Path
 
+from dispute_agent.transaction_search import (
+    SQLiteTransactionSearchRepository,
+    TransactionSearchCriteria,
+)
 from dispute_agent.voice_call import (
+    TransactionSelectionOutcome,
     VoiceAuthenticationMethod,
     VoiceCallService,
     VoiceCallStage,
@@ -12,7 +18,25 @@ FIXTURE = Path(__file__).parent / "fixtures" / "customers.csv"
 
 class VoiceCallServiceTests(unittest.TestCase):
     def setUp(self):
-        self.calls = VoiceCallService(FIXTURE)
+        self.transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        self.calls = VoiceCallService(
+            FIXTURE,
+            transaction_repository=self.transactions,
+        )
+
+    def tearDown(self):
+        self.transactions.close()
+
+    def authenticate_known_phone(self, call_id: str):
+        state = self.calls.start(
+            "+55 11 99999-0001",
+            call_id=call_id,
+        )
+        state = self.calls.confirm_language(state.call_id)
+        return self.calls.choose_authentication_method(
+            state.call_id,
+            method="phone",
+        )
 
     def test_known_phone_starts_with_language_confirmation_not_authentication(self):
         state = self.calls.start(
@@ -306,6 +330,272 @@ class VoiceCallServiceTests(unittest.TestCase):
                 state.call_id,
                 method="phone",
             )
+
+    def test_transaction_search_requires_authenticated_caller(self):
+        state = self.calls.start(
+            "+55 11 99999-0001",
+            call_id="call_unauthenticated_search",
+        )
+
+        with self.assertRaises(ValueError):
+            self.calls.search_transactions(
+                state.call_id,
+                TransactionSearchCriteria(merchant_query="lemon"),
+            )
+
+    def test_transaction_is_selected_only_after_explicit_confirmation(self):
+        state = self.authenticate_known_phone("call_transaction_confirmation")
+
+        selection = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(approximate_amount=13.0),
+        )
+
+        self.assertEqual(selection.outcome, TransactionSelectionOutcome.CANDIDATE)
+        self.assertEqual(selection.state.stage, VoiceCallStage.CONFIRM_TRANSACTION)
+        self.assertEqual(
+            selection.state.current_transaction.merchant_name,
+            "Lemon Drop Market",
+        )
+        self.assertIsNone(selection.state.confirmed_transaction)
+
+        confirmed = self.calls.resolve_transaction_candidate(
+            state.call_id,
+            confirmed=True,
+        )
+
+        self.assertEqual(confirmed.outcome, TransactionSelectionOutcome.CONFIRMED)
+        self.assertEqual(confirmed.state.stage, VoiceCallStage.TRANSACTION_SELECTED)
+        self.assertEqual(
+            confirmed.state.confirmed_transaction.transaction_id,
+            selection.state.current_transaction.transaction_id,
+        )
+
+    def test_missing_details_request_clarification_and_preserve_context(self):
+        state = self.authenticate_known_phone("call_transaction_clarification")
+
+        unclear = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(currency="USD"),
+        )
+
+        self.assertEqual(
+            unclear.outcome,
+            TransactionSelectionOutcome.NEEDS_CLARIFICATION,
+        )
+        self.assertEqual(unclear.state.stage, VoiceCallStage.NEEDS_TRANSACTION_DETAILS)
+        self.assertEqual(unclear.state.transaction_criteria.currency, "USD")
+
+        refined = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(merchant_query="mango"),
+        )
+
+        self.assertEqual(refined.outcome, TransactionSelectionOutcome.CANDIDATE)
+        self.assertEqual(refined.state.transaction_criteria.currency, "USD")
+        self.assertEqual(refined.state.current_transaction.merchant_name, "Mango Gold Store")
+
+    def test_added_details_repeat_retrieval_and_change_the_top_one(self):
+        state = self.authenticate_known_phone("call_transaction_rerank")
+        broad = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(merchant_query="fruit"),
+        )
+        refined = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(approximate_amount=13.0),
+        )
+
+        self.assertEqual(broad.state.current_transaction.merchant_name, "Mango Gold Store")
+        self.assertEqual(refined.state.current_transaction.merchant_name, "Lemon Drop Market")
+        self.assertEqual(refined.state.transaction_search_attempts, 2)
+        self.assertEqual(refined.state.transaction_criteria.merchant_query, "fruit")
+
+    def test_refining_current_candidate_does_not_consume_an_extra_guess(self):
+        state = self.authenticate_known_phone("call_transaction_current_refinement")
+        initial = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(approximate_amount=13.0),
+        )
+        refined = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(city="Buenos Aires"),
+        )
+
+        self.assertEqual(initial.state.transaction_guess_attempts, 1)
+        self.assertEqual(refined.state.transaction_guess_attempts, 1)
+        self.assertEqual(refined.state.current_transaction.merchant_name, "Lemon Drop Market")
+
+    def test_cannot_answer_refinement_moves_to_a_different_missing_detail(self):
+        state = self.authenticate_known_phone("call_transaction_unknown_detail")
+        self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(approximate_amount=13.0),
+        )
+        first_question = self.calls.resolve_transaction_candidate(
+            state.call_id,
+            confirmed=False,
+        )
+        second_question = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(),
+        )
+
+        self.assertEqual(first_question.state.pending_transaction_detail, "merchant")
+        self.assertEqual(second_question.state.pending_transaction_detail, "date")
+        self.assertEqual(second_question.state.transaction_guess_attempts, 1)
+        self.assertIsNone(second_question.state.current_transaction)
+
+    def test_no_match_can_be_corrected_without_losing_the_call(self):
+        state = self.authenticate_known_phone("call_transaction_correction")
+
+        missing = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(merchant_query="dragonfruit"),
+        )
+        corrected = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(merchant_query="papaya"),
+        )
+
+        self.assertEqual(missing.outcome, TransactionSelectionOutcome.NO_MATCH)
+        self.assertEqual(corrected.outcome, TransactionSelectionOutcome.CANDIDATE)
+        self.assertEqual(corrected.state.current_transaction.merchant_name, "Papaya Sunrise Market")
+
+    def test_explicit_correction_can_replace_wrong_prior_details(self):
+        state = self.authenticate_known_phone("call_transaction_replace_correction")
+        missing = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(merchant_query="dragonfruit"),
+        )
+
+        corrected = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(approximate_amount=13),
+            replace_existing=True,
+        )
+
+        self.assertEqual(missing.outcome, TransactionSelectionOutcome.NO_MATCH)
+        self.assertIsNone(corrected.state.transaction_criteria.merchant_query)
+        self.assertEqual(corrected.outcome, TransactionSelectionOutcome.CANDIDATE)
+        self.assertEqual(corrected.state.current_transaction.merchant_name, "Lemon Drop Market")
+
+    def test_caller_can_edit_remove_and_clear_active_filters(self):
+        state = self.authenticate_known_phone("call_transaction_filter_controls")
+        initial = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(
+                merchant_query="lemon",
+                approximate_amount=13,
+                currency="USD",
+            ),
+        )
+
+        edited = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(approximate_amount=14),
+        )
+        removed = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(),
+            remove_filters=("merchant_query",),
+        )
+        cleared = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(),
+            clear_filters=True,
+        )
+
+        self.assertEqual(initial.state.transaction_guess_attempts, 1)
+        self.assertEqual(edited.state.transaction_criteria.approximate_amount, 14)
+        self.assertEqual(edited.state.transaction_guess_attempts, 1)
+        self.assertIsNone(removed.state.transaction_criteria.merchant_query)
+        self.assertEqual(removed.state.transaction_criteria.currency, "USD")
+        self.assertEqual(cleared.outcome, TransactionSelectionOutcome.NEEDS_CLARIFICATION)
+        self.assertFalse(cleared.state.transaction_criteria.has_any_filter)
+        self.assertEqual(cleared.state.transaction_guess_attempts, 1)
+
+    def test_three_searches_without_matches_end_with_same_human_handoff(self):
+        state = self.authenticate_known_phone("call_transaction_three_no_matches")
+        outcomes = []
+
+        for merchant in ("dragonfruit", "lychee", "rambutan"):
+            selection = self.calls.search_transactions(
+                state.call_id,
+                TransactionSearchCriteria(merchant_query=merchant),
+                replace_existing=True,
+            )
+            outcomes.append(selection.outcome)
+
+        self.assertEqual(
+            outcomes,
+            [
+                TransactionSelectionOutcome.NO_MATCH,
+                TransactionSelectionOutcome.NO_MATCH,
+                TransactionSelectionOutcome.EXHAUSTED,
+            ],
+        )
+        self.assertEqual(selection.state.stage, VoiceCallStage.HANDOFF)
+        self.assertEqual(selection.state.transaction_no_match_attempts, 3)
+        self.assertEqual(selection.state.handoff_reason, "transaction_search_exhausted")
+
+    def test_three_denied_candidates_end_with_unavailable_human_handoff(self):
+        state = self.authenticate_known_phone("call_transaction_exhaustion")
+        selection = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(merchant_query="fruit"),
+        )
+
+        proposed_ids = []
+        refinements = ("grapes", "peach")
+        for refinement in (*refinements, None):
+            proposed_ids.append(selection.state.current_transaction.transaction_id)
+            selection = self.calls.resolve_transaction_candidate(
+                state.call_id,
+                confirmed=False,
+            )
+            if refinement is not None:
+                self.assertEqual(
+                    selection.outcome,
+                    TransactionSelectionOutcome.NEEDS_CLARIFICATION,
+                )
+                self.assertIsNone(selection.state.current_transaction)
+                selection = self.calls.search_transactions(
+                    state.call_id,
+                    TransactionSearchCriteria(merchant_query=refinement),
+                )
+
+        self.assertEqual(len(set(proposed_ids)), 3)
+        self.assertEqual(selection.outcome, TransactionSelectionOutcome.EXHAUSTED)
+        self.assertEqual(selection.state.stage, VoiceCallStage.HANDOFF)
+        self.assertEqual(selection.state.handoff_reason, "transaction_search_exhausted")
+
+    def test_rejected_peach_candidate_is_never_returned_after_refinement(self):
+        state = self.authenticate_known_phone("call_rejected_peach")
+        peach = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(
+                date_from=date(2026, 9, 27),
+                date_to=date(2026, 9, 27),
+            ),
+        )
+        rejected_id = peach.state.current_transaction.transaction_id
+
+        denied = self.calls.resolve_transaction_candidate(
+            state.call_id,
+            confirmed=False,
+        )
+        refined = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(city="Lima"),
+        )
+
+        self.assertEqual(peach.state.current_transaction.merchant_name, "Peach Grove Grocer")
+        self.assertIn(rejected_id, denied.state.rejected_transaction_ids)
+        self.assertNotEqual(
+            getattr(refined.state.current_transaction, "transaction_id", None),
+            rejected_id,
+        )
 
 
 if __name__ == "__main__":

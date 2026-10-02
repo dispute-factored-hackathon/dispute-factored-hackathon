@@ -28,9 +28,45 @@ The service returns country and detected-accent data only from the matched synth
 
 The SIP adapter in `dispute_agent.sip_realtime` implements the inbound Realtime flow: it verifies the OpenAI webhook signature, deduplicates retries, accepts the call, and opens a private sideband WebSocket. The SIP provider and OpenAI carry the audio; this backend owns authentication state, language changes, DTMF document entry, and tool results.
 
+For this synthetic demo, `DEMO_LOG_FULL_TRANSCRIPTS=true` enables OpenAI input-audio transcription and stores every completed customer and agent utterance in CloudWatch as a `voice.transcript.completed` JSON event. The `transcript` value is written exactly as received, without redaction or truncation, and `speaker` identifies `customer` or `agent`. This mode must only be used with fake data: disable it before adapting the service to real customers, and never speak real credentials, document numbers, card numbers, or other secrets during a demo call. Keypad document digits remain outside the verbal transcript and are not logged.
+
 The caller number is evaluated before the model speaks. A unique exact normalized match in `customers.mobile_phone` authenticates the synthetic customer and loads language, country, and accent from that customer record. If the complete number is not found or is ambiguous, it does not authenticate: only the international calling code is used as a regional language/accent hint, the caller confirms or changes the language, and authentication continues with keypad-only document entry. An explicit language change updates the active Realtime session instructions for the rest of the call.
 
 This remains a synthetic demonstration. A SIP `From` header can be spoofed and is explicitly treated as untrusted metadata by OpenAI. Even when it uniquely matches the synthetic table, `DEMO_ONLY_PHONE_MATCH` is not production-grade authentication.
+
+### Mock voice transaction search
+
+After authentication, Izzy asks whether the caller is having a problem with a transaction. The caller can describe a merchant or descriptor, approximate amount, currency, date or date range, country, city, channel, or transaction type. The Realtime model passes only schema-constrained criteria to the backend; it never sends executable SQL.
+
+`SQLiteTransactionSearchRepository` creates a replaceable SQLite database with the same 22 columns as the synthetic `transactions` table. Its ten demonstration rows cover lemon, strawberry, coconut, passion fruit, banana, apple, papaya, peach, grapes, and mango purchases. Merchants and amounts are distinct. Countries and cities are assigned pseudo-randomly from a fixed synthetic catalog using a fixed seed, so the demo is varied but reproducible.
+
+The backend uses a small, structured RAG pipeline for every search turn:
+
+1. **Retrieve:** a parameterized `SELECT` retrieves up to ten recent, untried transactions belonging to the authenticated customer.
+2. **Rerank:** an explainable ranker scores the retrieved candidates against only the details supplied by the caller. Merchant similarity has the greatest weight, followed by amount proximity, date, location, currency, channel, and transaction type.
+3. **Top-1:** only the highest-ranked relevant transaction is given to Izzy for presentation and explicit confirmation.
+4. **Refine:** whenever the caller adds or corrects a detail, the backend merges the new criteria and repeats retrieval, reranking, and Top-1 selection from the beginning.
+
+The retrieval boundary guarantees that:
+
+- the authenticated `customer_id` is always injected by trusted server state;
+- approximate amounts are ranked by their distance using the greater of five currency units or 10% as the scale;
+- values are bound parameters and cannot alter the statement;
+- only the known `transactions` table and supported filters are used;
+- no more than ten rows are returned;
+- denied candidates are excluded from later proposals.
+
+Izzy speaks one ranked candidate at a time with merchant, date, amount/currency, city, and country. Only an explicit confirmation selects it. After each denial, Izzy asks for exactly one useful detail that has not already been requested before running retrieval and reranking again. If the caller cannot provide that detail, Izzy moves to a different question instead of repeating the same search. Refining the current candidate does not consume an additional guess; only an explicit denial does. After three denied candidates, Izzy explains that a specialist would normally help, but human operators are unavailable and handoff is outside this demonstration. Dispute creation, Visa reason-code classification, real transaction systems, and real human transfer remain out of scope.
+
+Every search response states the active filters in the caller's selected language. The caller can correct a filter value, remove one named filter, or clear all filters and begin again. A correction reruns retrieval and reranking without consuming another candidate guess. Three rejected candidates or three searches with no matching transaction lead to the same simulated-human-handoff boundary.
+
+When a caller rejects a candidate and provides a new detail in the same sentence, the backend records both atomically: the rejected transaction is excluded and the new detail immediately reruns retrieval. A completed speech transcript must contain an explicit yes before a transaction can be confirmed; unclear transcription asks the caller to repeat instead of guessing. Amounts and dates inferred by the model are dropped when the spoken turn contains no matching numeric evidence, preventing unsupported filters from steering the ranker.
+
+Run the SQLite, state-machine, and SIP-sideband coverage with:
+
+```bash
+uv run pytest tests/test_transaction_search.py tests/test_voice_call.py tests/test_sip_realtime.py -q
+```
 
 ### 1. Configure and start the backend
 

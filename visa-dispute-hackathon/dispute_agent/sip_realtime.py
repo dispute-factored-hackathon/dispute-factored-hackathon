@@ -8,7 +8,9 @@ import logging
 import os
 import re
 import time
+import unicodedata
 from collections.abc import Awaitable, Callable, Mapping
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +21,9 @@ from webapp.backend.demo_seed import seed_demo_customers
 from webapp.backend.repositories.interfaces import CustomerRepository
 from webapp.backend.repositories.mock import customer_repository
 
+from .transaction_search import TransactionSearchCriteria, TransactionSearchRepository
 from .voice_call import (
+    TransactionSelectionOutcome,
     VoiceAuthenticationMethod,
     VoiceCallService,
     VoiceCallStage,
@@ -27,6 +31,226 @@ from .voice_call import (
 )
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _enabled(environment_value: str | None, *, default: bool) -> bool:
+    """Interpret a small, explicit set of environment boolean values."""
+    if environment_value is None:
+        return default
+    return environment_value.strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def _normalized_words(text: str) -> tuple[str, set[str]]:
+    normalized = unicodedata.normalize("NFKD", text.casefold())
+    normalized = "".join(
+        character for character in normalized if not unicodedata.combining(character)
+    )
+    normalized = " ".join(re.findall(r"[a-z0-9]+", normalized))
+    return normalized, set(normalized.split())
+
+
+def _explicit_confirmation_from_transcript(transcript: str) -> bool | None:
+    """Accept only an unambiguous spoken yes or no from the ASR transcript."""
+    normalized, tokens = _normalized_words(transcript)
+    denied = bool(tokens.intersection({"nao", "no", "nope"})) or any(
+        phrase in normalized
+        for phrase in (
+            "not that",
+            "wrong transaction",
+            "transacao errada",
+            "transaccion incorrecta",
+        )
+    )
+    confirmed = bool(tokens.intersection({"sim", "si", "yes", "yeah", "yep"})) or any(
+        phrase in normalized for phrase in ("e essa", "es esa", "that is it", "thats it")
+    )
+    if confirmed == denied:
+        return None
+    return confirmed
+
+
+def _guard_extracted_numeric_filters(
+    criteria: TransactionSearchCriteria,
+    transcript: str,
+    *,
+    expected_field: str | None,
+) -> tuple[TransactionSearchCriteria, tuple[str, ...]]:
+    """Drop model-invented amounts or dates that have no support in the spoken turn."""
+    normalized, tokens = _normalized_words(transcript)
+    number_words = {
+        "zero",
+        "um",
+        "uma",
+        "dois",
+        "duas",
+        "tres",
+        "quatro",
+        "cinco",
+        "seis",
+        "sete",
+        "oito",
+        "nove",
+        "dez",
+        "onze",
+        "doze",
+        "treze",
+        "quatorze",
+        "catorze",
+        "quinze",
+        "dezesseis",
+        "dezessete",
+        "dezoito",
+        "dezenove",
+        "vinte",
+        "trinta",
+        "quarenta",
+        "cinquenta",
+        "sessenta",
+        "setenta",
+        "oitenta",
+        "noventa",
+        "cem",
+        "cento",
+        "duzentos",
+        "trezentos",
+        "quatrocentos",
+        "quinhentos",
+        "seiscentos",
+        "setecentos",
+        "oitocentos",
+        "novecentos",
+        "mil",
+        "uno",
+        "dos",
+        "cuatro",
+        "siete",
+        "ocho",
+        "nueve",
+        "diez",
+        "once",
+        "doce",
+        "trece",
+        "catorce",
+        "quince",
+        "dieciseis",
+        "diecisiete",
+        "dieciocho",
+        "diecinueve",
+        "veinte",
+        "treinta",
+        "cuarenta",
+        "cincuenta",
+        "sesenta",
+        "ochenta",
+        "cien",
+        "ciento",
+        "doscientos",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten",
+        "eleven",
+        "twelve",
+        "thirteen",
+        "fourteen",
+        "fifteen",
+        "sixteen",
+        "seventeen",
+        "eighteen",
+        "nineteen",
+        "twenty",
+        "thirty",
+        "forty",
+        "fifty",
+        "sixty",
+        "seventy",
+        "eighty",
+        "ninety",
+        "hundred",
+        "thousand",
+    }
+    has_number = bool(re.search(r"\d", normalized)) or bool(tokens.intersection(number_words))
+    amount_cues = {
+        "valor",
+        "reais",
+        "real",
+        "dolar",
+        "dolares",
+        "peso",
+        "pesos",
+        "amount",
+        "dollar",
+        "dollars",
+        "euros",
+    }
+    date_cues = {
+        "dia",
+        "data",
+        "hoje",
+        "ontem",
+        "fecha",
+        "hoy",
+        "ayer",
+        "date",
+        "today",
+        "yesterday",
+        "janeiro",
+        "fevereiro",
+        "marco",
+        "abril",
+        "maio",
+        "junho",
+        "julho",
+        "agosto",
+        "setembro",
+        "outubro",
+        "novembro",
+        "dezembro",
+        "enero",
+        "febrero",
+        "marzo",
+        "mayo",
+        "junio",
+        "julio",
+        "septiembre",
+        "octubre",
+        "noviembre",
+        "diciembre",
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+    }
+    removed: list[str] = []
+    amount_supported = has_number and (
+        expected_field == "amount" or bool(tokens.intersection(amount_cues))
+    )
+    date_supported = has_number and (
+        expected_field == "date" or bool(tokens.intersection(date_cues))
+    )
+    if criteria.approximate_amount is not None and not amount_supported:
+        removed.append("approximate_amount")
+    if (criteria.date_from is not None or criteria.date_to is not None) and not date_supported:
+        removed.extend(
+            name
+            for name, value in (("date_from", criteria.date_from), ("date_to", criteria.date_to))
+            if value is not None
+        )
+    return criteria.without(removed), tuple(removed)
 
 
 def _telemetry(event: str, *, call_id: str | None = None, **fields: Any) -> None:
@@ -83,6 +307,8 @@ class SipRealtimeGateway:
         webhook_secret: str | None = None,
         openai_client: Any | None = None,
         websocket_connect: Callable[..., Any] | None = None,
+        transaction_repository: TransactionSearchRepository | None = None,
+        log_full_transcripts: bool | None = None,
     ) -> None:
 
         self.api_key = api_key or os.getenv("OPENAI_API_KEY", "")
@@ -91,12 +317,23 @@ class SipRealtimeGateway:
 
         self.voice = voice or os.getenv("OPENAI_REALTIME_VOICE", "cedar")
 
+        self.input_transcription_model = os.getenv(
+            "OPENAI_INPUT_TRANSCRIPTION_MODEL",
+            "gpt-4o-mini-transcribe",
+        )
+        self.log_full_transcripts = (
+            log_full_transcripts
+            if log_full_transcripts is not None
+            else _enabled(os.getenv("DEMO_LOG_FULL_TRANSCRIPTS"), default=True)
+        )
+
         self.client = openai_client or OpenAI(
             api_key=self.api_key,
             webhook_secret=webhook_secret or os.getenv("OPENAI_WEBHOOK_SECRET"),
         )
 
         self._customer_source = customer_source
+        self._transaction_repository = transaction_repository
 
         self._calls: VoiceCallService | None = None
 
@@ -107,7 +344,10 @@ class SipRealtimeGateway:
         """Load the synthetic directory only when a valid call needs it."""
 
         if self._calls is None:
-            self._calls = VoiceCallService(self._customer_source)
+            self._calls = VoiceCallService(
+                self._customer_source,
+                transaction_repository=self._transaction_repository,
+            )
 
         return self._calls
 
@@ -149,14 +389,17 @@ class SipRealtimeGateway:
                     "and explicitly requests a response."
                 ),
                 audio={
+                    **self._input_audio_configuration(),
                     "output": {
                         "voice": self.voice,
-                    }
+                    },
                 },
                 tools=[
                     self._language_tool(),
                     self._confirm_language_tool(),
                     self._authentication_method_tool(),
+                    self._transaction_search_tool(),
+                    self._transaction_confirmation_tool(),
                 ],
                 tool_choice="auto",
                 tracing={
@@ -317,6 +560,7 @@ class SipRealtimeGateway:
                                 "session": {
                                     "type": "realtime",
                                     "instructions": self._system_instructions(state),
+                                    "audio": self._input_audio_configuration(),
                                 },
                             }
                         )
@@ -335,6 +579,7 @@ class SipRealtimeGateway:
                     session_ready = False
                     active_response = False
                     opening_sent = False
+                    last_customer_transcript = ""
 
                     async for raw_event in websocket:
                         try:
@@ -348,9 +593,9 @@ class SipRealtimeGateway:
                             )
                             continue
 
-                        # Temporary diagnostic logging. Keep this while DTMF and
-                        # startup sequencing are being validated in production.
-                        LOGGER.info(
+                        # Full protocol events are useful only during targeted local
+                        # diagnostics. Production INFO logs use bounded telemetry below.
+                        LOGGER.debug(
                             "REALTIME_EVENT call_id=%s event=%s",
                             call_id,
                             json.dumps(
@@ -361,7 +606,28 @@ class SipRealtimeGateway:
 
                         event_type = str(event.get("type", ""))
 
-                        if event_type == "session.updated":
+                        if event_type == "conversation.item.input_audio_transcription.completed":
+                            last_customer_transcript = str(event.get("transcript", ""))
+                            self._log_full_transcript(
+                                call_id=call_id,
+                                speaker="customer",
+                                transcript=last_customer_transcript,
+                                item_id=str(event.get("item_id", "")),
+                            )
+
+                        elif event_type in {
+                            "response.output_audio_transcript.done",
+                            "response.audio_transcript.done",
+                        }:
+                            self._log_full_transcript(
+                                call_id=call_id,
+                                speaker="agent",
+                                transcript=str(event.get("transcript", "")),
+                                item_id=str(event.get("item_id", "")),
+                                response_id=str(event.get("response_id", "")),
+                            )
+
+                        elif event_type == "session.updated":
                             session_ready = True
 
                             _telemetry(
@@ -399,7 +665,9 @@ class SipRealtimeGateway:
                                 websocket,
                                 call_id,
                                 event,
+                                last_customer_transcript=last_customer_transcript,
                             )
+                            last_customer_transcript = ""
 
                         elif event_type in {
                             "input_audio_buffer.dtmf_event_received",
@@ -513,11 +781,7 @@ class SipRealtimeGateway:
 
                 # The Realtime call no longer exists. This is expected after a
                 # normal hangup and must not trigger six reconnect attempts.
-                if "404" in error_text and (
-                    "call_id" in error_text.casefold()
-                    or "session" in error_text.casefold()
-                    or "not found" in error_text.casefold()
-                ):
+                if "404" in error_text:
                     _telemetry(
                         "realtime.sideband.terminal",
                         call_id=call_id,
@@ -586,6 +850,8 @@ class SipRealtimeGateway:
         websocket: Any,
         call_id: str,
         event: dict[str, Any],
+        *,
+        last_customer_transcript: str = "",
     ) -> None:
         outputs = event.get("response", {}).get("output", [])
 
@@ -595,6 +861,7 @@ class SipRealtimeGateway:
 
             tool_name = str(output.get("name", ""))
             tool_call_id = output.get("call_id")
+            tool_metadata: dict[str, Any] = {}
 
             try:
                 arguments = json.loads(output.get("arguments", "{}"))
@@ -610,6 +877,12 @@ class SipRealtimeGateway:
                         result = self._message_for(state, "auth_method_prompt")
                     elif state.stage is VoiceCallStage.NEEDS_DOCUMENT:
                         result = self._message_for(state, "document_prompt")
+                    elif state.stage is VoiceCallStage.CONFIRM_TRANSACTION:
+                        result = self._message_for(state, "transaction_candidate")
+                    elif state.stage is VoiceCallStage.NEEDS_TRANSACTION_DETAILS:
+                        result = self._message_for(state, "transaction_clarification")
+                    elif state.stage is VoiceCallStage.TRANSACTION_SELECTED:
+                        result = self._message_for(state, "transaction_confirmed")
                     else:
                         result = self._message_for(state, "language_changed")
 
@@ -667,6 +940,122 @@ class SipRealtimeGateway:
                         authenticated=state.stage is VoiceCallStage.AUTHENTICATED,
                     )
 
+                elif tool_name == "search_transactions":
+                    criteria, replace_existing, clear_filters, remove_filters = (
+                        self._transaction_search_arguments(arguments)
+                    )
+                    if last_customer_transcript:
+                        before_search = self.calls.get(call_id)
+                        criteria, rejected_filters = _guard_extracted_numeric_filters(
+                            criteria,
+                            last_customer_transcript,
+                            expected_field=before_search.pending_transaction_detail,
+                        )
+                        if rejected_filters:
+                            _telemetry(
+                                "voice.transaction.unsupported_filters_dropped",
+                                call_id=call_id,
+                                filters=rejected_filters,
+                            )
+                    selection = self.calls.search_transactions(
+                        call_id,
+                        criteria,
+                        replace_existing=replace_existing,
+                        clear_filters=clear_filters,
+                        remove_filters=remove_filters,
+                    )
+                    state = selection.state
+                    reason = {
+                        TransactionSelectionOutcome.NEEDS_CLARIFICATION: (
+                            "transaction_clarification"
+                        ),
+                        TransactionSelectionOutcome.NO_MATCH: "transaction_no_match",
+                        TransactionSelectionOutcome.CANDIDATE: "transaction_candidate",
+                        TransactionSelectionOutcome.EXHAUSTED: "transaction_handoff",
+                    }[selection.outcome]
+                    result = self._message_for(state, reason)
+                    tool_metadata = {
+                        "outcome": selection.outcome.value,
+                        "candidate_count": selection.result_count,
+                        "guess_number": state.transaction_guess_attempts,
+                        "active_filters": [
+                            name for name, _ in state.transaction_criteria.active_filters()
+                        ],
+                    }
+
+                elif tool_name == "confirm_transaction":
+                    model_confirmation = arguments.get("confirmed")
+                    if not isinstance(model_confirmation, bool):
+                        raise ValueError("confirmed must be true or false")
+                    spoken_confirmation = _explicit_confirmation_from_transcript(
+                        last_customer_transcript
+                    )
+                    if spoken_confirmation is None:
+                        state = self.calls.get(call_id)
+                        result = self._message_for(state, "transaction_confirmation_unclear")
+                        tool_metadata = {
+                            "outcome": "confirmation_unclear",
+                            "candidate_count": len(state.transaction_candidates),
+                            "guess_number": state.transaction_guess_attempts,
+                            "model_confirmation": model_confirmation,
+                        }
+                    else:
+                        selection = self.calls.resolve_transaction_candidate(
+                            call_id,
+                            confirmed=spoken_confirmation,
+                        )
+                        if not spoken_confirmation:
+                            criteria, replace_existing, clear_filters, remove_filters = (
+                                self._transaction_search_arguments(arguments)
+                            )
+                            if last_customer_transcript:
+                                before_refinement = self.calls.get(call_id)
+                                criteria, rejected_filters = _guard_extracted_numeric_filters(
+                                    criteria,
+                                    last_customer_transcript,
+                                    expected_field=before_refinement.pending_transaction_detail,
+                                )
+                                if rejected_filters:
+                                    _telemetry(
+                                        "voice.transaction.unsupported_filters_dropped",
+                                        call_id=call_id,
+                                        filters=rejected_filters,
+                                    )
+                            if (
+                                criteria.has_any_filter
+                                or replace_existing
+                                or clear_filters
+                                or remove_filters
+                            ) and selection.outcome is not TransactionSelectionOutcome.EXHAUSTED:
+                                selection = self.calls.search_transactions(
+                                    call_id,
+                                    criteria,
+                                    replace_existing=replace_existing,
+                                    clear_filters=clear_filters,
+                                    remove_filters=remove_filters,
+                                )
+                        state = selection.state
+                        reason = {
+                            TransactionSelectionOutcome.NEEDS_CLARIFICATION: (
+                                "transaction_clarification"
+                            ),
+                            TransactionSelectionOutcome.NO_MATCH: "transaction_no_match",
+                            TransactionSelectionOutcome.CANDIDATE: "transaction_candidate",
+                            TransactionSelectionOutcome.CONFIRMED: "transaction_confirmed",
+                            TransactionSelectionOutcome.EXHAUSTED: "transaction_handoff",
+                        }[selection.outcome]
+                        result = self._message_for(state, reason)
+                        tool_metadata = {
+                            "outcome": selection.outcome.value,
+                            "candidate_count": selection.result_count,
+                            "guess_number": state.transaction_guess_attempts,
+                            "model_confirmation": model_confirmation,
+                            "spoken_confirmation": spoken_confirmation,
+                            "confirmation_overridden": (
+                                spoken_confirmation is not model_confirmation
+                            ),
+                        }
+
                 else:
                     continue
 
@@ -690,10 +1079,22 @@ class SipRealtimeGateway:
                         state,
                         "invalid_auth_method",
                     )
+                elif tool_name in {"search_transactions", "confirm_transaction"}:
+                    result = self._message_for(
+                        state,
+                        "transaction_invalid",
+                    )
                 else:
                     continue
 
             else:
+                _telemetry(
+                    "voice.tool.completed",
+                    call_id=call_id,
+                    tool=tool_name,
+                    stage=state.stage.value,
+                    **tool_metadata,
+                )
                 await websocket.send(
                     json.dumps(
                         {
@@ -701,6 +1102,7 @@ class SipRealtimeGateway:
                             "session": {
                                 "type": "realtime",
                                 "instructions": self._system_instructions(state),
+                                "audio": self._input_audio_configuration(),
                             },
                         }
                     )
@@ -724,7 +1126,7 @@ class SipRealtimeGateway:
                             "type": "function_call_output",
                             "call_id": tool_call_id,
                             "output": json.dumps(
-                                {"message": result},
+                                {"message": result, **tool_metadata},
                                 ensure_ascii=False,
                             ),
                         },
@@ -736,6 +1138,59 @@ class SipRealtimeGateway:
                 websocket,
                 result,
             )
+
+    @staticmethod
+    def _transaction_search_arguments(
+        arguments: dict[str, Any],
+    ) -> tuple[TransactionSearchCriteria, bool, bool, tuple[str, ...]]:
+        """Validate model-provided filter mutations before touching call state."""
+        criteria = TransactionSearchCriteria.from_mapping(arguments)
+        replace_existing = arguments.get("replace_existing", False)
+        if not isinstance(replace_existing, bool):
+            raise ValueError("replace_existing must be true or false")
+        clear_filters = arguments.get("clear_filters", False)
+        if not isinstance(clear_filters, bool):
+            raise ValueError("clear_filters must be true or false")
+        remove_filters_value = arguments.get("remove_filters", [])
+        if not isinstance(remove_filters_value, list) or not all(
+            isinstance(item, str) for item in remove_filters_value
+        ):
+            raise ValueError("remove_filters must be a list of filter names")
+        return criteria, replace_existing, clear_filters, tuple(remove_filters_value)
+
+    def _input_audio_configuration(self) -> dict[str, Any]:
+        """Keep the demo transcript setting consistent across session updates."""
+        transcription = (
+            {"model": self.input_transcription_model} if self.log_full_transcripts else None
+        )
+        return {
+            "input": {
+                "transcription": transcription,
+            }
+        }
+
+    def _log_full_transcript(
+        self,
+        *,
+        call_id: str,
+        speaker: str,
+        transcript: str,
+        item_id: str = "",
+        response_id: str = "",
+    ) -> None:
+        """Store the completed verbal transcript exactly as received in demo logs."""
+        if not self.log_full_transcripts:
+            return
+
+        _telemetry(
+            "voice.transcript.completed",
+            call_id=call_id,
+            speaker=speaker,
+            transcript=transcript,
+            item_id=item_id,
+            response_id=response_id,
+            redacted=False,
+        )
 
     async def _speak(self, websocket: Any, message: str) -> None:
         """Create one server-directed audio response."""
@@ -824,6 +1279,95 @@ class SipRealtimeGateway:
         }
 
     @staticmethod
+    def _transaction_search_tool() -> dict[str, Any]:
+        return {
+            "type": "function",
+            "name": "search_transactions",
+            "description": (
+                "Search only the authenticated caller's synthetic transaction history. "
+                "Extract only details the caller actually supplied. Amounts are approximate. "
+                "Call again when the caller adds or corrects a detail."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "merchant_query": {"type": "string"},
+                    "approximate_amount": {"type": "number", "exclusiveMinimum": 0},
+                    "currency": {"type": "string"},
+                    "date_from": {"type": "string", "format": "date"},
+                    "date_to": {"type": "string", "format": "date"},
+                    "country": {"type": "string"},
+                    "city": {"type": "string"},
+                    "channel": {"type": "string"},
+                    "transaction_type": {"type": "string"},
+                    "replace_existing": {
+                        "type": "boolean",
+                        "description": (
+                            "Use true only when the caller explicitly replaces the entire prior "
+                            "search description. For one corrected filter, send that field and "
+                            "leave this false."
+                        ),
+                    },
+                    "clear_filters": {
+                        "type": "boolean",
+                        "description": (
+                            "Use true when the caller explicitly asks to clear all active "
+                            "transaction search filters. The backend will then ask for a new detail."
+                        ),
+                    },
+                    "remove_filters": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "merchant_query",
+                                "approximate_amount",
+                                "currency",
+                                "date_from",
+                                "date_to",
+                                "country",
+                                "city",
+                                "channel",
+                                "transaction_type",
+                            ],
+                        },
+                        "description": (
+                            "Active filters the caller explicitly asked to remove. Use this instead "
+                            "of inventing an empty replacement value."
+                        ),
+                    },
+                },
+                "additionalProperties": False,
+            },
+        }
+
+    @staticmethod
+    def _transaction_confirmation_tool() -> dict[str, Any]:
+        refinement_properties = SipRealtimeGateway._transaction_search_tool()["parameters"][
+            "properties"
+        ]
+        return {
+            "type": "function",
+            "name": "confirm_transaction",
+            "description": (
+                "Record the caller's explicit yes or no answer about the transaction "
+                "candidate Izzy just described. Never infer confirmation from unrelated or "
+                "unclear speech. When the caller says no and provides a correction or another "
+                "detail in the same utterance, include those filter fields in this call so the "
+                "backend can reject the candidate and rerun retrieval atomically."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "confirmed": {"type": "boolean"},
+                    **refinement_properties,
+                },
+                "required": ["confirmed"],
+                "additionalProperties": False,
+            },
+        }
+
+    @staticmethod
     def _system_instructions(state: VoiceCallState) -> str:
         language_name = {
             "pt": "Portuguese",
@@ -844,6 +1388,11 @@ class SipRealtimeGateway:
 - Age: {state.identity.age if state.identity.age is not None else "not provided"}
 - Accent: {state.identity.detected_accent or "not provided"}
 Address the customer naturally by first name. Do not repeat the other profile fields unless they are relevant to the customer's request."""
+        active_filters = json.dumps(
+            dict(state.transaction_criteria.active_filters()),
+            ensure_ascii=False,
+            default=str,
+        )
 
         return f"""You are Izzy, the virtual card-dispute assistant for Factored Bank.
 
@@ -879,6 +1428,28 @@ Document workflow:
 - At needs_document, instruct the caller to type the document number and press pound/numeral/hash (#). Star (*) clears the current entry.
 - Never repeat, expose, infer, or summarize document digits.
 
+Transaction-search workflow:
+- Today's server date is {date.today().isoformat()}. Resolve relative dates such as today or yesterday against this date.
+- At authenticated, ask whether the caller is having a problem with a transaction and invite them to describe whatever they remember.
+- Useful details include merchant or descriptor, approximate amount, currency, date or date range, country, city, channel, and transaction type.
+- Call search_transactions with only details the caller supplied. Do not invent missing values.
+- The current server-owned transaction filters are: {active_filters}.
+- Tell the caller which filters are active whenever the backend searches or asks for another detail.
+- The caller may correct a filter, remove one named filter, or clear every filter at any time.
+- For a correction, send the corrected value. To remove selected filters use remove_filters. To clear all filters use clear_filters=true.
+- Preserve earlier details by default. Correct one filter by sending only its new value. Set replace_existing=true only when the caller explicitly replaces the entire previous search description.
+- On every search turn, the backend retrieves up to ten customer-scoped candidates, reranks them against all collected details, and returns only the Top-1 candidate for presentation.
+- When the caller adds or corrects any transaction detail, call search_transactions again so retrieval and reranking run again. Do not keep presenting a stale candidate.
+- If the tool asks for clarification, ask exactly one focused question and preserve details already collected.
+- At confirm_transaction, describe only the server-selected candidate and call confirm_transaction only after an explicit yes or no.
+- If the caller rejects a candidate and supplies another detail in the same sentence, include that detail in confirm_transaction so rejection and reranking happen together. Never discard a correction such as a city, date, amount, or merchant.
+- A server-side transcript guard validates explicit confirmation. If the caller's answer is unclear, ask again instead of guessing.
+- Call search_transactions and confirm_transaction without first speaking an assumed result. Wait for the server-owned tool response, which supplies the authoritative message.
+- After a denied candidate, do not present another candidate immediately. Ask exactly one focused question for a useful detail that has not been collected yet, then call search_transactions with the new answer.
+- If the caller cannot answer the focused question, call search_transactions with no invented values; the server will select a different missing detail to ask about. Never rerun an unchanged search.
+- Never disclose internal transaction IDs, SQL, hidden candidates, or another customer's transactions.
+- After three denied candidates the server ends in handoff. Explain honestly that human operators are unavailable and handoff is outside this demo.
+
 General behavior:
 - Introduce yourself as Izzy from Factored Bank.
 - Explain that you help with card disputes.
@@ -909,8 +1480,9 @@ General behavior:
                 ),
                 "phone_success": (
                     "Olá, {name}. Encontrei seu cadastro usando o número de telefone "
-                    "desta ligação e você está autenticado. "
-                    "Como posso ajudar com sua contestação de cartão?"
+                    "desta ligação e sua autenticação foi concluída. "
+                    "Você está com algum problema em uma transação? Diga o que lembrar, "
+                    "como estabelecimento, valor aproximado, data ou local."
                 ),
                 "phone_fallback": (
                     "Não consegui autenticar você usando o número de telefone desta ligação. "
@@ -925,7 +1497,8 @@ General behavior:
                 ),
                 "document_success": (
                     "Olá, {name}. Encontrei seu cadastro usando o documento informado "
-                    "e você está autenticado. Como posso ajudar com sua contestação de cartão?"
+                    "e sua autenticação foi concluída. Você está com algum problema em uma transação? "
+                    "Diga o que lembrar, como estabelecimento, valor aproximado, data ou local."
                 ),
                 "retry": (
                     "Não localizei esse documento. Confira os números, digite novamente "
@@ -953,6 +1526,32 @@ General behavior:
                 "language_changed": (
                     "Idioma alterado. Podemos continuar sua contestação neste idioma."
                 ),
+                "transaction_clarification": (
+                    "Preciso de mais um detalhe para localizar a transação. Qual era o "
+                    "estabelecimento? Se não lembrar, diga o valor aproximado."
+                ),
+                "transaction_no_match": (
+                    "Não encontrei uma transação com esses dados. O estabelecimento informado "
+                    "está correto? Você também pode corrigir ou acrescentar outro detalhe."
+                ),
+                "transaction_invalid": (
+                    "Não consegui usar esses dados na busca. Diga um estabelecimento, valor "
+                    "aproximado, data ou local."
+                ),
+                "transaction_confirmed": (
+                    "Obrigado. Confirmei a transação. A próxima etapa da contestação está "
+                    "fora do escopo desta demonstração."
+                ),
+                "transaction_confirmation_unclear": (
+                    "Não consegui identificar uma resposta clara. A transação ainda não foi "
+                    "confirmada. Diga sim ou não. Você também pode corrigir um dos filtros."
+                ),
+                "transaction_handoff": (
+                    "Não consegui identificar a transação depois de três tentativas. "
+                    "Normalmente eu encaminharia para um especialista, mas os atendentes "
+                    "humanos não estão disponíveis e essa transferência está fora do escopo "
+                    "desta demonstração."
+                ),
             },
             "es": {
                 "opening": (
@@ -967,8 +1566,9 @@ General behavior:
                 ),
                 "phone_success": (
                     "Hola, {name}. Encontré tu registro usando el número de teléfono "
-                    "de esta llamada y ya estás autenticado. "
-                    "¿Cómo puedo ayudarte con tu reclamo de tarjeta?"
+                    "de esta llamada y tu autenticación está completa. "
+                    "¿Tienes algún problema con una transacción? Dime lo que recuerdes, "
+                    "como el comercio, el valor aproximado, la fecha o el lugar."
                 ),
                 "phone_fallback": (
                     "No pude autenticarte usando el número de teléfono de esta llamada. "
@@ -983,7 +1583,9 @@ General behavior:
                 ),
                 "document_success": (
                     "Hola, {name}. Encontré tu registro usando el documento ingresado "
-                    "y ya estás autenticado. ¿Cómo puedo ayudarte con tu reclamo de tarjeta?"
+                    "y tu autenticación está completa. ¿Tienes algún problema con una transacción? "
+                    "Dime lo que recuerdes, como el comercio, el valor aproximado, la fecha "
+                    "o el lugar."
                 ),
                 "retry": (
                     "No encontré ese documento. Verifica los números, ingrésalos otra vez "
@@ -1009,6 +1611,31 @@ General behavior:
                 "language_changed": (
                     "Idioma cambiado. Podemos continuar tu reclamo en este idioma."
                 ),
+                "transaction_clarification": (
+                    "Necesito un dato más para encontrar la transacción. ¿Cuál era el "
+                    "comercio? Si no lo recuerdas, dime el valor aproximado."
+                ),
+                "transaction_no_match": (
+                    "No encontré una transacción con esos datos. ¿El comercio informado es "
+                    "correcto? También puedes corregir o agregar otro dato."
+                ),
+                "transaction_invalid": (
+                    "No pude usar esos datos en la búsqueda. Indica un comercio, valor "
+                    "aproximado, fecha o lugar."
+                ),
+                "transaction_confirmed": (
+                    "Gracias. Confirmé la transacción. La siguiente etapa del reclamo está "
+                    "fuera del alcance de esta demostración."
+                ),
+                "transaction_confirmation_unclear": (
+                    "No pude identificar una respuesta clara. La transacción todavía no está "
+                    "confirmada. Di sí o no. También puedes corregir uno de los filtros."
+                ),
+                "transaction_handoff": (
+                    "No pude identificar la transacción después de tres intentos. Normalmente "
+                    "te transferiría a un especialista, pero los agentes humanos no están "
+                    "disponibles y esa transferencia está fuera del alcance de esta demostración."
+                ),
             },
             "en": {
                 "opening": (
@@ -1023,7 +1650,9 @@ General behavior:
                 ),
                 "phone_success": (
                     "Hello, {name}. I found your profile using the phone number for this call, "
-                    "and you're authenticated. How can I help with your card dispute?"
+                    "and you're authenticated. Are you having a problem with a transaction? "
+                    "Tell me what you remember, such as the merchant, approximate amount, "
+                    "date, or location."
                 ),
                 "phone_fallback": (
                     "I couldn't authenticate you using the phone number for this call. "
@@ -1036,7 +1665,9 @@ General behavior:
                 ),
                 "document_success": (
                     "Hello, {name}. I found your profile using the document you entered, "
-                    "and you're authenticated. How can I help with your card dispute?"
+                    "and you're authenticated. Are you having a problem with a transaction? "
+                    "Tell me what you remember, such as the merchant, approximate amount, "
+                    "date, or location."
                 ),
                 "retry": (
                     "I couldn't find that document. Check the digits, enter it again, "
@@ -1058,8 +1689,42 @@ General behavior:
                 "language_changed": (
                     "Language changed. We can continue your card dispute in this language."
                 ),
+                "transaction_clarification": (
+                    "I need one more detail to find the transaction. What was the merchant? "
+                    "If you don't remember, tell me the approximate amount."
+                ),
+                "transaction_no_match": (
+                    "I couldn't find a transaction with those details. Is the merchant correct? "
+                    "You can also correct or add another detail."
+                ),
+                "transaction_invalid": (
+                    "I couldn't use those details in the search. Provide a merchant, approximate "
+                    "amount, date, or location."
+                ),
+                "transaction_confirmed": (
+                    "Thank you. I confirmed the transaction. The next dispute step is outside "
+                    "the scope of this demonstration."
+                ),
+                "transaction_confirmation_unclear": (
+                    "I couldn't identify a clear answer. The transaction is not confirmed yet. "
+                    "Say yes or no. You can also correct one of the filters."
+                ),
+                "transaction_handoff": (
+                    "I couldn't identify the transaction after three attempts. I would normally "
+                    "transfer you to a specialist, but human operators are unavailable and that "
+                    "handoff is outside this demonstration."
+                ),
             },
         }[language]
+
+        if (
+            state.stage is VoiceCallStage.HANDOFF
+            and state.handoff_reason == "transaction_search_exhausted"
+        ):
+            return (
+                SipRealtimeGateway._transaction_filter_context(state, include_controls=False)
+                + messages["transaction_handoff"]
+            )
 
         if state.stage is VoiceCallStage.HANDOFF:
             return messages["handoff"]
@@ -1072,6 +1737,23 @@ General behavior:
 
         if reason == "language_changed":
             return messages["language_changed"]
+
+        if reason == "transaction_candidate":
+            return SipRealtimeGateway._transaction_candidate_message(state)
+
+        if reason == "transaction_clarification":
+            return SipRealtimeGateway._transaction_clarification_message(state)
+
+        if reason == "transaction_no_match":
+            return SipRealtimeGateway._transaction_no_match_message(state)
+
+        if reason in {
+            "transaction_invalid",
+            "transaction_confirmed",
+            "transaction_confirmation_unclear",
+            "transaction_handoff",
+        }:
+            return messages[reason]
 
         if reason == "phone_auth_success":
             return messages["phone_success"].format(name=customer_name)
@@ -1114,7 +1796,260 @@ General behavior:
                 return messages["phone_success"].format(name=customer_name)
             return messages["document_success"].format(name=customer_name)
 
+        if state.stage is VoiceCallStage.NEEDS_TRANSACTION_DETAILS:
+            return SipRealtimeGateway._transaction_clarification_message(state)
+
+        if state.stage is VoiceCallStage.CONFIRM_TRANSACTION:
+            return SipRealtimeGateway._transaction_candidate_message(state)
+
+        if state.stage is VoiceCallStage.TRANSACTION_SELECTED:
+            return messages["transaction_confirmed"]
+
         return messages["opening"]
+
+    @staticmethod
+    def _transaction_clarification_message(state: VoiceCallState) -> str:
+        """Ask for one useful detail that has not already been collected."""
+
+        criteria = state.transaction_criteria
+        if state.pending_transaction_detail is not None:
+            missing_field = state.pending_transaction_detail
+        elif criteria.merchant_query is None:
+            missing_field = "merchant"
+        elif criteria.approximate_amount is None:
+            missing_field = "amount"
+        elif criteria.date_from is None and criteria.date_to is None:
+            missing_field = "date"
+        elif criteria.country is None and criteria.city is None:
+            missing_field = "location"
+        else:
+            missing_field = "channel"
+
+        after_denial = bool(state.rejected_transaction_ids)
+        prefixes = {
+            "pt": (
+                "Entendi, não vou usar essa opção. "
+                if after_denial
+                else "Preciso de mais um detalhe para refinar a busca. "
+            ),
+            "es": (
+                "Entiendo, no usaré esa opción. "
+                if after_denial
+                else "Necesito un dato más para refinar la búsqueda. "
+            ),
+            "en": (
+                "Understood, I won't use that option. "
+                if after_denial
+                else "I need one more detail to refine the search. "
+            ),
+        }
+        questions = {
+            "pt": {
+                "merchant": "Você se lembra do nome do estabelecimento ou de alguma palavra na fatura?",
+                "amount": "Qual era o valor aproximado da transação?",
+                "date": "Em que data, ou aproximadamente em qual dia, a transação aconteceu?",
+                "location": "Em qual cidade ou país a transação aconteceu?",
+                "channel": "A transação foi online ou presencial?",
+            },
+            "es": {
+                "merchant": "¿Recuerdas el nombre del comercio o alguna palabra del extracto?",
+                "amount": "¿Cuál era el valor aproximado de la transacción?",
+                "date": "¿En qué fecha, o aproximadamente qué día, ocurrió la transacción?",
+                "location": "¿En qué ciudad o país ocurrió la transacción?",
+                "channel": "¿La transacción fue en línea o presencial?",
+            },
+            "en": {
+                "merchant": "Do you remember the merchant name or any word from the statement?",
+                "amount": "What was the approximate transaction amount?",
+                "date": "On what date, or approximately what day, did the transaction occur?",
+                "location": "In which city or country did the transaction occur?",
+                "channel": "Was the transaction online or in person?",
+            },
+        }
+        language = state.locale.language
+        _telemetry(
+            "voice.transaction.refinement_question",
+            call_id=state.call_id,
+            requested_field=missing_field,
+            after_denial=after_denial,
+            guess_number=state.transaction_guess_attempts,
+        )
+        return (
+            prefixes[language]
+            + SipRealtimeGateway._transaction_filter_context(state)
+            + questions[language][missing_field]
+        )
+
+    @staticmethod
+    def _transaction_filter_context(
+        state: VoiceCallState,
+        *,
+        include_controls: bool = True,
+    ) -> str:
+        """Describe active filters and the caller's available controls."""
+        summary = SipRealtimeGateway._transaction_filter_summary(state)
+        if state.locale.language == "pt":
+            if not summary:
+                return "Ainda não há filtros ativos. "
+            if not include_controls:
+                return f"Filtros usados na última busca: {summary}. "
+            return (
+                f"Filtros ativos: {summary}. Você pode corrigir um filtro, remover um filtro "
+                "específico ou limpar todos. "
+            )
+        if state.locale.language == "es":
+            if not summary:
+                return "Todavía no hay filtros activos. "
+            if not include_controls:
+                return f"Filtros usados en la última búsqueda: {summary}. "
+            return (
+                f"Filtros activos: {summary}. Puedes corregir un filtro, eliminar un filtro "
+                "específico o borrar todos. "
+            )
+        if not summary:
+            return "There are no active filters yet. "
+        if not include_controls:
+            return f"Filters used in the last search: {summary}. "
+        return (
+            f"Active filters: {summary}. You can correct a filter, remove a specific filter, "
+            "or clear them all. "
+        )
+
+    @staticmethod
+    def _transaction_filter_summary(state: VoiceCallState) -> str:
+        """Render schema-approved filters in concise, voice-friendly language."""
+        criteria = state.transaction_criteria
+        language = state.locale.language
+        labels = {
+            "pt": {
+                "merchant_query": "estabelecimento",
+                "approximate_amount": "valor aproximado",
+                "currency": "moeda",
+                "date_from": "data inicial",
+                "date_to": "data final",
+                "country": "país",
+                "city": "cidade",
+                "channel": "canal",
+                "transaction_type": "tipo",
+            },
+            "es": {
+                "merchant_query": "comercio",
+                "approximate_amount": "valor aproximado",
+                "currency": "moneda",
+                "date_from": "fecha inicial",
+                "date_to": "fecha final",
+                "country": "país",
+                "city": "ciudad",
+                "channel": "canal",
+                "transaction_type": "tipo",
+            },
+            "en": {
+                "merchant_query": "merchant",
+                "approximate_amount": "approximate amount",
+                "currency": "currency",
+                "date_from": "start date",
+                "date_to": "end date",
+                "country": "country",
+                "city": "city",
+                "channel": "channel",
+                "transaction_type": "type",
+            },
+        }[language]
+        parts: list[str] = []
+        for name, value in criteria.active_filters():
+            if name == "currency" and criteria.approximate_amount is not None:
+                continue
+            if name == "approximate_amount":
+                rendered = f"{value:.2f}"
+                if language in {"pt", "es"}:
+                    rendered = rendered.replace(".", ",")
+                if criteria.currency:
+                    rendered = f"{rendered} {criteria.currency}"
+            elif isinstance(value, date):
+                rendered = value.strftime("%d/%m/%Y") if language in {"pt", "es"} else str(value)
+            else:
+                rendered = str(value)
+            parts.append(f"{labels[name]} {rendered}")
+        return "; ".join(parts)
+
+    @staticmethod
+    def _transaction_no_match_message(state: VoiceCallState) -> str:
+        context = SipRealtimeGateway._transaction_filter_context(state)
+        messages = {
+            "pt": (
+                "Não encontrei uma transação com esses filtros. Corrija um filtro, remova um "
+                "filtro específico ou limpe todos para começar de novo."
+            ),
+            "es": (
+                "No encontré una transacción con esos filtros. Corrige un filtro, elimina un "
+                "filtro específico o borra todos para comenzar de nuevo."
+            ),
+            "en": (
+                "I couldn't find a transaction with those filters. Correct a filter, remove a "
+                "specific filter, or clear them all to start again."
+            ),
+        }
+        return context + messages[state.locale.language]
+
+    @staticmethod
+    def _transaction_candidate_message(state: VoiceCallState) -> str:
+        transaction = state.current_transaction
+        if transaction is None:
+            return SipRealtimeGateway._message_for(state, "transaction_clarification")
+
+        merchant = transaction.merchant_name or "unknown merchant"
+        city = transaction.transaction_city or "unknown city"
+        country = transaction.transaction_country
+        amount = f"{transaction.amount:.2f}"
+        language = state.locale.language
+        if language in {"pt", "es"}:
+            amount = amount.replace(".", ",")
+            spoken_date = transaction.transaction_date.strftime("%d/%m/%Y")
+        else:
+            spoken_date = transaction.transaction_date.strftime("%B %d, %Y")
+
+        if language == "pt":
+            country = {
+                "Argentina": "Argentina",
+                "Brazil": "Brasil",
+                "Chile": "Chile",
+                "Colombia": "Colômbia",
+                "Costa Rica": "Costa Rica",
+                "Mexico": "México",
+                "Peru": "Peru",
+                "Portugal": "Portugal",
+                "Spain": "Espanha",
+                "United States": "Estados Unidos",
+            }.get(country, country)
+            city = {
+                "Lisbon": "Lisboa",
+                "Mexico City": "Cidade do México",
+            }.get(city, city)
+            return SipRealtimeGateway._transaction_filter_context(state) + (
+                f"Encontrei uma possibilidade: uma compra de {amount} {transaction.currency} "
+                f"na {merchant}, em {spoken_date}, em {city}, "
+                f"{country}. É essa transação? Responda sim ou não."
+            )
+        if language == "es":
+            country = {
+                "Brazil": "Brasil",
+                "United States": "Estados Unidos",
+                "Spain": "España",
+            }.get(country, country)
+            city = {
+                "Lisbon": "Lisboa",
+                "Mexico City": "Ciudad de México",
+            }.get(city, city)
+            return SipRealtimeGateway._transaction_filter_context(state) + (
+                f"Encontré una posibilidad: una compra de {amount} {transaction.currency} "
+                f"en {merchant}, el {spoken_date}, en {city}, "
+                f"{country}. ¿Es esa transacción? Responde sí o no."
+            )
+        return SipRealtimeGateway._transaction_filter_context(state) + (
+            f"I found one possibility: a {amount} {transaction.currency} purchase at "
+            f"{merchant} on {spoken_date} in {city}, {country}. "
+            "Is that the transaction? Answer yes or no."
+        )
 
 
 class WebhookDeduplicator:
