@@ -788,6 +788,8 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("12,49", outbound)
         self.assertIn("não fez nem autorizou", outbound)
         self.assertIn("código Visa candidato é 10.4", outbound)
+        self.assertIn("cartão final 9999 foi bloqueado", outbound)
+        self.assertNotIn("9999999999999999", outbound)
         self.assertNotIn("SELECT", outbound)
         self.assertNotIn(state.confirmed_transaction.transaction_id, outbound)
 
@@ -833,6 +835,8 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         outbound = json.dumps(websocket.sent, ensure_ascii=False)
         self.assertIn("processamento duplicado", outbound)
         self.assertIn("12.6.1", outbound)
+        self.assertNotIn("cartão final", outbound)
+        self.assertNotIn("foi bloqueado", outbound)
 
     async def test_ambiguous_problem_asks_for_clarification_without_code(self):
         events = [

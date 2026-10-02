@@ -18,12 +18,13 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from openai import OpenAI
 
 from webapp.backend.demo_seed import seed_demo_customers
-from webapp.backend.repositories.interfaces import CustomerRepository
-from webapp.backend.repositories.mock import customer_repository
+from webapp.backend.repositories.interfaces import CustomerRepository, ProductRepository
+from webapp.backend.repositories.mock import customer_repository, product_repository
 
 from .dispute_classification import DisputeAllegation
 from .transaction_search import TransactionSearchCriteria, TransactionSearchRepository
 from .voice_call import (
+    CardSecurityActionStatus,
     DisputeClassificationOutcome,
     TransactionSelectionOutcome,
     VoiceAuthenticationMethod,
@@ -329,6 +330,7 @@ class SipRealtimeGateway:
         openai_client: Any | None = None,
         websocket_connect: Callable[..., Any] | None = None,
         transaction_repository: TransactionSearchRepository | None = None,
+        product_repository: ProductRepository | None = None,
         log_full_transcripts: bool | None = None,
     ) -> None:
 
@@ -355,6 +357,7 @@ class SipRealtimeGateway:
 
         self._customer_source = customer_source
         self._transaction_repository = transaction_repository
+        self._product_repository = product_repository
 
         self._calls: VoiceCallService | None = None
 
@@ -368,6 +371,7 @@ class SipRealtimeGateway:
             self._calls = VoiceCallService(
                 self._customer_source,
                 transaction_repository=self._transaction_repository,
+                product_repository=self._product_repository,
             )
 
         return self._calls
@@ -1114,6 +1118,11 @@ class SipRealtimeGateway:
                         "allegation": classification.allegation.value,
                         "visa_condition_code": classification.visa_condition_code,
                         "clarification_key": classification.next_question_key,
+                        "card_security_action": (
+                            state.card_security_action.value
+                            if state.card_security_action is not None
+                            else None
+                        ),
                     }
 
                 else:
@@ -2070,21 +2079,77 @@ General behavior:
                 "DUPLICATE_PROCESSING": "possible duplicate processing",
             },
         }[state.locale.language][classification.allegation.value]
+        if classification.allegation is DisputeAllegation.UNAUTHORIZED_CARD:
+            successful_actions = {
+                CardSecurityActionStatus.BLOCKED,
+                CardSecurityActionStatus.ALREADY_BLOCKED,
+            }
+            if state.card_security_action not in successful_actions:
+                return {
+                    "pt": (
+                        f"Classifiquei seu relato como {allegation}. O código Visa candidato é "
+                        f"{classification.visa_condition_code}. Não consegui bloquear o cartão "
+                        "nesta demonstração. Por segurança, não tente fazer novas compras com ele. "
+                        "A contestação ainda precisa de revisão do emissor."
+                    ),
+                    "es": (
+                        f"Clasifiqué tu relato como {allegation}. El código Visa candidato es "
+                        f"{classification.visa_condition_code}. No pude bloquear la tarjeta en "
+                        "esta demostración. Por seguridad, no intentes hacer nuevas compras con "
+                        "ella. El reclamo todavía requiere revisión del emisor."
+                    ),
+                    "en": (
+                        f"I classified your report as a {allegation}. The candidate Visa code is "
+                        f"{classification.visa_condition_code}. I could not block the card in this "
+                        "demonstration. For safety, do not try to make new purchases with it. The "
+                        "dispute still requires issuer review."
+                    ),
+                }[state.locale.language]
+
+            assert state.secured_card_last_four is not None
+            last_four = state.secured_card_last_four
+            already_blocked = state.card_security_action is CardSecurityActionStatus.ALREADY_BLOCKED
+            return {
+                "pt": (
+                    f"Classifiquei seu relato como {allegation}. O código Visa candidato é "
+                    f"{classification.visa_condition_code}. Por segurança, o cartão final "
+                    f"{last_four} "
+                    + ("já estava bloqueado. " if already_blocked else "foi bloqueado. ")
+                    + "O bloqueio é simulado e reversível. A contestação ainda precisa de "
+                    "revisão do emissor."
+                ),
+                "es": (
+                    f"Clasifiqué tu relato como {allegation}. El código Visa candidato es "
+                    f"{classification.visa_condition_code}. Por seguridad, la tarjeta terminada "
+                    f"en {last_four} "
+                    + ("ya estaba bloqueada. " if already_blocked else "fue bloqueada. ")
+                    + "El bloqueo es simulado y reversible. El reclamo todavía requiere revisión "
+                    "del emisor."
+                ),
+                "en": (
+                    f"I classified your report as a {allegation}. The candidate Visa code is "
+                    f"{classification.visa_condition_code}. For your safety, the card ending in "
+                    f"{last_four} "
+                    + ("was already blocked. " if already_blocked else "has been blocked. ")
+                    + "The block is simulated and reversible. The dispute still requires issuer "
+                    "review."
+                ),
+            }[state.locale.language]
         return {
             "pt": (
                 f"Classifiquei seu relato como {allegation}. O código Visa candidato é "
                 f"{classification.visa_condition_code}. Isso ainda precisa de revisão do emissor. "
-                "Nenhuma contestação, estorno ou bloqueio foi executado nesta demonstração."
+                "Nenhuma contestação ou estorno foi executado nesta demonstração."
             ),
             "es": (
                 f"Clasifiqué tu relato como {allegation}. El código Visa candidato es "
                 f"{classification.visa_condition_code}. Todavía requiere revisión del emisor. "
-                "No se presentó ningún reclamo ni se ejecutó un reembolso o bloqueo en esta demo."
+                "No se presentó ningún reclamo ni se ejecutó un reembolso en esta demo."
             ),
             "en": (
                 f"I classified your report as a {allegation}. The candidate Visa code is "
                 f"{classification.visa_condition_code}. It still requires issuer review. "
-                "No dispute, refund, or card block was submitted in this demonstration."
+                "No dispute or refund was submitted in this demonstration."
             ),
         }[state.locale.language]
 
@@ -2368,8 +2433,11 @@ def create_sip_app(
     elif customers_csv is not None:
         resolved_gateway = SipRealtimeGateway(customers_csv)
     else:
-        seed_demo_customers(customer_repository)
-        resolved_gateway = SipRealtimeGateway(customer_repository)
+        seed_demo_customers(customer_repository, product_repository)
+        resolved_gateway = SipRealtimeGateway(
+            customer_repository,
+            product_repository=product_repository,
+        )
 
     verifier = webhook_client or resolved_gateway.client
 

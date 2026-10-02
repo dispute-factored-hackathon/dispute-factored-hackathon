@@ -11,8 +11,15 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from webapp.backend.demo_card import seed_demo_card
 from webapp.backend.models.transaction import Transaction
-from webapp.backend.repositories.interfaces import CustomerRepository
+from webapp.backend.repositories.interfaces import CustomerRepository, ProductRepository
+from webapp.backend.repositories.mock import MockProductRepository
+from webapp.backend.services.products import (
+    ProductAccessDeniedError,
+    ProductNotFoundError,
+    ProductService,
+)
 
 from .caller_identity import (
     CallerIdentity,
@@ -100,6 +107,12 @@ class DisputeClassificationOutcome(StrEnum):
     CLASSIFIED = "classified"
 
 
+class CardSecurityActionStatus(StrEnum):
+    BLOCKED = "blocked"
+    ALREADY_BLOCKED = "already_blocked"
+    FAILED = "failed"
+
+
 @dataclass(frozen=True)
 class VoiceCallState:
     call_id: str
@@ -120,6 +133,8 @@ class VoiceCallState:
     current_transaction: Transaction | None = None
     confirmed_transaction: Transaction | None = None
     dispute_classification: DisputeClassification | None = None
+    card_security_action: CardSecurityActionStatus | None = None
+    secured_card_last_four: str | None = None
     transaction_guess_attempts: int = 0
     transaction_search_attempts: int = 0
     transaction_no_match_attempts: int = 0
@@ -148,6 +163,7 @@ class VoiceCallService:
         *,
         max_document_attempts: int = 3,
         transaction_repository: TransactionSearchRepository | None = None,
+        product_repository: ProductRepository | None = None,
         max_transaction_guesses: int = 3,
     ) -> None:
         started = time.monotonic()
@@ -155,6 +171,8 @@ class VoiceCallService:
         self.max_document_attempts = max_document_attempts
         self.max_transaction_guesses = max_transaction_guesses
         self.transactions = transaction_repository or SQLiteTransactionSearchRepository()
+        self.products = product_repository or MockProductRepository()
+        self.product_service = ProductService(self.products)
         self.classifier = DisputeClassificationService()
         self._calls: dict[str, VoiceCallState] = {}
         _telemetry(
@@ -321,6 +339,7 @@ class VoiceCallService:
 
         if result.status is CallerIdentityStatus.AUTHENTICATED:
             assert result.identity is not None
+            seed_demo_card(self.products, result.identity.customer_id)
             updated = replace(
                 state,
                 stage=VoiceCallStage.AUTHENTICATED,
@@ -443,6 +462,7 @@ class VoiceCallService:
 
         if result.status is CallerIdentityStatus.AUTHENTICATED:
             assert result.identity is not None
+            seed_demo_card(self.products, result.identity.customer_id)
             updated = replace(
                 state,
                 stage=VoiceCallStage.AUTHENTICATED,
@@ -690,6 +710,11 @@ class VoiceCallService:
             ),
             dispute_classification=classification,
         )
+        if (
+            outcome is DisputeClassificationOutcome.CLASSIFIED
+            and classification.allegation is DisputeAllegation.UNAUTHORIZED_CARD
+        ):
+            updated = self._block_confirmed_transaction_card(updated)
         self._calls[call_id] = updated
         _telemetry(
             "voice.dispute.classification_stored",
@@ -700,6 +725,49 @@ class VoiceCallService:
             outcome=outcome.value,
         )
         return DisputeClassificationResult(updated, outcome)
+
+    def _block_confirmed_transaction_card(self, state: VoiceCallState) -> VoiceCallState:
+        """Apply the deterministic safety action after validated fraud classification."""
+        assert state.identity is not None
+        assert state.confirmed_transaction is not None
+        product_id = state.confirmed_transaction.product_id
+        try:
+            product = self.products.get_by_id(product_id)
+            if product is None:
+                raise ProductNotFoundError
+            was_blocked = product.product_status == "Blocked"
+            blocked = self.product_service.block(product_id, state.identity.customer_id)
+        except (ProductNotFoundError, ProductAccessDeniedError, ValueError):
+            _telemetry(
+                "voice.card.block_failed",
+                call_id=state.call_id,
+                product_id=product_id,
+                reason="product_unavailable_or_not_owned",
+            )
+            return replace(
+                state,
+                card_security_action=CardSecurityActionStatus.FAILED,
+                secured_card_last_four=None,
+            )
+
+        status = (
+            CardSecurityActionStatus.ALREADY_BLOCKED
+            if was_blocked
+            else CardSecurityActionStatus.BLOCKED
+        )
+        last_four = blocked.product_number[-4:]
+        _telemetry(
+            "voice.card.blocked",
+            call_id=state.call_id,
+            product_id=product_id,
+            status=status.value,
+            card_last_four=last_four,
+        )
+        return replace(
+            state,
+            card_security_action=status,
+            secured_card_last_four=last_four,
+        )
 
     def _propose_transaction(
         self,

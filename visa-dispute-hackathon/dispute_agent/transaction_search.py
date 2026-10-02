@@ -17,6 +17,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Any, Protocol
 
+from webapp.backend.demo_card import demo_card_product_id
 from webapp.backend.models.transaction import Transaction
 
 LOGGER = logging.getLogger(__name__)
@@ -436,7 +437,7 @@ def demo_fruit_transactions(
                 transaction_id=f"FRUIT-{index:02d}-{fruit.upper()}",
                 transaction_date=transaction_time,
                 process_date=transaction_time.date(),
-                product_id=f"CARD-{customer_id}",
+                product_id=demo_card_product_id(customer_id),
                 customer_id=customer_id,
                 transaction_type="Card Purchase",
                 transaction_category="Fruit purchase",
