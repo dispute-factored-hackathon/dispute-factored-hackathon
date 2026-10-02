@@ -815,6 +815,65 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn(question, message)
                 self.assertIn("Lemon Drop Market", message)
                 self.assertNotIn("transaction_id", message)
+                self.assertIn(
+                    {"pt": "Filtros ativos", "es": "Filtros activos", "en": "Active filters"}[
+                        language
+                    ],
+                    message,
+                )
+
+    async def test_realtime_tool_can_remove_and_clear_transaction_filters(self):
+        events = [
+            session_updated_event(),
+            tool_call_event("confirm_language", "tool_language", {}),
+            tool_call_event(
+                "set_authentication_method",
+                "tool_auth",
+                {"method": "phone"},
+            ),
+            tool_call_event(
+                "search_transactions",
+                "tool_initial_search",
+                {
+                    "merchant_query": "lemon",
+                    "approximate_amount": 13,
+                    "currency": "USD",
+                },
+            ),
+            tool_call_event(
+                "search_transactions",
+                "tool_remove_filter",
+                {"remove_filters": ["merchant_query"]},
+            ),
+            tool_call_event(
+                "search_transactions",
+                "tool_clear_filters",
+                {"clear_filters": True},
+            ),
+        ]
+        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        self.addCleanup(transactions.close)
+        gateway, websocket, calls = self._gateway(
+            events,
+            transaction_repository=transactions,
+        )
+
+        await gateway.accept_and_control(
+            "call_filter_controls",
+            "+5511999990001",
+        )
+
+        state = gateway.calls.get("call_filter_controls")
+        self.assertEqual(state.stage, "needs_transaction_details")
+        self.assertFalse(state.transaction_criteria.has_any_filter)
+        search_tool = next(
+            tool for tool in calls.accepted[0][1]["tools"] if tool["name"] == "search_transactions"
+        )
+        properties = search_tool["parameters"]["properties"]
+        self.assertIn("remove_filters", properties)
+        self.assertIn("clear_filters", properties)
+        outbound = json.dumps(websocket.sent, ensure_ascii=False)
+        self.assertIn("Ainda não há filtros ativos", outbound)
 
     def test_denial_asks_for_one_missing_detail_before_another_candidate(self):
         transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
@@ -887,6 +946,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         message = gateway._message_for(selection.state, "transaction_handoff")
+        self.assertIn("Filtros usados na última busca", message)
         self.assertIn("atendentes humanos não estão disponíveis", message)
         self.assertIn("fora do escopo desta demonstração", message)
 

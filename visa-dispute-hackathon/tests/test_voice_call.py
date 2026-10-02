@@ -479,6 +479,65 @@ class VoiceCallServiceTests(unittest.TestCase):
         self.assertEqual(corrected.outcome, TransactionSelectionOutcome.CANDIDATE)
         self.assertEqual(corrected.state.current_transaction.merchant_name, "Lemon Drop Market")
 
+    def test_caller_can_edit_remove_and_clear_active_filters(self):
+        state = self.authenticate_known_phone("call_transaction_filter_controls")
+        initial = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(
+                merchant_query="lemon",
+                approximate_amount=13,
+                currency="USD",
+            ),
+        )
+
+        edited = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(approximate_amount=14),
+        )
+        removed = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(),
+            remove_filters=("merchant_query",),
+        )
+        cleared = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(),
+            clear_filters=True,
+        )
+
+        self.assertEqual(initial.state.transaction_guess_attempts, 1)
+        self.assertEqual(edited.state.transaction_criteria.approximate_amount, 14)
+        self.assertEqual(edited.state.transaction_guess_attempts, 1)
+        self.assertIsNone(removed.state.transaction_criteria.merchant_query)
+        self.assertEqual(removed.state.transaction_criteria.currency, "USD")
+        self.assertEqual(cleared.outcome, TransactionSelectionOutcome.NEEDS_CLARIFICATION)
+        self.assertFalse(cleared.state.transaction_criteria.has_any_filter)
+        self.assertEqual(cleared.state.transaction_guess_attempts, 1)
+
+    def test_three_searches_without_matches_end_with_same_human_handoff(self):
+        state = self.authenticate_known_phone("call_transaction_three_no_matches")
+        outcomes = []
+
+        for merchant in ("dragonfruit", "lychee", "rambutan"):
+            selection = self.calls.search_transactions(
+                state.call_id,
+                TransactionSearchCriteria(merchant_query=merchant),
+                replace_existing=True,
+            )
+            outcomes.append(selection.outcome)
+
+        self.assertEqual(
+            outcomes,
+            [
+                TransactionSelectionOutcome.NO_MATCH,
+                TransactionSelectionOutcome.NO_MATCH,
+                TransactionSelectionOutcome.EXHAUSTED,
+            ],
+        )
+        self.assertEqual(selection.state.stage, VoiceCallStage.HANDOFF)
+        self.assertEqual(selection.state.transaction_no_match_attempts, 3)
+        self.assertEqual(selection.state.handoff_reason, "transaction_search_exhausted")
+
     def test_three_denied_candidates_end_with_unavailable_human_handoff(self):
         state = self.authenticate_known_phone("call_transaction_exhaustion")
         selection = self.calls.search_transactions(

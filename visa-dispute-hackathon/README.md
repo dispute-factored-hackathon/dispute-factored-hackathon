@@ -58,6 +58,8 @@ The retrieval boundary guarantees that:
 
 Izzy speaks one ranked candidate at a time with merchant, date, amount/currency, city, and country. Only an explicit confirmation selects it. After each denial, Izzy asks for exactly one useful detail that has not already been requested before running retrieval and reranking again. If the caller cannot provide that detail, Izzy moves to a different question instead of repeating the same search. Refining the current candidate does not consume an additional guess; only an explicit denial does. After three denied candidates, Izzy explains that a specialist would normally help, but human operators are unavailable and handoff is outside this demonstration. Dispute creation, Visa reason-code classification, real transaction systems, and real human transfer remain out of scope.
 
+Every search response states the active filters in the caller's selected language. The caller can correct a filter value, remove one named filter, or clear all filters and begin again. A correction reruns retrieval and reranking without consuming another candidate guess. Three rejected candidates or three searches with no matching transaction lead to the same simulated-human-handoff boundary.
+
 Run the SQLite, state-machine, and SIP-sideband coverage with:
 
 ```bash

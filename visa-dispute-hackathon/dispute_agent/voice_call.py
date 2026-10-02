@@ -107,6 +107,7 @@ class VoiceCallState:
     confirmed_transaction: Transaction | None = None
     transaction_guess_attempts: int = 0
     transaction_search_attempts: int = 0
+    transaction_no_match_attempts: int = 0
     handoff_reason: str | None = None
 
 
@@ -485,19 +486,28 @@ class VoiceCallService:
         criteria: TransactionSearchCriteria,
         *,
         replace_existing: bool = False,
+        clear_filters: bool = False,
+        remove_filters: tuple[str, ...] = (),
     ) -> TransactionSelectionResult:
         """Search the authenticated caller's transactions and propose one candidate."""
 
         state = self.get(call_id)
         self._require_transaction_search_stage(state)
         assert state.identity is not None
-        if state.stage is VoiceCallStage.NEEDS_TRANSACTION_DETAILS and not criteria.has_any_filter:
+        filters_changed = replace_existing or clear_filters or bool(remove_filters)
+        if (
+            state.stage is VoiceCallStage.NEEDS_TRANSACTION_DETAILS
+            and not criteria.has_any_filter
+            and not filters_changed
+        ):
             return self._request_transaction_refinement(
                 state,
                 state.transaction_criteria,
                 reason="no_new_detail",
             )
-        merged = criteria if replace_existing else state.transaction_criteria.merged_with(criteria)
+        base = TransactionSearchCriteria() if clear_filters else state.transaction_criteria
+        base = base.without(remove_filters)
+        merged = criteria if replace_existing else base.merged_with(criteria)
 
         if not merged.is_discriminative:
             return self._request_transaction_refinement(
@@ -521,6 +531,16 @@ class VoiceCallService:
             )
 
         if not search.transactions:
+            no_match_attempts = state.transaction_no_match_attempts + 1
+            if no_match_attempts >= self.max_transaction_guesses:
+                return self._transaction_handoff(
+                    replace(
+                        state,
+                        transaction_criteria=merged,
+                        transaction_search_attempts=search_attempts,
+                        transaction_no_match_attempts=no_match_attempts,
+                    )
+                )
             updated = replace(
                 state,
                 stage=VoiceCallStage.NEEDS_TRANSACTION_DETAILS,
@@ -528,12 +548,15 @@ class VoiceCallService:
                 transaction_candidates=(),
                 current_transaction=None,
                 transaction_search_attempts=search_attempts,
+                transaction_no_match_attempts=no_match_attempts,
             )
             self._calls[call_id] = updated
             _telemetry(
                 "voice.transaction.search_no_match",
                 call_id=call_id,
                 search_count=search_attempts,
+                no_match_count=no_match_attempts,
+                active_filters=dict(merged.active_filters()),
             )
             return TransactionSelectionResult(
                 updated,
@@ -628,6 +651,7 @@ class VoiceCallService:
             call_id=state.call_id,
             guess_number=attempts,
             result_count=result_count,
+            active_filters=dict(updated.transaction_criteria.active_filters()),
         )
         return TransactionSelectionResult(
             updated,
@@ -689,6 +713,8 @@ class VoiceCallService:
             "voice.transaction.search_exhausted",
             call_id=state.call_id,
             guess_count=state.transaction_guess_attempts,
+            no_match_count=state.transaction_no_match_attempts,
+            active_filters=dict(state.transaction_criteria.active_filters()),
             handoff_available=False,
         )
         return TransactionSelectionResult(

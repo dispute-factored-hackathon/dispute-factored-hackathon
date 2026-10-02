@@ -26,6 +26,17 @@ MAX_RESULTS = 10
 AMOUNT_TOLERANCE_RATE = 0.10
 MIN_AMOUNT_TOLERANCE = 5.0
 MIN_RELEVANCE_SCORE = 0.35
+TRANSACTION_FILTER_FIELDS = (
+    "merchant_query",
+    "approximate_amount",
+    "currency",
+    "date_from",
+    "date_to",
+    "country",
+    "city",
+    "channel",
+    "transaction_type",
+)
 
 TRANSACTION_COLUMNS = (
     "transaction_id",
@@ -132,6 +143,22 @@ class TransactionSearchCriteria:
             if getattr(newer, field.name) is not None
         }
         return replace(self, **updates)
+
+    def without(self, field_names: Iterable[str]) -> TransactionSearchCriteria:
+        """Return criteria with explicitly selected filters removed."""
+        requested = tuple(dict.fromkeys(field_names))
+        unknown = set(requested).difference(TRANSACTION_FILTER_FIELDS)
+        if unknown:
+            raise ValueError(f"unsupported transaction filter: {sorted(unknown)[0]}")
+        return replace(self, **dict.fromkeys(requested))
+
+    def active_filters(self) -> tuple[tuple[str, Any], ...]:
+        """Expose active, schema-approved filters for explanations and telemetry."""
+        return tuple(
+            (name, getattr(self, name))
+            for name in TRANSACTION_FILTER_FIELDS
+            if getattr(self, name) is not None
+        )
 
     @property
     def has_any_filter(self) -> bool:

@@ -729,10 +729,20 @@ class SipRealtimeGateway:
                     replace_existing = arguments.get("replace_existing", False)
                     if not isinstance(replace_existing, bool):
                         raise ValueError("replace_existing must be true or false")
+                    clear_filters = arguments.get("clear_filters", False)
+                    if not isinstance(clear_filters, bool):
+                        raise ValueError("clear_filters must be true or false")
+                    remove_filters_value = arguments.get("remove_filters", [])
+                    if not isinstance(remove_filters_value, list) or not all(
+                        isinstance(item, str) for item in remove_filters_value
+                    ):
+                        raise ValueError("remove_filters must be a list of filter names")
                     selection = self.calls.search_transactions(
                         call_id,
                         criteria,
                         replace_existing=replace_existing,
+                        clear_filters=clear_filters,
+                        remove_filters=tuple(remove_filters_value),
                     )
                     state = selection.state
                     reason = {
@@ -748,6 +758,9 @@ class SipRealtimeGateway:
                         "outcome": selection.outcome.value,
                         "candidate_count": selection.result_count,
                         "guess_number": state.transaction_guess_attempts,
+                        "active_filters": [
+                            name for name, _ in state.transaction_criteria.active_filters()
+                        ],
                     }
 
                 elif tool_name == "confirm_transaction":
@@ -1002,8 +1015,37 @@ class SipRealtimeGateway:
                     "replace_existing": {
                         "type": "boolean",
                         "description": (
-                            "Use true only when the caller explicitly corrects or replaces "
-                            "previous search details. Otherwise omit it or use false."
+                            "Use true only when the caller explicitly replaces the entire prior "
+                            "search description. For one corrected filter, send that field and "
+                            "leave this false."
+                        ),
+                    },
+                    "clear_filters": {
+                        "type": "boolean",
+                        "description": (
+                            "Use true when the caller explicitly asks to clear all active "
+                            "transaction search filters. The backend will then ask for a new detail."
+                        ),
+                    },
+                    "remove_filters": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "merchant_query",
+                                "approximate_amount",
+                                "currency",
+                                "date_from",
+                                "date_to",
+                                "country",
+                                "city",
+                                "channel",
+                                "transaction_type",
+                            ],
+                        },
+                        "description": (
+                            "Active filters the caller explicitly asked to remove. Use this instead "
+                            "of inventing an empty replacement value."
                         ),
                     },
                 },
@@ -1049,6 +1091,11 @@ class SipRealtimeGateway:
 - Age: {state.identity.age if state.identity.age is not None else "not provided"}
 - Accent: {state.identity.detected_accent or "not provided"}
 Address the customer naturally by first name. Do not repeat the other profile fields unless they are relevant to the customer's request."""
+        active_filters = json.dumps(
+            dict(state.transaction_criteria.active_filters()),
+            ensure_ascii=False,
+            default=str,
+        )
 
         return f"""You are Izzy, the virtual card-dispute assistant for Factored Bank.
 
@@ -1089,7 +1136,11 @@ Transaction-search workflow:
 - At authenticated, ask whether the caller is having a problem with a transaction and invite them to describe whatever they remember.
 - Useful details include merchant or descriptor, approximate amount, currency, date or date range, country, city, channel, and transaction type.
 - Call search_transactions with only details the caller supplied. Do not invent missing values.
-- Preserve earlier details by default. Set replace_existing=true only when the caller explicitly corrects or replaces the previous search description.
+- The current server-owned transaction filters are: {active_filters}.
+- Tell the caller which filters are active whenever the backend searches or asks for another detail.
+- The caller may correct a filter, remove one named filter, or clear every filter at any time.
+- For a correction, send the corrected value. To remove selected filters use remove_filters. To clear all filters use clear_filters=true.
+- Preserve earlier details by default. Correct one filter by sending only its new value. Set replace_existing=true only when the caller explicitly replaces the entire previous search description.
 - On every search turn, the backend retrieves up to ten customer-scoped candidates, reranks them against all collected details, and returns only the Top-1 candidate for presentation.
 - When the caller adds or corrects any transaction detail, call search_transactions again so retrieval and reranking run again. Do not keep presenting a stale candidate.
 - If the tool asks for clarification, ask exactly one focused question and preserve details already collected.
@@ -1358,7 +1409,10 @@ General behavior:
             state.stage is VoiceCallStage.HANDOFF
             and state.handoff_reason == "transaction_search_exhausted"
         ):
-            return messages["transaction_handoff"]
+            return (
+                SipRealtimeGateway._transaction_filter_context(state, include_controls=False)
+                + messages["transaction_handoff"]
+            )
 
         if state.stage is VoiceCallStage.HANDOFF:
             return messages["handoff"]
@@ -1378,8 +1432,10 @@ General behavior:
         if reason == "transaction_clarification":
             return SipRealtimeGateway._transaction_clarification_message(state)
 
+        if reason == "transaction_no_match":
+            return SipRealtimeGateway._transaction_no_match_message(state)
+
         if reason in {
-            "transaction_no_match",
             "transaction_invalid",
             "transaction_confirmed",
             "transaction_handoff",
@@ -1505,7 +1561,122 @@ General behavior:
             after_denial=after_denial,
             guess_number=state.transaction_guess_attempts,
         )
-        return prefixes[language] + questions[language][missing_field]
+        return (
+            prefixes[language]
+            + SipRealtimeGateway._transaction_filter_context(state)
+            + questions[language][missing_field]
+        )
+
+    @staticmethod
+    def _transaction_filter_context(
+        state: VoiceCallState,
+        *,
+        include_controls: bool = True,
+    ) -> str:
+        """Describe active filters and the caller's available controls."""
+        summary = SipRealtimeGateway._transaction_filter_summary(state)
+        if state.locale.language == "pt":
+            if not summary:
+                return "Ainda não há filtros ativos. "
+            if not include_controls:
+                return f"Filtros usados na última busca: {summary}. "
+            return (
+                f"Filtros ativos: {summary}. Você pode corrigir um filtro, remover um filtro "
+                "específico ou limpar todos. "
+            )
+        if state.locale.language == "es":
+            if not summary:
+                return "Todavía no hay filtros activos. "
+            if not include_controls:
+                return f"Filtros usados en la última búsqueda: {summary}. "
+            return (
+                f"Filtros activos: {summary}. Puedes corregir un filtro, eliminar un filtro "
+                "específico o borrar todos. "
+            )
+        if not summary:
+            return "There are no active filters yet. "
+        if not include_controls:
+            return f"Filters used in the last search: {summary}. "
+        return (
+            f"Active filters: {summary}. You can correct a filter, remove a specific filter, "
+            "or clear them all. "
+        )
+
+    @staticmethod
+    def _transaction_filter_summary(state: VoiceCallState) -> str:
+        """Render schema-approved filters in concise, voice-friendly language."""
+        criteria = state.transaction_criteria
+        language = state.locale.language
+        labels = {
+            "pt": {
+                "merchant_query": "estabelecimento",
+                "approximate_amount": "valor aproximado",
+                "currency": "moeda",
+                "date_from": "data inicial",
+                "date_to": "data final",
+                "country": "país",
+                "city": "cidade",
+                "channel": "canal",
+                "transaction_type": "tipo",
+            },
+            "es": {
+                "merchant_query": "comercio",
+                "approximate_amount": "valor aproximado",
+                "currency": "moneda",
+                "date_from": "fecha inicial",
+                "date_to": "fecha final",
+                "country": "país",
+                "city": "ciudad",
+                "channel": "canal",
+                "transaction_type": "tipo",
+            },
+            "en": {
+                "merchant_query": "merchant",
+                "approximate_amount": "approximate amount",
+                "currency": "currency",
+                "date_from": "start date",
+                "date_to": "end date",
+                "country": "country",
+                "city": "city",
+                "channel": "channel",
+                "transaction_type": "type",
+            },
+        }[language]
+        parts: list[str] = []
+        for name, value in criteria.active_filters():
+            if name == "currency" and criteria.approximate_amount is not None:
+                continue
+            if name == "approximate_amount":
+                rendered = f"{value:.2f}"
+                if language in {"pt", "es"}:
+                    rendered = rendered.replace(".", ",")
+                if criteria.currency:
+                    rendered = f"{rendered} {criteria.currency}"
+            elif isinstance(value, date):
+                rendered = value.strftime("%d/%m/%Y") if language in {"pt", "es"} else str(value)
+            else:
+                rendered = str(value)
+            parts.append(f"{labels[name]} {rendered}")
+        return "; ".join(parts)
+
+    @staticmethod
+    def _transaction_no_match_message(state: VoiceCallState) -> str:
+        context = SipRealtimeGateway._transaction_filter_context(state)
+        messages = {
+            "pt": (
+                "Não encontrei uma transação com esses filtros. Corrija um filtro, remova um "
+                "filtro específico ou limpe todos para começar de novo."
+            ),
+            "es": (
+                "No encontré una transacción con esos filtros. Corrige un filtro, elimina un "
+                "filtro específico o borra todos para comenzar de nuevo."
+            ),
+            "en": (
+                "I couldn't find a transaction with those filters. Correct a filter, remove a "
+                "specific filter, or clear them all to start again."
+            ),
+        }
+        return context + messages[state.locale.language]
 
     @staticmethod
     def _transaction_candidate_message(state: VoiceCallState) -> str:
@@ -1541,7 +1712,7 @@ General behavior:
                 "Lisbon": "Lisboa",
                 "Mexico City": "Cidade do México",
             }.get(city, city)
-            return (
+            return SipRealtimeGateway._transaction_filter_context(state) + (
                 f"Encontrei uma possibilidade: uma compra de {amount} {transaction.currency} "
                 f"na {merchant}, em {spoken_date}, em {city}, "
                 f"{country}. É essa transação?"
@@ -1556,12 +1727,12 @@ General behavior:
                 "Lisbon": "Lisboa",
                 "Mexico City": "Ciudad de México",
             }.get(city, city)
-            return (
+            return SipRealtimeGateway._transaction_filter_context(state) + (
                 f"Encontré una posibilidad: una compra de {amount} {transaction.currency} "
                 f"en {merchant}, el {spoken_date}, en {city}, "
                 f"{country}. ¿Es esa transacción?"
             )
-        return (
+        return SipRealtimeGateway._transaction_filter_context(state) + (
             f"I found one possibility: a {amount} {transaction.currency} purchase at "
             f"{merchant} on {spoken_date} in {city}, {country}. "
             "Is that the transaction?"

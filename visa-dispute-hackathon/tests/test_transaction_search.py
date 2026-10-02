@@ -157,6 +157,26 @@ class SQLiteTransactionSearchTests(unittest.TestCase):
                 {"date_from": "2026-10-01", "date_to": "2026-09-01"}
             )
 
+    def test_criteria_can_remove_selected_filters_without_touching_others(self):
+        criteria = TransactionSearchCriteria.from_mapping(
+            {
+                "merchant_query": "lemon",
+                "approximate_amount": 13,
+                "currency": "USD",
+            }
+        )
+
+        updated = criteria.without(("merchant_query", "currency"))
+
+        self.assertIsNone(updated.merchant_query)
+        self.assertIsNone(updated.currency)
+        self.assertEqual(updated.approximate_amount, 13)
+        self.assertEqual(updated.active_filters(), (("approximate_amount", 13.0),))
+
+    def test_criteria_rejects_unknown_filter_removal(self):
+        with self.assertRaisesRegex(ValueError, "unsupported transaction filter"):
+            TransactionSearchCriteria(merchant_query="lemon").without(("customer_id",))
+
     def test_metrics_report_latency_and_counts_without_search_values(self):
         with self.assertLogs("dispute_agent.transaction_search", level="INFO") as captured:
             self.repository.search(
