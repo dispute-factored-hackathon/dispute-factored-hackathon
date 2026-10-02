@@ -71,6 +71,27 @@ def dtmf_event(key: str) -> str:
     )
 
 
+def completed_transcript_event(*, speaker: str, transcript: str) -> str:
+    if speaker == "customer":
+        return json.dumps(
+            {
+                "type": "conversation.item.input_audio_transcription.completed",
+                "item_id": "item_customer_1",
+                "transcript": transcript,
+            },
+            ensure_ascii=False,
+        )
+    return json.dumps(
+        {
+            "type": "response.output_audio_transcript.done",
+            "item_id": "item_agent_1",
+            "response_id": "response_1",
+            "transcript": transcript,
+        },
+        ensure_ascii=False,
+    )
+
+
 class FakeWebhooks:
     def __init__(self, event=None, error=None):
         self.event = event
@@ -305,6 +326,87 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         _, configuration = calls.accepted[0]
         self.assertEqual(gateway.voice, "cedar")
         self.assertEqual(configuration["audio"]["output"]["voice"], "cedar")
+
+    async def test_enables_input_transcription_in_accept_and_session_update(self):
+        gateway, websocket, calls = self._gateway([session_updated_event()])
+
+        await gateway.accept_and_control(
+            "call_transcription_configuration",
+            "+5511999990001",
+        )
+
+        _, configuration = calls.accepted[0]
+        expected = {"model": "gpt-4o-mini-transcribe"}
+        self.assertEqual(configuration["audio"]["input"]["transcription"], expected)
+        self.assertEqual(
+            self._session_updates(websocket)[0]["session"]["audio"]["input"]["transcription"],
+            expected,
+        )
+
+    async def test_logs_complete_customer_and_agent_transcripts_without_redaction(self):
+        customer_transcript = "Meu nome mock é João; falei R$ 13,47 & nada deve sumir."
+        agent_transcript = "Entendi João — encontrei a compra mock de R$ 13,47."
+        gateway, _, _ = self._gateway(
+            [
+                session_updated_event(),
+                completed_transcript_event(
+                    speaker="customer",
+                    transcript=customer_transcript,
+                ),
+                completed_transcript_event(
+                    speaker="agent",
+                    transcript=agent_transcript,
+                ),
+            ]
+        )
+
+        with self.assertLogs("dispute_agent.sip_realtime", level="INFO") as captured:
+            await gateway.accept_and_control(
+                "call_full_transcript",
+                "+5511999990001",
+            )
+
+        transcript_events = [
+            json.loads(line.split("INFO:dispute_agent.sip_realtime:", 1)[-1])
+            for line in captured.output
+            if '"event": "voice.transcript.completed"' in line
+        ]
+        self.assertEqual(
+            [(event["speaker"], event["transcript"]) for event in transcript_events],
+            [
+                ("customer", customer_transcript),
+                ("agent", agent_transcript),
+            ],
+        )
+        self.assertTrue(all(event["redacted"] is False for event in transcript_events))
+
+    async def test_can_disable_full_transcript_logs_outside_demo(self):
+        websocket = FakeWebsocket(
+            [
+                session_updated_event(),
+                completed_transcript_event(
+                    speaker="customer",
+                    transcript="do not persist this",
+                ),
+            ]
+        )
+        calls = FakeAcceptCalls()
+        gateway = SipRealtimeGateway(
+            FIXTURE,
+            api_key="sk-test",
+            openai_client=SimpleNamespace(realtime=SimpleNamespace(calls=calls)),
+            websocket_connect=FakeConnector(websocket),
+            log_full_transcripts=False,
+        )
+
+        with self.assertLogs("dispute_agent.sip_realtime", level="INFO") as captured:
+            await gateway.accept_and_control(
+                "call_transcript_disabled",
+                "+5511999990001",
+            )
+
+        self.assertIsNone(calls.accepted[0][1]["audio"]["input"]["transcription"])
+        self.assertNotIn("do not persist this", "\n".join(captured.output))
 
     async def test_opening_waits_for_session_updated(self):
         events = [

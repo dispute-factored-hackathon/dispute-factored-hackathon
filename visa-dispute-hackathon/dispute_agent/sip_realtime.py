@@ -32,6 +32,13 @@ from .voice_call import (
 LOGGER = logging.getLogger(__name__)
 
 
+def _enabled(environment_value: str | None, *, default: bool) -> bool:
+    """Interpret a small, explicit set of environment boolean values."""
+    if environment_value is None:
+        return default
+    return environment_value.strip().casefold() in {"1", "true", "yes", "on"}
+
+
 def _telemetry(event: str, *, call_id: str | None = None, **fields: Any) -> None:
     """Emit one structured JSON application event to the configured logger."""
     payload: dict[str, Any] = {"event": event}
@@ -87,6 +94,7 @@ class SipRealtimeGateway:
         openai_client: Any | None = None,
         websocket_connect: Callable[..., Any] | None = None,
         transaction_repository: TransactionSearchRepository | None = None,
+        log_full_transcripts: bool | None = None,
     ) -> None:
 
         self.api_key = api_key or os.getenv("OPENAI_API_KEY", "")
@@ -94,6 +102,16 @@ class SipRealtimeGateway:
         self.model = model or os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1")
 
         self.voice = voice or os.getenv("OPENAI_REALTIME_VOICE", "cedar")
+
+        self.input_transcription_model = os.getenv(
+            "OPENAI_INPUT_TRANSCRIPTION_MODEL",
+            "gpt-4o-mini-transcribe",
+        )
+        self.log_full_transcripts = (
+            log_full_transcripts
+            if log_full_transcripts is not None
+            else _enabled(os.getenv("DEMO_LOG_FULL_TRANSCRIPTS"), default=True)
+        )
 
         self.client = openai_client or OpenAI(
             api_key=self.api_key,
@@ -157,9 +175,10 @@ class SipRealtimeGateway:
                     "and explicitly requests a response."
                 ),
                 audio={
+                    **self._input_audio_configuration(),
                     "output": {
                         "voice": self.voice,
-                    }
+                    },
                 },
                 tools=[
                     self._language_tool(),
@@ -327,6 +346,7 @@ class SipRealtimeGateway:
                                 "session": {
                                     "type": "realtime",
                                     "instructions": self._system_instructions(state),
+                                    "audio": self._input_audio_configuration(),
                                 },
                             }
                         )
@@ -371,7 +391,27 @@ class SipRealtimeGateway:
 
                         event_type = str(event.get("type", ""))
 
-                        if event_type == "session.updated":
+                        if event_type == "conversation.item.input_audio_transcription.completed":
+                            self._log_full_transcript(
+                                call_id=call_id,
+                                speaker="customer",
+                                transcript=str(event.get("transcript", "")),
+                                item_id=str(event.get("item_id", "")),
+                            )
+
+                        elif event_type in {
+                            "response.output_audio_transcript.done",
+                            "response.audio_transcript.done",
+                        }:
+                            self._log_full_transcript(
+                                call_id=call_id,
+                                speaker="agent",
+                                transcript=str(event.get("transcript", "")),
+                                item_id=str(event.get("item_id", "")),
+                                response_id=str(event.get("response_id", "")),
+                            )
+
+                        elif event_type == "session.updated":
                             session_ready = True
 
                             _telemetry(
@@ -780,6 +820,7 @@ class SipRealtimeGateway:
                             "session": {
                                 "type": "realtime",
                                 "instructions": self._system_instructions(state),
+                                "audio": self._input_audio_configuration(),
                             },
                         }
                     )
@@ -815,6 +856,40 @@ class SipRealtimeGateway:
                 websocket,
                 result,
             )
+
+    def _input_audio_configuration(self) -> dict[str, Any]:
+        """Keep the demo transcript setting consistent across session updates."""
+        transcription = (
+            {"model": self.input_transcription_model} if self.log_full_transcripts else None
+        )
+        return {
+            "input": {
+                "transcription": transcription,
+            }
+        }
+
+    def _log_full_transcript(
+        self,
+        *,
+        call_id: str,
+        speaker: str,
+        transcript: str,
+        item_id: str = "",
+        response_id: str = "",
+    ) -> None:
+        """Store the completed verbal transcript exactly as received in demo logs."""
+        if not self.log_full_transcripts:
+            return
+
+        _telemetry(
+            "voice.transcript.completed",
+            call_id=call_id,
+            speaker=speaker,
+            transcript=transcript,
+            item_id=item_id,
+            response_id=response_id,
+            redacted=False,
+        )
 
     async def _speak(self, websocket: Any, message: str) -> None:
         """Create one server-directed audio response."""
