@@ -232,6 +232,17 @@ class VoiceCallServiceTests(unittest.TestCase):
             ("en", "american"),
         )
 
+        changed_back = self.calls.choose_language(
+            state.call_id,
+            language="pt",
+        )
+
+        self.assertEqual(changed_back.stage, VoiceCallStage.AUTHENTICATED)
+        self.assertEqual(
+            (changed_back.locale.locale, changed_back.locale.accent),
+            ("pt-BR", "brazilian"),
+        )
+
     def test_incompatible_accent_does_not_change_call_state(self):
         state = self.calls.start(
             "+55 11 99999-0001",
@@ -405,7 +416,10 @@ class VoiceCallServiceTests(unittest.TestCase):
         self.assertIsNotNone(complaint)
         self.assertEqual(complaint.customer_id, "CLI-002")
         self.assertEqual(complaint.affected_product_id, demo_card_product_id("CLI-002"))
-        self.assertEqual(complaint.origin_interaction_id, state.call_id)
+        self.assertEqual(
+            complaint.origin_interaction_id,
+            self.calls.call_interactions.interaction_id(state.call_id),
+        )
         self.assertEqual(complaint.subcategory, "Visa 10.4 · Other Fraud — Card-Absent Environment")
         self.assertEqual(complaint.reception_channel, "Call Center")
         self.assertEqual(complaint.assigned_agent_id, "IZZY")

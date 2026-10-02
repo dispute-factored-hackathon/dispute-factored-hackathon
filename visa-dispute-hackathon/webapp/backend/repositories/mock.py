@@ -1,9 +1,13 @@
 import unicodedata
 from threading import Lock
 
+from webapp.backend.models.call_center_interaction import CallCenterInteraction
+from webapp.backend.models.call_transcript import CallTranscript
 from webapp.backend.models.complaint import Complaint
 from webapp.backend.models.customer import Customer
 from webapp.backend.models.product import Product
+from webapp.backend.models.satisfaction_survey import SatisfactionSurvey
+from webapp.backend.models.service_agent import ServiceAgent
 from webapp.backend.models.session import CustomerSession
 from webapp.backend.models.store import StoreProduct
 from webapp.backend.models.transaction import Transaction
@@ -314,6 +318,114 @@ class MockStoreCatalogRepository:
         return self._products.get(product_id)
 
 
+class MockServiceAgentRepository:
+    def __init__(self) -> None:
+        self._agents: dict[str, ServiceAgent] = {}
+        self._lock = Lock()
+
+    def create(self, agent: ServiceAgent) -> ServiceAgent:
+        with self._lock:
+            if agent.agent_id in self._agents or self.get_by_employee_code(agent.employee_code):
+                raise ValueError("Service agent already exists.")
+            self._agents[agent.agent_id] = agent
+        return agent
+
+    def get_by_id(self, agent_id: str) -> ServiceAgent | None:
+        return self._agents.get(agent_id)
+
+    def get_by_employee_code(self, employee_code: str) -> ServiceAgent | None:
+        return next((a for a in self._agents.values() if a.employee_code == employee_code), None)
+
+    def update(self, agent: ServiceAgent) -> ServiceAgent:
+        with self._lock:
+            if agent.agent_id not in self._agents:
+                raise ValueError("Service agent does not exist.")
+            self._agents[agent.agent_id] = agent
+        return agent
+
+
+class MockCallCenterInteractionRepository:
+    def __init__(self) -> None:
+        self._interactions: dict[str, CallCenterInteraction] = {}
+        self._lock = Lock()
+
+    def create(self, interaction: CallCenterInteraction) -> CallCenterInteraction:
+        with self._lock:
+            if interaction.interaction_id in self._interactions:
+                raise ValueError("Interaction already exists.")
+            self._interactions[interaction.interaction_id] = interaction
+        return interaction
+
+    def get_by_id(self, interaction_id: str) -> CallCenterInteraction | None:
+        return self._interactions.get(interaction_id)
+
+    def list_by_customer(self, customer_id: str) -> list[CallCenterInteraction]:
+        return sorted(
+            (item for item in self._interactions.values() if item.customer_id == customer_id),
+            key=lambda item: item.interaction_date,
+            reverse=True,
+        )
+
+    def update(self, interaction: CallCenterInteraction) -> CallCenterInteraction:
+        with self._lock:
+            if interaction.interaction_id not in self._interactions:
+                raise ValueError("Interaction does not exist.")
+            self._interactions[interaction.interaction_id] = interaction
+        return interaction
+
+
+class MockCallTranscriptRepository:
+    def __init__(self) -> None:
+        self._transcripts: dict[str, CallTranscript] = {}
+        self._lock = Lock()
+
+    def create(self, transcript: CallTranscript) -> CallTranscript:
+        with self._lock:
+            if transcript.transcript_id in self._transcripts or self.get_by_interaction(
+                transcript.interaction_id
+            ):
+                raise ValueError("Transcript already exists.")
+            self._transcripts[transcript.transcript_id] = transcript
+        return transcript
+
+    def get_by_interaction(self, interaction_id: str) -> CallTranscript | None:
+        return next(
+            (item for item in self._transcripts.values() if item.interaction_id == interaction_id),
+            None,
+        )
+
+    def update(self, transcript: CallTranscript) -> CallTranscript:
+        with self._lock:
+            if transcript.transcript_id not in self._transcripts:
+                raise ValueError("Transcript does not exist.")
+            self._transcripts[transcript.transcript_id] = transcript
+        return transcript
+
+
+class MockSatisfactionSurveyRepository:
+    def __init__(self) -> None:
+        self._surveys: dict[str, SatisfactionSurvey] = {}
+        self._lock = Lock()
+
+    def create(self, survey: SatisfactionSurvey) -> SatisfactionSurvey:
+        with self._lock:
+            if survey.survey_id in self._surveys or (
+                survey.interaction_id and self.get_by_interaction(survey.interaction_id)
+            ):
+                raise ValueError("Satisfaction survey already exists.")
+            self._surveys[survey.survey_id] = survey
+        return survey
+
+    def get_by_interaction(self, interaction_id: str) -> SatisfactionSurvey | None:
+        return next(
+            (item for item in self._surveys.values() if item.interaction_id == interaction_id),
+            None,
+        )
+
+    def list_by_agent(self, agent_id: str) -> list[SatisfactionSurvey]:
+        return [item for item in self._surveys.values() if item.agent_id == agent_id]
+
+
 customer_repository = MockCustomerRepository()
 
 product_repository = MockProductRepository()
@@ -323,3 +435,7 @@ transaction_repository = MockTransactionRepository()
 complaint_repository = MockComplaintRepository()
 
 session_repository = MockSessionRepository()
+service_agent_repository = MockServiceAgentRepository()
+call_center_interaction_repository = MockCallCenterInteractionRepository()
+call_transcript_repository = MockCallTranscriptRepository()
+satisfaction_survey_repository = MockSatisfactionSurveyRepository()

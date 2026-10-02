@@ -12,9 +12,13 @@ from typing import Any
 
 from webapp.backend.demo_seed import seed_demo_customers
 from webapp.backend.repositories.registry import (
+    call_center_interaction_repository,
+    call_transcript_repository,
     complaint_repository,
     customer_repository,
     product_repository,
+    satisfaction_survey_repository,
+    service_agent_repository,
 )
 
 from .sip_realtime import SipRealtimeGateway, _value, extract_caller_phone
@@ -143,6 +147,10 @@ def _get_gateway() -> SipRealtimeGateway:
             customer_repository,
             product_repository=product_repository,
             complaint_repository=complaint_repository,
+            service_agent_repository=service_agent_repository,
+            interaction_repository=call_center_interaction_repository,
+            transcript_repository=call_transcript_repository,
+            satisfaction_survey_repository=satisfaction_survey_repository,
             api_key=secret["OPENAI_API_KEY"],
             webhook_secret=secret["OPENAI_WEBHOOK_SECRET"],
         )

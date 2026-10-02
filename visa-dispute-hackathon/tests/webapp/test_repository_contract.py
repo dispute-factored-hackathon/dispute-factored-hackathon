@@ -20,13 +20,17 @@ from factories import (
 
 from webapp.backend.config import Settings
 from webapp.backend.demo_seed import DEMO_CUSTOMERS, seed_demo_customers
+from webapp.backend.models.call_center_interaction import CallCenterInteraction
+from webapp.backend.models.call_transcript import CallTranscript
 from webapp.backend.models.customer import InterfaceLocale, TutorialStatus
+from webapp.backend.models.satisfaction_survey import SatisfactionSurvey
 from webapp.backend.repositories import mock
 from webapp.backend.repositories.registry import Repositories, build_repositories
 from webapp.backend.services.complaint_filing import (
     ComplaintFilingService,
     UnsupportedVisaConditionError,
 )
+from webapp.backend.services.izzy_agent import seed_izzy_agent
 
 
 @dataclass
@@ -46,6 +50,10 @@ def backend(request: pytest.FixtureRequest):
                 transactions=mock.MockTransactionRepository(),
                 complaints=mock.MockComplaintRepository(),
                 sessions=mock.MockSessionRepository(),
+                service_agents=mock.MockServiceAgentRepository(),
+                call_center_interactions=mock.MockCallCenterInteractionRepository(),
+                call_transcripts=mock.MockCallTranscriptRepository(),
+                satisfaction_surveys=mock.MockSatisfactionSurveyRepository(),
             ),
         )
         return
@@ -57,6 +65,79 @@ def backend(request: pytest.FixtureRequest):
         yield Backend("postgres", repos)
     finally:
         repos.close()
+
+
+def test_call_center_records_round_trip_and_update(backend: Backend):
+    customer = backend.repos.customers.create(make_customer())
+    agent = seed_izzy_agent(backend.repos.service_agents)
+    interaction = CallCenterInteraction(
+        interaction_id="INT-1",
+        interaction_date=NOW,
+        process_date=NOW.date(),
+        customer_id=customer.customer_id,
+        agent_id=agent.agent_id,
+        interaction_type="Inbound Call",
+        channel="Phone",
+        contact_reason="Card dispute support",
+        reason_category="Complaint",
+        requires_followup=True,
+        was_escalated=False,
+        has_transcript=False,
+        has_recording=False,
+    )
+    backend.repos.call_center_interactions.create(interaction)
+    transcript = CallTranscript(
+        transcript_id="TRN-1",
+        interaction_id=interaction.interaction_id,
+        process_date=NOW.date(),
+        customer_id=customer.customer_id,
+        agent_id=agent.agent_id,
+        full_text="Customer: hello",
+        customer_text="hello",
+        detected_language="en",
+        transcription_model="test-model",
+        duration_seconds=1,
+    )
+    backend.repos.call_transcripts.create(transcript)
+    survey = SatisfactionSurvey(
+        survey_id="SRV-1",
+        survey_date=NOW,
+        process_date=NOW.date(),
+        interaction_id=interaction.interaction_id,
+        customer_id=customer.customer_id,
+        agent_id=agent.agent_id,
+        survey_type="CSAT",
+        send_channel="Phone",
+        main_score=5,
+    )
+    backend.repos.satisfaction_surveys.create(survey)
+
+    assert backend.repos.service_agents.get_by_employee_code(agent.employee_code) == agent
+    assert backend.repos.call_center_interactions.list_by_customer(customer.customer_id) == [
+        interaction
+    ]
+    assert (
+        backend.repos.call_transcripts.get_by_interaction(interaction.interaction_id) == transcript
+    )
+    assert backend.repos.satisfaction_surveys.list_by_agent(agent.agent_id) == [survey]
+
+    updated_agent = agent.model_copy(update={"avg_csat": 5.0})
+    updated_interaction = interaction.model_copy(update={"was_resolved": True})
+    updated_transcript = transcript.model_copy(update={"full_text": "Customer: hello\nAgent: hi"})
+    backend.repos.service_agents.update(updated_agent)
+    backend.repos.call_center_interactions.update(updated_interaction)
+    backend.repos.call_transcripts.update(updated_transcript)
+
+    assert backend.repos.service_agents.get_by_id(agent.agent_id) == updated_agent
+    assert (
+        backend.repos.call_center_interactions.get_by_id(interaction.interaction_id)
+        == updated_interaction
+    )
+    assert (
+        backend.repos.call_transcripts.get_by_interaction(interaction.interaction_id)
+        == updated_transcript
+    )
+    assert seed_izzy_agent(backend.repos.service_agents) == updated_agent
 
 
 # ----------------------------------------------------------------------------- customers

@@ -9,16 +9,28 @@ import time
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from webapp.backend.demo_card import seed_demo_card
 from webapp.backend.models.transaction import Transaction
 from webapp.backend.repositories.interfaces import (
+    CallCenterInteractionRepository,
+    CallTranscriptRepository,
     ComplaintRepository,
     CustomerRepository,
     ProductRepository,
+    SatisfactionSurveyRepository,
+    ServiceAgentRepository,
 )
-from webapp.backend.repositories.mock import MockComplaintRepository, MockProductRepository
+from webapp.backend.repositories.mock import (
+    MockCallCenterInteractionRepository,
+    MockCallTranscriptRepository,
+    MockComplaintRepository,
+    MockProductRepository,
+    MockSatisfactionSurveyRepository,
+    MockServiceAgentRepository,
+)
+from webapp.backend.services.call_interactions import CallInteractionService
 from webapp.backend.services.complaint_filing import ComplaintFilingService
 from webapp.backend.services.products import (
     ProductAccessDeniedError,
@@ -91,6 +103,7 @@ class VoiceCallStage(StrEnum):
     CONFIRM_TRANSACTION = "confirm_transaction"
     NEEDS_DISPUTE_CLASSIFICATION = "needs_dispute_classification"
     DISPUTE_CLASSIFIED = "dispute_classified"
+    COMPLETED = "completed"
     HANDOFF = "handoff"
 
 
@@ -178,6 +191,11 @@ class VoiceCallService:
         transaction_repository: TransactionSearchRepository | None = None,
         product_repository: ProductRepository | None = None,
         complaint_repository: ComplaintRepository | None = None,
+        service_agent_repository: ServiceAgentRepository | None = None,
+        interaction_repository: CallCenterInteractionRepository | None = None,
+        transcript_repository: CallTranscriptRepository | None = None,
+        satisfaction_survey_repository: SatisfactionSurveyRepository | None = None,
+        transcription_model: str = "gpt-4o-mini-transcribe",
         max_transaction_guesses: int = 3,
     ) -> None:
         started = time.monotonic()
@@ -189,6 +207,13 @@ class VoiceCallService:
         self.product_service = ProductService(self.products)
         self.complaints = complaint_repository or MockComplaintRepository()
         self.complaint_filing = ComplaintFilingService(self.complaints)
+        self.call_interactions = CallInteractionService(
+            service_agent_repository or MockServiceAgentRepository(),
+            interaction_repository or MockCallCenterInteractionRepository(),
+            transcript_repository or MockCallTranscriptRepository(),
+            satisfaction_survey_repository or MockSatisfactionSurveyRepository(),
+            transcription_model=transcription_model,
+        )
         self.classifier = DisputeClassificationService()
         self._calls: dict[str, VoiceCallState] = {}
         _telemetry(
@@ -221,6 +246,7 @@ class VoiceCallService:
             locale=locale,
         )
         self._calls[resolved_call_id] = state
+        self.call_interactions.start(resolved_call_id)
 
         _telemetry(
             "voice.call.started",
@@ -272,7 +298,24 @@ class VoiceCallService:
         started = time.monotonic()
         state = self.get(call_id)
         previous_stage = state.stage
-        locale = ConversationLocaleContext.explicit_choice(language, accent)
+        resolved_accent = accent
+        if resolved_accent is None:
+            if state.identity is not None:
+                profile_locale = ConversationLocaleContext.from_customer_record(
+                    country=state.identity.country,
+                    detected_accent=state.identity.detected_accent,
+                )
+                if profile_locale.language == language:
+                    resolved_accent = profile_locale.accent
+            if resolved_accent is None:
+                calling_code_locale = ConversationLocaleContext.from_calling_code(
+                    calling_code_from_phone(state.caller_phone)
+                )
+                if calling_code_locale.language == language:
+                    resolved_accent = calling_code_locale.accent
+            if resolved_accent is None and state.locale.language == language:
+                resolved_accent = state.locale.accent
+        locale = ConversationLocaleContext.explicit_choice(language, resolved_accent)
 
         next_stage = (
             VoiceCallStage.NEEDS_AUTH_METHOD
@@ -389,6 +432,7 @@ class VoiceCallService:
             reason = "phone_authentication_failed"
 
         self._calls[state.call_id] = updated
+        self.call_interactions.sync(updated)
         self._log_stage_transition(
             state.call_id,
             previous_stage,
@@ -521,6 +565,7 @@ class VoiceCallService:
             )
 
         self._calls[state.call_id] = updated
+        self.call_interactions.sync(updated)
 
         if previous_stage is not updated.stage:
             self._log_stage_transition(
@@ -734,6 +779,7 @@ class VoiceCallService:
         if outcome is DisputeClassificationOutcome.CLASSIFIED:
             updated = self._file_classified_complaint(updated)
         self._calls[call_id] = updated
+        self.call_interactions.sync(updated)
         _telemetry(
             "voice.dispute.classification_stored",
             call_id=call_id,
@@ -750,9 +796,10 @@ class VoiceCallService:
         assert state.confirmed_transaction is not None
         assert state.dispute_classification is not None
         assert state.dispute_classification.visa_condition_code is not None
+        self.call_interactions.sync(state)
         try:
             complaint = self.complaint_filing.file_from_call(
-                call_id=state.call_id,
+                call_id=self.call_interactions.interaction_id(state.call_id),
                 customer_id=state.identity.customer_id,
                 transaction=state.confirmed_transaction,
                 visa_condition_code=state.dispute_classification.visa_condition_code,
@@ -782,6 +829,38 @@ class VoiceCallService:
             complaint_status=complaint.status,
             complaint_filing_status=ComplaintFilingStatus.FILED,
         )
+
+    def record_transcript_turn(
+        self, call_id: str, *, speaker: Literal["customer", "agent"], text: str
+    ) -> None:
+        if speaker not in {"customer", "agent"}:
+            raise ValueError("speaker must be customer or agent")
+        self.call_interactions.record_turn(self.get(call_id), speaker, text)
+
+    def sync_interaction(self, call_id: str) -> None:
+        self.call_interactions.sync(self.get(call_id))
+
+    def record_csat(self, call_id: str, *, rating: int) -> VoiceCallState:
+        state = self.get(call_id)
+        if state.stage is not VoiceCallStage.DISPUTE_CLASSIFIED:
+            raise ValueError("CSAT can only be recorded after dispute classification")
+        self.call_interactions.record_csat(state, rating)
+        updated = replace(state, stage=VoiceCallStage.COMPLETED)
+        self._calls[call_id] = updated
+        self.call_interactions.sync(updated)
+        return updated
+
+    def decline_csat(self, call_id: str) -> VoiceCallState:
+        state = self.get(call_id)
+        if state.stage is not VoiceCallStage.DISPUTE_CLASSIFIED:
+            raise ValueError("CSAT can only be declined after dispute classification")
+        updated = replace(state, stage=VoiceCallStage.COMPLETED)
+        self._calls[call_id] = updated
+        self.call_interactions.sync(updated)
+        return updated
+
+    def finalize(self, call_id: str) -> None:
+        self.call_interactions.finalize(self.get(call_id))
 
     def _block_confirmed_transaction_card(self, state: VoiceCallState) -> VoiceCallState:
         """Apply the deterministic safety action after validated fraud classification."""

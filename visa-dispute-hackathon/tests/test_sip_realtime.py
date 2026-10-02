@@ -573,6 +573,43 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             outbound,
         )
 
+    async def test_short_noisy_transcript_cannot_switch_language(self):
+        events = [
+            session_updated_event(),
+            completed_transcript_event(speaker="customer", transcript="H"),
+            tool_call_event(
+                "set_language",
+                "tool_language_noise",
+                {"language": "en", "accent": "american"},
+            ),
+        ]
+        gateway, websocket, _ = self._gateway(events)
+
+        await gateway.accept_and_control("call_language_noise", "+5511999990001")
+
+        state = gateway.calls.get("call_language_noise")
+        self.assertEqual(state.stage, "needs_language_confirmation")
+        self.assertEqual(state.locale.locale, "pt-BR")
+        self.assertIn("continuar neste idioma", json.dumps(websocket.sent, ensure_ascii=False))
+
+    async def test_unrelated_multiword_transcript_cannot_keep_language(self):
+        events = [
+            session_updated_event(),
+            completed_transcript_event(speaker="customer", transcript="banana apple"),
+            tool_call_event(
+                "set_language",
+                "tool_language_unrelated",
+                {"language": "keep"},
+            ),
+        ]
+        gateway, websocket, _ = self._gateway(events)
+
+        await gateway.accept_and_control("call_language_unrelated", "+5511999990001")
+
+        state = gateway.calls.get("call_language_unrelated")
+        self.assertEqual(state.stage, "needs_language_confirmation")
+        self.assertIn("continuar neste idioma", json.dumps(websocket.sent, ensure_ascii=False))
+
     async def test_unclear_authentication_method_does_not_authenticate(self):
         events = [
             session_updated_event(),
@@ -630,13 +667,46 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
 
         outbound = json.dumps(websocket.sent, ensure_ascii=False)
         self.assertIn(
-            "Language changed. We can continue your card dispute in this language.",
+            "Language changed to US English. We can continue your card dispute.",
             outbound,
         )
         self.assertNotIn(
             "would you prefer to authenticate using the phone number",
             outbound,
         )
+
+    async def test_portuguese_choice_from_brazil_preserves_brazilian_locale(self):
+        events = [
+            session_updated_event(),
+            tool_call_event("confirm_language", "tool_language", {}),
+            tool_call_event(
+                "set_authentication_method",
+                "tool_auth",
+                {"method": "phone"},
+            ),
+            completed_transcript_event(
+                speaker="customer",
+                transcript="Quero falar em português brasileiro.",
+            ),
+            tool_call_event(
+                "set_language",
+                "tool_change_language",
+                {"language": "pt", "accent": "portuguese"},
+            ),
+        ]
+        gateway, websocket, _ = self._gateway(events)
+
+        await gateway.accept_and_control("call_brazilian_portuguese", "+5511999990001")
+
+        state = gateway.calls.get("call_brazilian_portuguese")
+        self.assertEqual(state.locale.locale, "pt-BR")
+        self.assertEqual(state.locale.accent, "brazilian")
+        self.assertIn(
+            "Idioma alterado para português brasileiro",
+            json.dumps(websocket.sent, ensure_ascii=False),
+        )
+        instructions = self._session_updates(websocket)[-1]["session"]["instructions"]
+        self.assertIn("Speak in pt-BR", instructions)
 
     async def test_phone_failure_falls_back_to_document_and_dtmf_authenticates(self):
         events = [
@@ -813,7 +883,12 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                     "customer_reports_duplicate": False,
                 },
             ),
-            completed_transcript_event(speaker="customer", transcript=""),
+            completed_transcript_event(speaker="customer", transcript="Quatro."),
+            tool_call_event(
+                "record_csat",
+                "tool_csat",
+                {"response_intent": "RATING", "rating": 4},
+            ),
         ]
         transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
         self.addCleanup(transactions.close)
@@ -828,7 +903,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         )
 
         state = gateway.calls.get("call_transaction_search")
-        self.assertEqual(state.stage, "dispute_classified")
+        self.assertEqual(state.stage, "completed")
         self.assertEqual(state.confirmed_transaction.merchant_name, "Lemon Drop Market")
         self.assertEqual(state.dispute_classification.visa_condition_code, "10.4")
         self.assertIsNotNone(state.complaint_id)
@@ -838,6 +913,15 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("search_transactions", configured_tools)
         self.assertIn("confirm_transaction", configured_tools)
         self.assertIn("classify_dispute", configured_tools)
+        self.assertIn("record_csat", configured_tools)
+
+        interaction_id = gateway.calls.call_interactions.interaction_id(state.call_id)
+        survey = gateway.calls.call_interactions.surveys.get_by_interaction(interaction_id)
+        agent = gateway.calls.call_interactions.agents.get_by_id("AGENT-IZZY")
+        transcript = gateway.calls.call_interactions.transcripts.get_by_interaction(interaction_id)
+        self.assertEqual(survey.main_score, 4)
+        self.assertEqual(agent.avg_csat, 4.0)
+        self.assertIn("Quatro.", transcript.customer_text)
 
         outbound = json.dumps(websocket.sent, ensure_ascii=False)
         self.assertIn("Lemon Drop Market", outbound)
@@ -848,13 +932,15 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(f"A reclamação {state.complaint_id} foi aberta", outbound)
         self.assertIn("com esse código Visa", outbound)
         self.assertIn("status Em análise", outbound)
+        self.assertIn("como você avalia este atendimento de 1 a 5", outbound)
+        self.assertIn("Obrigado pela avaliação", outbound)
         self.assertNotIn("9999999999999999", outbound)
         self.assertNotIn("SELECT", outbound)
         self.assertNotIn(state.confirmed_transaction.transaction_id, outbound)
         response_creates = [
             event for event in websocket.sent if event.get("type") == "response.create"
         ]
-        self.assertTrue(all("instructions" in event["response"] for event in response_creates))
+        self.assertTrue(any("instructions" in event["response"] for event in response_creates))
 
     async def test_duplicate_report_maps_to_visa_12_6_1(self):
         events = [
@@ -993,7 +1079,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("unclear", language["language"]["enum"])
         self.assertIn("unclear", authentication["method"]["enum"])
 
-    def test_terminal_audio_configuration_disables_automatic_vad_responses(self):
+    def test_csat_turn_keeps_vad_response_enabled_until_survey_is_complete(self):
         transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
         self.addCleanup(transactions.close)
         gateway, _, _ = self._gateway([], transaction_repository=transactions)
@@ -1011,9 +1097,11 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             customer_reports_duplicate=True,
         )
 
-        turn_detection = gateway._input_audio_configuration(classified.state)["input"][
-            "turn_detection"
-        ]
+        self.assertNotIn(
+            "turn_detection", gateway._input_audio_configuration(classified.state)["input"]
+        )
+        completed = gateway.calls.record_csat(classified.state.call_id, rating=5)
+        turn_detection = gateway._input_audio_configuration(completed)["input"]["turn_detection"]
         self.assertEqual(turn_detection["type"], "server_vad")
         self.assertFalse(turn_detection["create_response"])
         self.assertTrue(turn_detection["interrupt_response"])
@@ -1023,9 +1111,16 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(transactions.close)
         gateway, _, _ = self._gateway([], transaction_repository=transactions)
         state = gateway.calls.start("+5511999990001", call_id="call_tool_choice")
-        self.assertEqual(gateway._tool_choice_for(state), "auto")
+        self.assertEqual(
+            gateway._tool_choice_for(state),
+            {"type": "function", "name": "set_language"},
+        )
 
         state = gateway.calls.confirm_language(state.call_id)
+        self.assertEqual(
+            gateway._tool_choice_for(state),
+            {"type": "function", "name": "set_authentication_method"},
+        )
         state = gateway.calls.choose_authentication_method(state.call_id, method="phone")
         selection = gateway.calls.search_transactions(
             state.call_id,

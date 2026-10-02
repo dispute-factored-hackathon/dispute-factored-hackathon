@@ -15,9 +15,13 @@ from psycopg import errors, sql
 from pydantic import BaseModel
 
 from webapp.backend.db.database import Database
+from webapp.backend.models.call_center_interaction import CallCenterInteraction
+from webapp.backend.models.call_transcript import CallTranscript
 from webapp.backend.models.complaint import Complaint
 from webapp.backend.models.customer import Customer
 from webapp.backend.models.product import Product
+from webapp.backend.models.satisfaction_survey import SatisfactionSurvey
+from webapp.backend.models.service_agent import ServiceAgent
 from webapp.backend.models.session import CustomerSession
 from webapp.backend.models.transaction import Transaction
 
@@ -288,6 +292,123 @@ class PostgresComplaintRepository(_Table[Complaint]):
             if cursor.rowcount == 0:
                 raise ValueError("Complaint does not exist.")
         return complaint
+
+
+class PostgresServiceAgentRepository(_Table[ServiceAgent]):
+    table = "service_agents"
+    model = ServiceAgent
+    key = "agent_id"
+
+    def create(self, agent: ServiceAgent) -> ServiceAgent:
+        values = dump_model(agent)
+        try:
+            with self.database.cursor() as cursor:
+                cursor.execute(self._insert(values), values)
+        except errors.UniqueViolation as error:
+            raise ValueError("Service agent already exists.") from error
+        return agent
+
+    def get_by_id(self, agent_id: str) -> ServiceAgent | None:
+        return self._fetch_one(self._where("agent_id"), (agent_id,))
+
+    def get_by_employee_code(self, employee_code: str) -> ServiceAgent | None:
+        return self._fetch_one(self._where("employee_code"), (employee_code,))
+
+    def update(self, agent: ServiceAgent) -> ServiceAgent:
+        values = dump_model(agent)
+        with self.database.cursor() as cursor:
+            cursor.execute(self._update(values), values)
+            if cursor.rowcount == 0:
+                raise ValueError("Service agent does not exist.")
+        return agent
+
+
+class PostgresCallCenterInteractionRepository(_Table[CallCenterInteraction]):
+    table = "call_center_interactions"
+    model = CallCenterInteraction
+    key = "interaction_id"
+
+    def create(self, interaction: CallCenterInteraction) -> CallCenterInteraction:
+        values = dump_model(interaction)
+        try:
+            with self.database.cursor() as cursor:
+                cursor.execute(self._insert(values), values)
+        except errors.UniqueViolation as error:
+            raise ValueError("Interaction already exists.") from error
+        except errors.ForeignKeyViolation as error:
+            raise ValueError("Customer or service agent does not exist.") from error
+        return interaction
+
+    def get_by_id(self, interaction_id: str) -> CallCenterInteraction | None:
+        return self._fetch_one(self._where("interaction_id"), (interaction_id,))
+
+    def list_by_customer(self, customer_id: str) -> list[CallCenterInteraction]:
+        return self._fetch_many(
+            self._where("customer_id"),
+            (customer_id,),
+            " ORDER BY interaction_date DESC, interaction_id DESC",
+        )
+
+    def update(self, interaction: CallCenterInteraction) -> CallCenterInteraction:
+        values = dump_model(interaction)
+        with self.database.cursor() as cursor:
+            cursor.execute(self._update(values), values)
+            if cursor.rowcount == 0:
+                raise ValueError("Interaction does not exist.")
+        return interaction
+
+
+class PostgresCallTranscriptRepository(_Table[CallTranscript]):
+    table = "call_transcripts"
+    model = CallTranscript
+    key = "transcript_id"
+
+    def create(self, transcript: CallTranscript) -> CallTranscript:
+        values = dump_model(transcript)
+        try:
+            with self.database.cursor() as cursor:
+                cursor.execute(self._insert(values), values)
+        except errors.UniqueViolation as error:
+            raise ValueError("Transcript already exists.") from error
+        except errors.ForeignKeyViolation as error:
+            raise ValueError("Interaction, customer, or service agent does not exist.") from error
+        return transcript
+
+    def get_by_interaction(self, interaction_id: str) -> CallTranscript | None:
+        return self._fetch_one(self._where("interaction_id"), (interaction_id,))
+
+    def update(self, transcript: CallTranscript) -> CallTranscript:
+        values = dump_model(transcript)
+        with self.database.cursor() as cursor:
+            cursor.execute(self._update(values), values)
+            if cursor.rowcount == 0:
+                raise ValueError("Transcript does not exist.")
+        return transcript
+
+
+class PostgresSatisfactionSurveyRepository(_Table[SatisfactionSurvey]):
+    table = "satisfaction_surveys"
+    model = SatisfactionSurvey
+    key = "survey_id"
+
+    def create(self, survey: SatisfactionSurvey) -> SatisfactionSurvey:
+        values = dump_model(survey)
+        try:
+            with self.database.cursor() as cursor:
+                cursor.execute(self._insert(values), values)
+        except errors.UniqueViolation as error:
+            raise ValueError("Satisfaction survey already exists.") from error
+        except errors.ForeignKeyViolation as error:
+            raise ValueError("Interaction, customer, or service agent does not exist.") from error
+        return survey
+
+    def get_by_interaction(self, interaction_id: str) -> SatisfactionSurvey | None:
+        return self._fetch_one(self._where("interaction_id"), (interaction_id,))
+
+    def list_by_agent(self, agent_id: str) -> list[SatisfactionSurvey]:
+        return self._fetch_many(
+            self._where("agent_id"), (agent_id,), " ORDER BY survey_date, survey_id"
+        )
 
 
 class PostgresSessionRepository:

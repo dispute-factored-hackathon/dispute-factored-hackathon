@@ -20,14 +20,22 @@ from openai import OpenAI
 
 from webapp.backend.demo_seed import seed_demo_customers
 from webapp.backend.repositories.interfaces import (
+    CallCenterInteractionRepository,
+    CallTranscriptRepository,
     ComplaintRepository,
     CustomerRepository,
     ProductRepository,
+    SatisfactionSurveyRepository,
+    ServiceAgentRepository,
 )
 from webapp.backend.repositories.registry import (
+    call_center_interaction_repository,
+    call_transcript_repository,
     complaint_repository,
     customer_repository,
     product_repository,
+    satisfaction_survey_repository,
+    service_agent_repository,
 )
 
 from .dispute_classification import DisputeAllegation
@@ -70,6 +78,7 @@ class TransactionConfirmationIntent(StrEnum):
 
 
 class LanguageSelectionIntent(StrEnum):
+    KEEP = "keep"
     ENGLISH = "en"
     PORTUGUESE = "pt"
     SPANISH = "es"
@@ -80,6 +89,82 @@ class AuthenticationMethodIntent(StrEnum):
     PHONE = "phone"
     DOCUMENT = "document"
     UNCLEAR = "unclear"
+
+
+class CsatResponseIntent(StrEnum):
+    RATING = "RATING"
+    DECLINE = "DECLINE"
+    UNCLEAR = "UNCLEAR"
+
+
+_LANGUAGE_TERMS = {
+    LanguageSelectionIntent.ENGLISH: {"english", "ingles"},
+    LanguageSelectionIntent.PORTUGUESE: {"portuguese", "portugues"},
+    LanguageSelectionIntent.SPANISH: {"spanish", "espanhol", "espanol"},
+}
+_KEEP_LANGUAGE_TERMS = {
+    "yes",
+    "yeah",
+    "sim",
+    "si",
+    "continue",
+    "continuar",
+    "keep",
+    "manter",
+    "mismo",
+    "mesmo",
+    "same",
+    "current",
+    "atual",
+    "actual",
+    "this",
+    "este",
+}
+_ACCENT_TERMS = {
+    "american": ("american", "americano", "estados unidos"),
+    "brazilian": ("brazilian", "brasileiro", "brasileira", "brasil", "brazil"),
+    "portuguese": ("portugal", "portugues de portugal"),
+    "argentinian": ("argentin",),
+    "colombian": ("colombi",),
+    "mexican": ("mexic",),
+    "spanish": ("espanha", "espana", "spain"),
+    "neutral_latin_american": ("latino-americano", "latinoamericano", "latin american"),
+}
+
+
+def _language_intent_is_grounded(intent: LanguageSelectionIntent, transcript: str) -> bool:
+    """Reject model language changes unsupported by the caller's actual transcript."""
+
+    if not transcript.strip():
+        return True  # SDK/unit callers may invoke the validated tool without ASR text.
+    _, words = _normalized_words(transcript)
+    if intent is LanguageSelectionIntent.KEEP:
+        return bool(words.intersection(_KEEP_LANGUAGE_TERMS))
+    return bool(words.intersection(_LANGUAGE_TERMS.get(intent, set())))
+
+
+def _grounded_accent(transcript: str, language: LanguageSelectionIntent) -> str | None:
+    """Use a regional accent only when the caller explicitly named it."""
+
+    normalized, _ = _normalized_words(transcript)
+    compatible = {
+        LanguageSelectionIntent.ENGLISH: {"american"},
+        LanguageSelectionIntent.PORTUGUESE: {"brazilian", "portuguese"},
+        LanguageSelectionIntent.SPANISH: {
+            "argentinian",
+            "colombian",
+            "mexican",
+            "spanish",
+            "neutral_latin_american",
+        },
+    }.get(language, set())
+    matches = (
+        (normalized.rfind(term), accent)
+        for accent in compatible
+        for term in _ACCENT_TERMS[accent]
+        if term in normalized
+    )
+    return max(matches, default=(-1, None))[1]
 
 
 def _guard_extracted_numeric_filters(
@@ -323,6 +408,10 @@ class SipRealtimeGateway:
         transaction_repository: TransactionSearchRepository | None = None,
         product_repository: ProductRepository | None = None,
         complaint_repository: ComplaintRepository | None = None,
+        service_agent_repository: ServiceAgentRepository | None = None,
+        interaction_repository: CallCenterInteractionRepository | None = None,
+        transcript_repository: CallTranscriptRepository | None = None,
+        satisfaction_survey_repository: SatisfactionSurveyRepository | None = None,
         log_full_transcripts: bool | None = None,
     ) -> None:
 
@@ -351,6 +440,10 @@ class SipRealtimeGateway:
         self._transaction_repository = transaction_repository
         self._product_repository = product_repository
         self._complaint_repository = complaint_repository
+        self._service_agent_repository = service_agent_repository
+        self._interaction_repository = interaction_repository
+        self._transcript_repository = transcript_repository
+        self._satisfaction_survey_repository = satisfaction_survey_repository
 
         self._calls: VoiceCallService | None = None
 
@@ -366,6 +459,11 @@ class SipRealtimeGateway:
                 transaction_repository=self._transaction_repository,
                 product_repository=self._product_repository,
                 complaint_repository=self._complaint_repository,
+                service_agent_repository=self._service_agent_repository,
+                interaction_repository=self._interaction_repository,
+                transcript_repository=self._transcript_repository,
+                satisfaction_survey_repository=self._satisfaction_survey_repository,
+                transcription_model=self.input_transcription_model,
             )
 
         return self._calls
@@ -420,6 +518,7 @@ class SipRealtimeGateway:
                     self._transaction_search_tool(),
                     self._transaction_confirmation_tool(),
                     self._dispute_classification_tool(),
+                    self._csat_tool(),
                 ],
                 tool_choice="auto",
                 tracing={
@@ -521,6 +620,8 @@ class SipRealtimeGateway:
                 "Realtime sideband ended unexpectedly for call %s",
                 call_id,
             )
+        finally:
+            self.calls.finalize(call_id)
 
     def _connect(self, url: str) -> Any:
         connector = self._websocket_connect
@@ -601,7 +702,6 @@ class SipRealtimeGateway:
                     active_response = False
                     opening_sent = False
                     last_customer_transcript = ""
-                    terminal_followup_pending = False
 
                     async for raw_event in websocket:
                         try:
@@ -630,33 +730,27 @@ class SipRealtimeGateway:
 
                         if event_type == "conversation.item.input_audio_transcription.completed":
                             last_customer_transcript = str(event.get("transcript", ""))
+                            self.calls.record_transcript_turn(
+                                call_id, speaker="customer", text=last_customer_transcript
+                            )
                             self._log_full_transcript(
                                 call_id=call_id,
                                 speaker="customer",
                                 transcript=last_customer_transcript,
                                 item_id=str(event.get("item_id", "")),
                             )
-                            current_state = self.calls.get(call_id)
-                            if current_state.stage is VoiceCallStage.DISPUTE_CLASSIFIED:
-                                if last_customer_transcript.strip():
-                                    terminal_followup_pending = True
-                                    if not active_response:
-                                        await self._create_terminal_followup(websocket)
-                                        terminal_followup_pending = False
-                                else:
-                                    _telemetry(
-                                        "voice.empty_terminal_transcript.ignored",
-                                        call_id=call_id,
-                                    )
-
                         elif event_type in {
                             "response.output_audio_transcript.done",
                             "response.audio_transcript.done",
                         }:
+                            agent_transcript = str(event.get("transcript", ""))
+                            self.calls.record_transcript_turn(
+                                call_id, speaker="agent", text=agent_transcript
+                            )
                             self._log_full_transcript(
                                 call_id=call_id,
                                 speaker="agent",
-                                transcript=str(event.get("transcript", "")),
+                                transcript=agent_transcript,
                                 item_id=str(event.get("item_id", "")),
                                 response_id=str(event.get("response_id", "")),
                             )
@@ -702,11 +796,6 @@ class SipRealtimeGateway:
                                 last_customer_transcript=last_customer_transcript,
                             )
                             last_customer_transcript = ""
-                            if terminal_followup_pending:
-                                current_state = self.calls.get(call_id)
-                                if current_state.stage is VoiceCallStage.DISPUTE_CLASSIFIED:
-                                    await self._create_terminal_followup(websocket)
-                                terminal_followup_pending = False
 
                         elif event_type in {
                             "input_audio_buffer.dtmf_event_received",
@@ -908,15 +997,39 @@ class SipRealtimeGateway:
                 if tool_name == "set_language":
                     before = self.calls.get(call_id)
                     language_intent = LanguageSelectionIntent(arguments.get("language", ""))
-                    if language_intent is LanguageSelectionIntent.UNCLEAR:
+                    if (
+                        language_intent is LanguageSelectionIntent.KEEP
+                        and before.stage is VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION
+                        and _language_intent_is_grounded(
+                            language_intent,
+                            last_customer_transcript,
+                        )
+                    ):
+                        state = self.calls.confirm_language(call_id)
+                        result = self._message_for(state, "auth_method_prompt")
+                        tool_metadata = {"outcome": "kept"}
+                    elif language_intent in {
+                        LanguageSelectionIntent.KEEP,
+                        LanguageSelectionIntent.UNCLEAR,
+                    } or not (
+                        _language_intent_is_grounded(
+                            language_intent,
+                            last_customer_transcript,
+                        )
+                    ):
                         state = before
                         result = self._message_for(state, "invalid_language")
                         tool_metadata = {"outcome": "unclear"}
                     else:
+                        accent = (
+                            _grounded_accent(last_customer_transcript, language_intent)
+                            if last_customer_transcript
+                            else arguments.get("accent")
+                        )
                         state = self.calls.choose_language(
                             call_id,
                             language=language_intent.value,
-                            accent=arguments.get("accent"),
+                            accent=accent,
                         )
                         if before.stage is VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION:
                             result = self._message_for(state, "auth_method_prompt")
@@ -1149,6 +1262,24 @@ class SipRealtimeGateway:
                         ),
                     }
 
+                elif tool_name == "record_csat":
+                    intent = CsatResponseIntent(arguments.get("response_intent", ""))
+                    if intent is CsatResponseIntent.RATING:
+                        rating = arguments.get("rating")
+                        if not isinstance(rating, int) or isinstance(rating, bool):
+                            raise ValueError("rating must be an integer from 1 to 5")
+                        state = self.calls.record_csat(call_id, rating=rating)
+                        result = self._message_for(state, "csat_thanks")
+                        tool_metadata = {"outcome": "recorded", "rating": rating}
+                    elif intent is CsatResponseIntent.DECLINE:
+                        state = self.calls.decline_csat(call_id)
+                        result = self._message_for(state, "csat_declined")
+                        tool_metadata = {"outcome": "declined"}
+                    else:
+                        state = self.calls.get(call_id)
+                        result = self._message_for(state, "csat_unclear")
+                        tool_metadata = {"outcome": "unclear"}
+
                 else:
                     continue
 
@@ -1176,11 +1307,14 @@ class SipRealtimeGateway:
                     "search_transactions",
                     "confirm_transaction",
                     "classify_dispute",
+                    "record_csat",
                 }:
                     result = self._message_for(
                         state,
                         (
-                            "classification_clarification"
+                            "csat_unclear"
+                            if tool_name == "record_csat"
+                            else "classification_clarification"
                             if tool_name == "classify_dispute"
                             else "transaction_invalid"
                         ),
@@ -1189,6 +1323,7 @@ class SipRealtimeGateway:
                     continue
 
             else:
+                self.calls.sync_interaction(call_id)
                 _telemetry(
                     "voice.tool.completed",
                     call_id=call_id,
@@ -1269,7 +1404,7 @@ class SipRealtimeGateway:
             {"model": self.input_transcription_model} if self.log_full_transcripts else None
         )
         input_configuration: dict[str, Any] = {"transcription": transcription}
-        if state is not None and state.stage is VoiceCallStage.DISPUTE_CLASSIFIED:
+        if state is not None and state.stage is VoiceCallStage.COMPLETED:
             input_configuration["turn_detection"] = {
                 "type": "server_vad",
                 "create_response": False,
@@ -1278,21 +1413,6 @@ class SipRealtimeGateway:
         return {
             "input": input_configuration,
         }
-
-    @staticmethod
-    async def _create_terminal_followup(websocket: Any) -> None:
-        """Respond once to a real post-resolution utterance, never to empty VAD turns."""
-        await websocket.send(
-            json.dumps(
-                {
-                    "type": "response.create",
-                    "response": {
-                        "output_modalities": ["audio"],
-                        "tool_choice": "none",
-                    },
-                }
-            )
-        )
 
     def _log_full_transcript(
         self,
@@ -1343,15 +1463,17 @@ class SipRealtimeGateway:
             "type": "function",
             "name": "set_language",
             "description": (
-                "Classify the caller's explicit language choice. Use unclear for "
-                "unintelligible, ambiguous, unrelated, or low-confidence speech; never guess."
+                "Classify the caller's language choice. Use keep when they clearly want the "
+                "language already proposed. Use en, pt, or es only when that language is "
+                "explicitly named. Use unclear for unintelligible, ambiguous, unrelated, or "
+                "low-confidence speech; never guess."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "language": {
                         "type": "string",
-                        "enum": ["en", "pt", "es", "unclear"],
+                        "enum": ["keep", "en", "pt", "es", "unclear"],
                     },
                     "accent": {
                         "type": "string",
@@ -1570,6 +1692,30 @@ class SipRealtimeGateway:
         }
 
     @staticmethod
+    def _csat_tool() -> dict[str, Any]:
+        return {
+            "type": "function",
+            "name": "record_csat",
+            "description": (
+                "Classify the caller's answer to the optional 1-to-5 satisfaction question. "
+                "Use RATING only for an explicit integer from 1 through 5, DECLINE for a clear "
+                "refusal, and UNCLEAR otherwise. Never infer a rating."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "response_intent": {
+                        "type": "string",
+                        "enum": ["RATING", "DECLINE", "UNCLEAR"],
+                    },
+                    "rating": {"type": ["integer", "null"], "minimum": 1, "maximum": 5},
+                },
+                "required": ["response_intent", "rating"],
+                "additionalProperties": False,
+            },
+        }
+
+    @staticmethod
     def _system_instructions(state: VoiceCallState) -> str:
         language_name = {
             "pt": "Portuguese",
@@ -1613,10 +1759,11 @@ Language workflow:
 - The current inferred language is {language_name}.
 - Ask whether the caller wants to continue in the current language or switch to {switch_options}.
 - Do not present {language_name} as a switch option because the conversation is already using it.
-- If the caller clearly wants to keep the proposed language, call confirm_language.
+- If the caller clearly wants to keep the proposed language, call set_language with language=keep.
 - If the caller explicitly chooses Portuguese, English, or Spanish, call set_language.
 - For unintelligible, ambiguous, unrelated, or low-confidence speech, call
   set_language with language=unclear. Never guess a language.
+- When changing language at any stage, produce only the set_language tool call. Do not acknowledge the change before the server response.
 - Do not claim that the caller's physical location or nationality is known. The language is only inferred from the telephone calling code.
 
 Authentication workflow:
@@ -1670,20 +1817,29 @@ Dispute-classification workflow:
 - Call classify_dispute silently and wait for the authoritative server response.
 - At needs_dispute_classification, your response must contain only the classify_dispute tool call. Never produce audio before that tool call.
 
+Satisfaction workflow:
+- After the server reports the complaint result, it asks for an optional rating from 1 to 5.
+- At dispute_classified, respond only with record_csat. Never guess a rating.
+- A clear refusal uses DECLINE. Ambiguous, unrelated, or out-of-range input uses UNCLEAR.
+
 General behavior:
 - Introduce yourself as Izzy from Factored Bank.
 - Explain that you help with card disputes.
 - Keep prompts concise and natural for a telephone call.
 - Stay within authentication and card-dispute support.
 - Do not claim a bank action occurred unless a server/tool result confirms it.
+- Whenever you call a tool, your response must contain only the tool call. Never speak an acknowledgement, plan, or assumed result before a tool result.
 """
 
     @staticmethod
     def _tool_choice_for(state: VoiceCallState) -> str | dict[str, str]:
         """Force only the state-valid tool when the backend needs a decision."""
         forced_tools = {
+            VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION: "set_language",
+            VoiceCallStage.NEEDS_AUTH_METHOD: "set_authentication_method",
             VoiceCallStage.CONFIRM_TRANSACTION: "confirm_transaction",
             VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION: "classify_dispute",
+            VoiceCallStage.DISPUTE_CLASSIFIED: "record_csat",
         }
         tool_name = forced_tools.get(state.stage)
         if tool_name is not None:
@@ -1949,6 +2105,34 @@ General behavior:
             },
         }[language]
 
+        if reason in {"csat_thanks", "csat_declined", "csat_unclear"}:
+            return {
+                "pt": {
+                    "csat_thanks": "Obrigado pela avaliação. Ela foi registrada. Até logo.",
+                    "csat_declined": "Sem problema. A avaliação é opcional. Até logo.",
+                    "csat_unclear": (
+                        "Não consegui identificar uma nota. Diga um número inteiro de 1 a 5, "
+                        "ou diga que prefere não avaliar."
+                    ),
+                },
+                "es": {
+                    "csat_thanks": "Gracias por la evaluación. Quedó registrada. Hasta luego.",
+                    "csat_declined": "No hay problema. La evaluación es opcional. Hasta luego.",
+                    "csat_unclear": (
+                        "No pude identificar una puntuación. Di un número entero del 1 al 5, "
+                        "o indica que prefieres no evaluar."
+                    ),
+                },
+                "en": {
+                    "csat_thanks": "Thank you. Your rating was recorded. Goodbye.",
+                    "csat_declined": "No problem. The rating is optional. Goodbye.",
+                    "csat_unclear": (
+                        "I could not identify a rating. Say a whole number from 1 to 5, or say "
+                        "that you prefer not to rate the service."
+                    ),
+                },
+            }[language][reason]
+
         if (
             state.stage is VoiceCallStage.HANDOFF
             and state.handoff_reason == "transaction_search_exhausted"
@@ -1968,6 +2152,23 @@ General behavior:
             return messages["auth_method"]
 
         if reason == "language_changed":
+            locale_names = {
+                "pt-BR": "português brasileiro",
+                "pt-PT": "português de Portugal",
+                "en-US": "inglês americano",
+                "es-AR": "espanhol argentino",
+                "es-CO": "espanhol colombiano",
+                "es-MX": "espanhol mexicano",
+                "es-ES": "espanhol da Espanha",
+                "es-419": "espanhol latino-americano",
+            }
+            selected_locale = locale_names.get(state.locale.locale)
+            if selected_locale and language == "pt":
+                return f"Idioma alterado para {selected_locale}. Podemos continuar sua contestação."
+            if selected_locale and language == "es":
+                return f"Idioma cambiado a {selected_locale}. Podemos continuar con tu reclamo."
+            if selected_locale and language == "en":
+                return "Language changed to US English. We can continue your card dispute."
             return messages["language_changed"]
 
         if reason == "transaction_candidate":
@@ -2243,11 +2444,16 @@ General behavior:
 
     @staticmethod
     def _complaint_filing_message(state: VoiceCallState) -> str:
+        csat_question = {
+            "pt": " Antes de encerrar, como você avalia este atendimento de 1 a 5?",
+            "es": " Antes de terminar, ¿cómo calificas esta atención del 1 al 5?",
+            "en": " Before we finish, how would you rate this service from 1 to 5?",
+        }[state.locale.language]
         if (
             state.complaint_filing_status is ComplaintFilingStatus.FILED
             and state.complaint_id is not None
         ):
-            return {
+            message = {
                 "pt": (
                     f" A reclamação {state.complaint_id} foi aberta com esse código Visa e está "
                     "com status Em análise."
@@ -2261,7 +2467,8 @@ General behavior:
                     "currently In Review."
                 ),
             }[state.locale.language]
-        return {
+            return message + csat_question
+        message = {
             "pt": (
                 " Não consegui abrir a reclamação no backend desta demonstração. Nenhuma "
                 "reclamação foi registrada."
@@ -2275,6 +2482,7 @@ General behavior:
                 "was created."
             ),
         }[state.locale.language]
+        return message + csat_question
 
     @staticmethod
     def _transaction_clarification_message(state: VoiceCallState) -> str:
@@ -2561,6 +2769,10 @@ def create_sip_app(
             customer_repository,
             product_repository=product_repository,
             complaint_repository=complaint_repository,
+            service_agent_repository=service_agent_repository,
+            interaction_repository=call_center_interaction_repository,
+            transcript_repository=call_transcript_repository,
+            satisfaction_survey_repository=satisfaction_survey_repository,
         )
 
     verifier = webhook_client or resolved_gateway.client
