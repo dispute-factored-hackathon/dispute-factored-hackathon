@@ -561,6 +561,8 @@ def _normalize_text(value: str | None) -> str:
 
 def _canonical_merchant_query(value: str) -> str:
     aliases = {
+        "fruta": "fruit",
+        "frutas": "fruit",
         "limao": "lemon",
         "limon": "lemon",
         "morango": "strawberry",

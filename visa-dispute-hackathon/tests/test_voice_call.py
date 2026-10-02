@@ -1,4 +1,5 @@
 import unittest
+from datetime import date
 from pathlib import Path
 
 from dispute_agent.transaction_search import (
@@ -568,6 +569,33 @@ class VoiceCallServiceTests(unittest.TestCase):
         self.assertEqual(selection.outcome, TransactionSelectionOutcome.EXHAUSTED)
         self.assertEqual(selection.state.stage, VoiceCallStage.HANDOFF)
         self.assertEqual(selection.state.handoff_reason, "transaction_search_exhausted")
+
+    def test_rejected_peach_candidate_is_never_returned_after_refinement(self):
+        state = self.authenticate_known_phone("call_rejected_peach")
+        peach = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(
+                date_from=date(2026, 9, 27),
+                date_to=date(2026, 9, 27),
+            ),
+        )
+        rejected_id = peach.state.current_transaction.transaction_id
+
+        denied = self.calls.resolve_transaction_candidate(
+            state.call_id,
+            confirmed=False,
+        )
+        refined = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(city="Lima"),
+        )
+
+        self.assertEqual(peach.state.current_transaction.merchant_name, "Peach Grove Grocer")
+        self.assertIn(rejected_id, denied.state.rejected_transaction_ids)
+        self.assertNotEqual(
+            getattr(refined.state.current_transaction, "transaction_id", None),
+            rejected_id,
+        )
 
 
 if __name__ == "__main__":

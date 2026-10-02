@@ -60,6 +60,8 @@ Izzy speaks one ranked candidate at a time with merchant, date, amount/currency,
 
 Every search response states the active filters in the caller's selected language. The caller can correct a filter value, remove one named filter, or clear all filters and begin again. A correction reruns retrieval and reranking without consuming another candidate guess. Three rejected candidates or three searches with no matching transaction lead to the same simulated-human-handoff boundary.
 
+When a caller rejects a candidate and provides a new detail in the same sentence, the backend records both atomically: the rejected transaction is excluded and the new detail immediately reruns retrieval. A completed speech transcript must contain an explicit yes before a transaction can be confirmed; unclear transcription asks the caller to repeat instead of guessing. Amounts and dates inferred by the model are dropped when the spoken turn contains no matching numeric evidence, preventing unsupported filters from steering the ranker.
+
 Run the SQLite, state-machine, and SIP-sideband coverage with:
 
 ```bash

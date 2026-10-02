@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from dispute_agent.sip_realtime import (
     SipRealtimeGateway,
+    _explicit_confirmation_from_transcript,
     create_sip_app,
     extract_caller_phone,
 )
@@ -741,6 +742,10 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                 "tool_search",
                 {"approximate_amount": 13, "currency": "USD"},
             ),
+            completed_transcript_event(
+                speaker="customer",
+                transcript="Sim.",
+            ),
             tool_call_event(
                 "confirm_transaction",
                 "tool_confirm_transaction",
@@ -773,6 +778,131 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Confirmei a transação", outbound)
         self.assertNotIn("SELECT", outbound)
         self.assertNotIn(state.confirmed_transaction.transaction_id, outbound)
+
+    def test_confirmation_guard_requires_unambiguous_speech(self):
+        self.assertIs(_explicit_confirmation_from_transcript("Sim."), True)
+        self.assertIs(_explicit_confirmation_from_transcript("Sí, es esa."), True)
+        self.assertIs(_explicit_confirmation_from_transcript("Não, foi em Lima."), False)
+        self.assertIs(_explicit_confirmation_from_transcript("No, that is wrong."), False)
+        self.assertIsNone(_explicit_confirmation_from_transcript("جتين"))
+        self.assertIsNone(_explicit_confirmation_from_transcript("talvez"))
+
+    async def test_unclear_speech_cannot_confirm_a_transaction(self):
+        events = [
+            session_updated_event(),
+            tool_call_event("confirm_language", "tool_language", {}),
+            tool_call_event(
+                "set_authentication_method",
+                "tool_auth",
+                {"method": "phone"},
+            ),
+            tool_call_event(
+                "search_transactions",
+                "tool_search",
+                {"approximate_amount": 13},
+            ),
+            completed_transcript_event(
+                speaker="customer",
+                transcript="جتين",
+            ),
+            tool_call_event(
+                "confirm_transaction",
+                "tool_false_positive",
+                {"confirmed": True},
+            ),
+        ]
+        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        self.addCleanup(transactions.close)
+        gateway, websocket, _ = self._gateway(
+            events,
+            transaction_repository=transactions,
+        )
+
+        await gateway.accept_and_control(
+            "call_unclear_confirmation",
+            "+5511999990001",
+        )
+
+        state = gateway.calls.get("call_unclear_confirmation")
+        self.assertEqual(state.stage, "confirm_transaction")
+        self.assertIsNone(state.confirmed_transaction)
+        outbound = json.dumps(websocket.sent, ensure_ascii=False)
+        self.assertIn("transação ainda não foi confirmada", outbound)
+
+    async def test_denial_overrides_model_and_keeps_new_detail_for_reranking(self):
+        events = [
+            session_updated_event(),
+            tool_call_event("confirm_language", "tool_language", {}),
+            tool_call_event(
+                "set_authentication_method",
+                "tool_auth",
+                {"method": "phone"},
+            ),
+            tool_call_event(
+                "search_transactions",
+                "tool_search",
+                {"approximate_amount": 27, "merchant_query": "fruta"},
+            ),
+            completed_transcript_event(
+                speaker="customer",
+                transcript="Não, minha transação foi feita em Lima.",
+            ),
+            tool_call_event(
+                "confirm_transaction",
+                "tool_denial_with_city",
+                {"confirmed": True, "city": "Lima"},
+            ),
+        ]
+        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        self.addCleanup(transactions.close)
+        gateway, _, _ = self._gateway(events, transaction_repository=transactions)
+
+        await gateway.accept_and_control(
+            "call_denial_with_detail",
+            "+5511999990001",
+        )
+
+        state = gateway.calls.get("call_denial_with_detail")
+        self.assertEqual(state.stage, "confirm_transaction")
+        self.assertIsNone(state.confirmed_transaction)
+        self.assertEqual(state.transaction_criteria.city, "Lima")
+        self.assertEqual(state.transaction_guess_attempts, 2)
+        self.assertEqual(state.current_transaction.merchant_name, "Peach Grove Grocer")
+        self.assertEqual(len(state.rejected_transaction_ids), 1)
+
+    async def test_unsupported_amount_is_dropped_instead_of_becoming_a_filter(self):
+        events = [
+            session_updated_event(),
+            tool_call_event("confirm_language", "tool_language", {}),
+            tool_call_event(
+                "set_authentication_method",
+                "tool_auth",
+                {"method": "phone"},
+            ),
+            completed_transcript_event(
+                speaker="customer",
+                transcript="Deixa eu ver rapidinho, tá?",
+            ),
+            tool_call_event(
+                "search_transactions",
+                "tool_invented_amount",
+                {"approximate_amount": 27},
+            ),
+        ]
+        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        self.addCleanup(transactions.close)
+        gateway, websocket, _ = self._gateway(events, transaction_repository=transactions)
+
+        await gateway.accept_and_control(
+            "call_invented_amount",
+            "+5511999990001",
+        )
+
+        state = gateway.calls.get("call_invented_amount")
+        self.assertIsNone(state.transaction_criteria.approximate_amount)
+        self.assertEqual(state.stage, "needs_transaction_details")
+        outbound = json.dumps(websocket.sent, ensure_ascii=False)
+        self.assertNotIn("27,00", outbound)
 
     def test_candidate_summaries_are_voice_friendly_in_supported_languages(self):
         transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")

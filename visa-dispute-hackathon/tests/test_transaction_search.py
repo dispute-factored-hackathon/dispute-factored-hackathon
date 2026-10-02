@@ -194,14 +194,17 @@ class SQLiteTransactionSearchTests(unittest.TestCase):
     def test_regional_fruit_and_location_terms_are_searchable(self):
         portuguese = TransactionSearchCriteria.from_mapping({"merchant_query": "limão"})
         spanish = TransactionSearchCriteria.from_mapping({"merchant_query": "manzana"})
+        generic_fruit = TransactionSearchCriteria.from_mapping({"merchant_query": "fruta"})
         mexico = TransactionSearchCriteria.from_mapping({"country": "México"})
 
         lemon = self.repository.search(CUSTOMER_ID, portuguese)
         apple = self.repository.search(CUSTOMER_ID, spanish)
+        fruit_results = self.repository.search(CUSTOMER_ID, generic_fruit)
         mexican_transaction = self.repository.search(CUSTOMER_ID, mexico)
 
         self.assertEqual(lemon.transactions[0].merchant_name, "Lemon Drop Market")
         self.assertEqual(apple.transactions[0].merchant_name, "Apple Orchard Store")
+        self.assertEqual(len(fruit_results.transactions), 10)
         self.assertEqual(len(mexican_transaction.transactions), 1)
         self.assertEqual(mexican_transaction.transactions[0].transaction_country, "Mexico")
 

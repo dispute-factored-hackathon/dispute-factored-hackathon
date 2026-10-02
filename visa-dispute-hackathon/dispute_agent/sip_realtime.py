@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import time
+import unicodedata
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import date
 from pathlib import Path
@@ -37,6 +38,219 @@ def _enabled(environment_value: str | None, *, default: bool) -> bool:
     if environment_value is None:
         return default
     return environment_value.strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def _normalized_words(text: str) -> tuple[str, set[str]]:
+    normalized = unicodedata.normalize("NFKD", text.casefold())
+    normalized = "".join(
+        character for character in normalized if not unicodedata.combining(character)
+    )
+    normalized = " ".join(re.findall(r"[a-z0-9]+", normalized))
+    return normalized, set(normalized.split())
+
+
+def _explicit_confirmation_from_transcript(transcript: str) -> bool | None:
+    """Accept only an unambiguous spoken yes or no from the ASR transcript."""
+    normalized, tokens = _normalized_words(transcript)
+    denied = bool(tokens.intersection({"nao", "no", "nope"})) or any(
+        phrase in normalized
+        for phrase in (
+            "not that",
+            "wrong transaction",
+            "transacao errada",
+            "transaccion incorrecta",
+        )
+    )
+    confirmed = bool(tokens.intersection({"sim", "si", "yes", "yeah", "yep"})) or any(
+        phrase in normalized for phrase in ("e essa", "es esa", "that is it", "thats it")
+    )
+    if confirmed == denied:
+        return None
+    return confirmed
+
+
+def _guard_extracted_numeric_filters(
+    criteria: TransactionSearchCriteria,
+    transcript: str,
+    *,
+    expected_field: str | None,
+) -> tuple[TransactionSearchCriteria, tuple[str, ...]]:
+    """Drop model-invented amounts or dates that have no support in the spoken turn."""
+    normalized, tokens = _normalized_words(transcript)
+    number_words = {
+        "zero",
+        "um",
+        "uma",
+        "dois",
+        "duas",
+        "tres",
+        "quatro",
+        "cinco",
+        "seis",
+        "sete",
+        "oito",
+        "nove",
+        "dez",
+        "onze",
+        "doze",
+        "treze",
+        "quatorze",
+        "catorze",
+        "quinze",
+        "dezesseis",
+        "dezessete",
+        "dezoito",
+        "dezenove",
+        "vinte",
+        "trinta",
+        "quarenta",
+        "cinquenta",
+        "sessenta",
+        "setenta",
+        "oitenta",
+        "noventa",
+        "cem",
+        "cento",
+        "duzentos",
+        "trezentos",
+        "quatrocentos",
+        "quinhentos",
+        "seiscentos",
+        "setecentos",
+        "oitocentos",
+        "novecentos",
+        "mil",
+        "uno",
+        "dos",
+        "cuatro",
+        "siete",
+        "ocho",
+        "nueve",
+        "diez",
+        "once",
+        "doce",
+        "trece",
+        "catorce",
+        "quince",
+        "dieciseis",
+        "diecisiete",
+        "dieciocho",
+        "diecinueve",
+        "veinte",
+        "treinta",
+        "cuarenta",
+        "cincuenta",
+        "sesenta",
+        "ochenta",
+        "cien",
+        "ciento",
+        "doscientos",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten",
+        "eleven",
+        "twelve",
+        "thirteen",
+        "fourteen",
+        "fifteen",
+        "sixteen",
+        "seventeen",
+        "eighteen",
+        "nineteen",
+        "twenty",
+        "thirty",
+        "forty",
+        "fifty",
+        "sixty",
+        "seventy",
+        "eighty",
+        "ninety",
+        "hundred",
+        "thousand",
+    }
+    has_number = bool(re.search(r"\d", normalized)) or bool(tokens.intersection(number_words))
+    amount_cues = {
+        "valor",
+        "reais",
+        "real",
+        "dolar",
+        "dolares",
+        "peso",
+        "pesos",
+        "amount",
+        "dollar",
+        "dollars",
+        "euros",
+    }
+    date_cues = {
+        "dia",
+        "data",
+        "hoje",
+        "ontem",
+        "fecha",
+        "hoy",
+        "ayer",
+        "date",
+        "today",
+        "yesterday",
+        "janeiro",
+        "fevereiro",
+        "marco",
+        "abril",
+        "maio",
+        "junho",
+        "julho",
+        "agosto",
+        "setembro",
+        "outubro",
+        "novembro",
+        "dezembro",
+        "enero",
+        "febrero",
+        "marzo",
+        "mayo",
+        "junio",
+        "julio",
+        "septiembre",
+        "octubre",
+        "noviembre",
+        "diciembre",
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+    }
+    removed: list[str] = []
+    amount_supported = has_number and (
+        expected_field == "amount" or bool(tokens.intersection(amount_cues))
+    )
+    date_supported = has_number and (
+        expected_field == "date" or bool(tokens.intersection(date_cues))
+    )
+    if criteria.approximate_amount is not None and not amount_supported:
+        removed.append("approximate_amount")
+    if (criteria.date_from is not None or criteria.date_to is not None) and not date_supported:
+        removed.extend(
+            name
+            for name, value in (("date_from", criteria.date_from), ("date_to", criteria.date_to))
+            if value is not None
+        )
+    return criteria.without(removed), tuple(removed)
 
 
 def _telemetry(event: str, *, call_id: str | None = None, **fields: Any) -> None:
@@ -365,6 +579,7 @@ class SipRealtimeGateway:
                     session_ready = False
                     active_response = False
                     opening_sent = False
+                    last_customer_transcript = ""
 
                     async for raw_event in websocket:
                         try:
@@ -392,10 +607,11 @@ class SipRealtimeGateway:
                         event_type = str(event.get("type", ""))
 
                         if event_type == "conversation.item.input_audio_transcription.completed":
+                            last_customer_transcript = str(event.get("transcript", ""))
                             self._log_full_transcript(
                                 call_id=call_id,
                                 speaker="customer",
-                                transcript=str(event.get("transcript", "")),
+                                transcript=last_customer_transcript,
                                 item_id=str(event.get("item_id", "")),
                             )
 
@@ -449,7 +665,9 @@ class SipRealtimeGateway:
                                 websocket,
                                 call_id,
                                 event,
+                                last_customer_transcript=last_customer_transcript,
                             )
+                            last_customer_transcript = ""
 
                         elif event_type in {
                             "input_audio_buffer.dtmf_event_received",
@@ -563,11 +781,7 @@ class SipRealtimeGateway:
 
                 # The Realtime call no longer exists. This is expected after a
                 # normal hangup and must not trigger six reconnect attempts.
-                if "404" in error_text and (
-                    "call_id" in error_text.casefold()
-                    or "session" in error_text.casefold()
-                    or "not found" in error_text.casefold()
-                ):
+                if "404" in error_text:
                     _telemetry(
                         "realtime.sideband.terminal",
                         call_id=call_id,
@@ -636,6 +850,8 @@ class SipRealtimeGateway:
         websocket: Any,
         call_id: str,
         event: dict[str, Any],
+        *,
+        last_customer_transcript: str = "",
     ) -> None:
         outputs = event.get("response", {}).get("output", [])
 
@@ -725,24 +941,28 @@ class SipRealtimeGateway:
                     )
 
                 elif tool_name == "search_transactions":
-                    criteria = TransactionSearchCriteria.from_mapping(arguments)
-                    replace_existing = arguments.get("replace_existing", False)
-                    if not isinstance(replace_existing, bool):
-                        raise ValueError("replace_existing must be true or false")
-                    clear_filters = arguments.get("clear_filters", False)
-                    if not isinstance(clear_filters, bool):
-                        raise ValueError("clear_filters must be true or false")
-                    remove_filters_value = arguments.get("remove_filters", [])
-                    if not isinstance(remove_filters_value, list) or not all(
-                        isinstance(item, str) for item in remove_filters_value
-                    ):
-                        raise ValueError("remove_filters must be a list of filter names")
+                    criteria, replace_existing, clear_filters, remove_filters = (
+                        self._transaction_search_arguments(arguments)
+                    )
+                    if last_customer_transcript:
+                        before_search = self.calls.get(call_id)
+                        criteria, rejected_filters = _guard_extracted_numeric_filters(
+                            criteria,
+                            last_customer_transcript,
+                            expected_field=before_search.pending_transaction_detail,
+                        )
+                        if rejected_filters:
+                            _telemetry(
+                                "voice.transaction.unsupported_filters_dropped",
+                                call_id=call_id,
+                                filters=rejected_filters,
+                            )
                     selection = self.calls.search_transactions(
                         call_id,
                         criteria,
                         replace_existing=replace_existing,
                         clear_filters=clear_filters,
-                        remove_filters=tuple(remove_filters_value),
+                        remove_filters=remove_filters,
                     )
                     state = selection.state
                     reason = {
@@ -764,28 +984,77 @@ class SipRealtimeGateway:
                     }
 
                 elif tool_name == "confirm_transaction":
-                    confirmed = arguments.get("confirmed")
-                    if not isinstance(confirmed, bool):
+                    model_confirmation = arguments.get("confirmed")
+                    if not isinstance(model_confirmation, bool):
                         raise ValueError("confirmed must be true or false")
-                    selection = self.calls.resolve_transaction_candidate(
-                        call_id,
-                        confirmed=confirmed,
+                    spoken_confirmation = _explicit_confirmation_from_transcript(
+                        last_customer_transcript
                     )
-                    state = selection.state
-                    reason = {
-                        TransactionSelectionOutcome.NEEDS_CLARIFICATION: (
-                            "transaction_clarification"
-                        ),
-                        TransactionSelectionOutcome.CANDIDATE: "transaction_candidate",
-                        TransactionSelectionOutcome.CONFIRMED: "transaction_confirmed",
-                        TransactionSelectionOutcome.EXHAUSTED: "transaction_handoff",
-                    }[selection.outcome]
-                    result = self._message_for(state, reason)
-                    tool_metadata = {
-                        "outcome": selection.outcome.value,
-                        "candidate_count": selection.result_count,
-                        "guess_number": state.transaction_guess_attempts,
-                    }
+                    if spoken_confirmation is None:
+                        state = self.calls.get(call_id)
+                        result = self._message_for(state, "transaction_confirmation_unclear")
+                        tool_metadata = {
+                            "outcome": "confirmation_unclear",
+                            "candidate_count": len(state.transaction_candidates),
+                            "guess_number": state.transaction_guess_attempts,
+                            "model_confirmation": model_confirmation,
+                        }
+                    else:
+                        selection = self.calls.resolve_transaction_candidate(
+                            call_id,
+                            confirmed=spoken_confirmation,
+                        )
+                        if not spoken_confirmation:
+                            criteria, replace_existing, clear_filters, remove_filters = (
+                                self._transaction_search_arguments(arguments)
+                            )
+                            if last_customer_transcript:
+                                before_refinement = self.calls.get(call_id)
+                                criteria, rejected_filters = _guard_extracted_numeric_filters(
+                                    criteria,
+                                    last_customer_transcript,
+                                    expected_field=before_refinement.pending_transaction_detail,
+                                )
+                                if rejected_filters:
+                                    _telemetry(
+                                        "voice.transaction.unsupported_filters_dropped",
+                                        call_id=call_id,
+                                        filters=rejected_filters,
+                                    )
+                            if (
+                                criteria.has_any_filter
+                                or replace_existing
+                                or clear_filters
+                                or remove_filters
+                            ) and selection.outcome is not TransactionSelectionOutcome.EXHAUSTED:
+                                selection = self.calls.search_transactions(
+                                    call_id,
+                                    criteria,
+                                    replace_existing=replace_existing,
+                                    clear_filters=clear_filters,
+                                    remove_filters=remove_filters,
+                                )
+                        state = selection.state
+                        reason = {
+                            TransactionSelectionOutcome.NEEDS_CLARIFICATION: (
+                                "transaction_clarification"
+                            ),
+                            TransactionSelectionOutcome.NO_MATCH: "transaction_no_match",
+                            TransactionSelectionOutcome.CANDIDATE: "transaction_candidate",
+                            TransactionSelectionOutcome.CONFIRMED: "transaction_confirmed",
+                            TransactionSelectionOutcome.EXHAUSTED: "transaction_handoff",
+                        }[selection.outcome]
+                        result = self._message_for(state, reason)
+                        tool_metadata = {
+                            "outcome": selection.outcome.value,
+                            "candidate_count": selection.result_count,
+                            "guess_number": state.transaction_guess_attempts,
+                            "model_confirmation": model_confirmation,
+                            "spoken_confirmation": spoken_confirmation,
+                            "confirmation_overridden": (
+                                spoken_confirmation is not model_confirmation
+                            ),
+                        }
 
                 else:
                     continue
@@ -869,6 +1138,25 @@ class SipRealtimeGateway:
                 websocket,
                 result,
             )
+
+    @staticmethod
+    def _transaction_search_arguments(
+        arguments: dict[str, Any],
+    ) -> tuple[TransactionSearchCriteria, bool, bool, tuple[str, ...]]:
+        """Validate model-provided filter mutations before touching call state."""
+        criteria = TransactionSearchCriteria.from_mapping(arguments)
+        replace_existing = arguments.get("replace_existing", False)
+        if not isinstance(replace_existing, bool):
+            raise ValueError("replace_existing must be true or false")
+        clear_filters = arguments.get("clear_filters", False)
+        if not isinstance(clear_filters, bool):
+            raise ValueError("clear_filters must be true or false")
+        remove_filters_value = arguments.get("remove_filters", [])
+        if not isinstance(remove_filters_value, list) or not all(
+            isinstance(item, str) for item in remove_filters_value
+        ):
+            raise ValueError("remove_filters must be a list of filter names")
+        return criteria, replace_existing, clear_filters, tuple(remove_filters_value)
 
     def _input_audio_configuration(self) -> dict[str, Any]:
         """Keep the demo transcript setting consistent across session updates."""
@@ -1055,16 +1343,25 @@ class SipRealtimeGateway:
 
     @staticmethod
     def _transaction_confirmation_tool() -> dict[str, Any]:
+        refinement_properties = SipRealtimeGateway._transaction_search_tool()["parameters"][
+            "properties"
+        ]
         return {
             "type": "function",
             "name": "confirm_transaction",
             "description": (
                 "Record the caller's explicit yes or no answer about the transaction "
-                "candidate Izzy just described. Never infer confirmation from unrelated text."
+                "candidate Izzy just described. Never infer confirmation from unrelated or "
+                "unclear speech. When the caller says no and provides a correction or another "
+                "detail in the same utterance, include those filter fields in this call so the "
+                "backend can reject the candidate and rerun retrieval atomically."
             ),
             "parameters": {
                 "type": "object",
-                "properties": {"confirmed": {"type": "boolean"}},
+                "properties": {
+                    "confirmed": {"type": "boolean"},
+                    **refinement_properties,
+                },
                 "required": ["confirmed"],
                 "additionalProperties": False,
             },
@@ -1145,6 +1442,9 @@ Transaction-search workflow:
 - When the caller adds or corrects any transaction detail, call search_transactions again so retrieval and reranking run again. Do not keep presenting a stale candidate.
 - If the tool asks for clarification, ask exactly one focused question and preserve details already collected.
 - At confirm_transaction, describe only the server-selected candidate and call confirm_transaction only after an explicit yes or no.
+- If the caller rejects a candidate and supplies another detail in the same sentence, include that detail in confirm_transaction so rejection and reranking happen together. Never discard a correction such as a city, date, amount, or merchant.
+- A server-side transcript guard validates explicit confirmation. If the caller's answer is unclear, ask again instead of guessing.
+- Call search_transactions and confirm_transaction without first speaking an assumed result. Wait for the server-owned tool response, which supplies the authoritative message.
 - After a denied candidate, do not present another candidate immediately. Ask exactly one focused question for a useful detail that has not been collected yet, then call search_transactions with the new answer.
 - If the caller cannot answer the focused question, call search_transactions with no invented values; the server will select a different missing detail to ask about. Never rerun an unchanged search.
 - Never disclose internal transaction IDs, SQL, hidden candidates, or another customer's transactions.
@@ -1242,6 +1542,10 @@ General behavior:
                     "Obrigado. Confirmei a transação. A próxima etapa da contestação está "
                     "fora do escopo desta demonstração."
                 ),
+                "transaction_confirmation_unclear": (
+                    "Não consegui identificar uma resposta clara. A transação ainda não foi "
+                    "confirmada. Diga sim ou não. Você também pode corrigir um dos filtros."
+                ),
                 "transaction_handoff": (
                     "Não consegui identificar a transação depois de três tentativas. "
                     "Normalmente eu encaminharia para um especialista, mas os atendentes "
@@ -1323,6 +1627,10 @@ General behavior:
                     "Gracias. Confirmé la transacción. La siguiente etapa del reclamo está "
                     "fuera del alcance de esta demostración."
                 ),
+                "transaction_confirmation_unclear": (
+                    "No pude identificar una respuesta clara. La transacción todavía no está "
+                    "confirmada. Di sí o no. También puedes corregir uno de los filtros."
+                ),
                 "transaction_handoff": (
                     "No pude identificar la transacción después de tres intentos. Normalmente "
                     "te transferiría a un especialista, pero los agentes humanos no están "
@@ -1397,6 +1705,10 @@ General behavior:
                     "Thank you. I confirmed the transaction. The next dispute step is outside "
                     "the scope of this demonstration."
                 ),
+                "transaction_confirmation_unclear": (
+                    "I couldn't identify a clear answer. The transaction is not confirmed yet. "
+                    "Say yes or no. You can also correct one of the filters."
+                ),
                 "transaction_handoff": (
                     "I couldn't identify the transaction after three attempts. I would normally "
                     "transfer you to a specialist, but human operators are unavailable and that "
@@ -1438,6 +1750,7 @@ General behavior:
         if reason in {
             "transaction_invalid",
             "transaction_confirmed",
+            "transaction_confirmation_unclear",
             "transaction_handoff",
         }:
             return messages[reason]
@@ -1715,7 +2028,7 @@ General behavior:
             return SipRealtimeGateway._transaction_filter_context(state) + (
                 f"Encontrei uma possibilidade: uma compra de {amount} {transaction.currency} "
                 f"na {merchant}, em {spoken_date}, em {city}, "
-                f"{country}. É essa transação?"
+                f"{country}. É essa transação? Responda sim ou não."
             )
         if language == "es":
             country = {
@@ -1730,12 +2043,12 @@ General behavior:
             return SipRealtimeGateway._transaction_filter_context(state) + (
                 f"Encontré una posibilidad: una compra de {amount} {transaction.currency} "
                 f"en {merchant}, el {spoken_date}, en {city}, "
-                f"{country}. ¿Es esa transacción?"
+                f"{country}. ¿Es esa transacción? Responde sí o no."
             )
         return SipRealtimeGateway._transaction_filter_context(state) + (
             f"I found one possibility: a {amount} {transaction.currency} purchase at "
             f"{merchant} on {spoken_date} in {city}, {country}. "
-            "Is that the transaction?"
+            "Is that the transaction? Answer yes or no."
         )
 
 
