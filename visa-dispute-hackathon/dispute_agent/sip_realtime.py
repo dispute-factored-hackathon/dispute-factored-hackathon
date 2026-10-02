@@ -60,6 +60,19 @@ class TransactionConfirmationIntent(StrEnum):
     UNCLEAR = "UNCLEAR"
 
 
+class LanguageSelectionIntent(StrEnum):
+    ENGLISH = "en"
+    PORTUGUESE = "pt"
+    SPANISH = "es"
+    UNCLEAR = "unclear"
+
+
+class AuthenticationMethodIntent(StrEnum):
+    PHONE = "phone"
+    DOCUMENT = "document"
+    UNCLEAR = "unclear"
+
+
 def _guard_extracted_numeric_filters(
     criteria: TransactionSearchCriteria,
     transcript: str,
@@ -555,7 +568,7 @@ class SipRealtimeGateway:
                                 "session": {
                                     "type": "realtime",
                                     "instructions": self._system_instructions(state),
-                                    "audio": self._input_audio_configuration(),
+                                    "audio": self._input_audio_configuration(state),
                                     "tool_choice": self._tool_choice_for(state),
                                 },
                             }
@@ -576,6 +589,7 @@ class SipRealtimeGateway:
                     active_response = False
                     opening_sent = False
                     last_customer_transcript = ""
+                    terminal_followup_pending = False
 
                     async for raw_event in websocket:
                         try:
@@ -610,6 +624,18 @@ class SipRealtimeGateway:
                                 transcript=last_customer_transcript,
                                 item_id=str(event.get("item_id", "")),
                             )
+                            current_state = self.calls.get(call_id)
+                            if current_state.stage is VoiceCallStage.DISPUTE_CLASSIFIED:
+                                if last_customer_transcript.strip():
+                                    terminal_followup_pending = True
+                                    if not active_response:
+                                        await self._create_terminal_followup(websocket)
+                                        terminal_followup_pending = False
+                                else:
+                                    _telemetry(
+                                        "voice.empty_terminal_transcript.ignored",
+                                        call_id=call_id,
+                                    )
 
                         elif event_type in {
                             "response.output_audio_transcript.done",
@@ -664,6 +690,11 @@ class SipRealtimeGateway:
                                 last_customer_transcript=last_customer_transcript,
                             )
                             last_customer_transcript = ""
+                            if terminal_followup_pending:
+                                current_state = self.calls.get(call_id)
+                                if current_state.stage is VoiceCallStage.DISPUTE_CLASSIFIED:
+                                    await self._create_terminal_followup(websocket)
+                                terminal_followup_pending = False
 
                         elif event_type in {
                             "input_audio_buffer.dtmf_event_received",
@@ -864,32 +895,39 @@ class SipRealtimeGateway:
 
                 if tool_name == "set_language":
                     before = self.calls.get(call_id)
-                    state = self.calls.choose_language(
-                        call_id,
-                        language=arguments.get("language", ""),
-                        accent=arguments.get("accent"),
-                    )
-                    if before.stage is VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION:
-                        result = self._message_for(state, "auth_method_prompt")
-                    elif state.stage is VoiceCallStage.NEEDS_DOCUMENT:
-                        result = self._message_for(state, "document_prompt")
-                    elif state.stage is VoiceCallStage.CONFIRM_TRANSACTION:
-                        result = self._message_for(state, "transaction_candidate")
-                    elif state.stage is VoiceCallStage.NEEDS_TRANSACTION_DETAILS:
-                        result = self._message_for(state, "transaction_clarification")
-                    elif state.stage is VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION:
-                        result = self._message_for(state, "classification_question")
-                    elif state.stage is VoiceCallStage.DISPUTE_CLASSIFIED:
-                        result = self._message_for(state, "classification_complete")
+                    language_intent = LanguageSelectionIntent(arguments.get("language", ""))
+                    if language_intent is LanguageSelectionIntent.UNCLEAR:
+                        state = before
+                        result = self._message_for(state, "invalid_language")
+                        tool_metadata = {"outcome": "unclear"}
                     else:
-                        result = self._message_for(state, "language_changed")
+                        state = self.calls.choose_language(
+                            call_id,
+                            language=language_intent.value,
+                            accent=arguments.get("accent"),
+                        )
+                        if before.stage is VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION:
+                            result = self._message_for(state, "auth_method_prompt")
+                        elif state.stage is VoiceCallStage.NEEDS_DOCUMENT:
+                            result = self._message_for(state, "document_prompt")
+                        elif state.stage is VoiceCallStage.CONFIRM_TRANSACTION:
+                            result = self._message_for(state, "transaction_candidate")
+                        elif state.stage is VoiceCallStage.NEEDS_TRANSACTION_DETAILS:
+                            result = self._message_for(state, "transaction_clarification")
+                        elif state.stage is VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION:
+                            result = self._message_for(state, "classification_question")
+                        elif state.stage is VoiceCallStage.DISPUTE_CLASSIFIED:
+                            result = self._message_for(state, "classification_complete")
+                        else:
+                            result = self._message_for(state, "language_changed")
 
                     _telemetry(
-                        "voice.language.selected",
+                        "voice.language.selection_processed",
                         call_id=call_id,
                         language=state.locale.language,
                         locale=state.locale.locale,
                         accent=state.locale.accent,
+                        outcome=language_intent.value,
                     )
 
                 elif tool_name == "confirm_language":
@@ -904,35 +942,37 @@ class SipRealtimeGateway:
                     )
 
                 elif tool_name == "set_authentication_method":
-                    requested_method = str(arguments.get("method", ""))
+                    authentication_intent = AuthenticationMethodIntent(arguments.get("method", ""))
                     before = self.calls.get(call_id)
-
-                    state = self.calls.choose_authentication_method(
-                        call_id,
-                        method=requested_method,
-                    )
-
-                    if requested_method == VoiceAuthenticationMethod.PHONE.value:
-                        if state.stage is VoiceCallStage.AUTHENTICATED:
-                            result = self._message_for(
-                                state,
-                                "phone_auth_success",
-                            )
+                    if authentication_intent is AuthenticationMethodIntent.UNCLEAR:
+                        state = before
+                        result = self._message_for(state, "invalid_auth_method")
+                    else:
+                        state = self.calls.choose_authentication_method(
+                            call_id,
+                            method=authentication_intent.value,
+                        )
+                        if authentication_intent is AuthenticationMethodIntent.PHONE:
+                            if state.stage is VoiceCallStage.AUTHENTICATED:
+                                result = self._message_for(
+                                    state,
+                                    "phone_auth_success",
+                                )
+                            else:
+                                result = self._message_for(
+                                    state,
+                                    "phone_auth_fallback",
+                                )
                         else:
                             result = self._message_for(
                                 state,
-                                "phone_auth_fallback",
+                                "document_prompt",
                             )
-                    else:
-                        result = self._message_for(
-                            state,
-                            "document_prompt",
-                        )
 
                     _telemetry(
                         "voice.authentication.method_processed",
                         call_id=call_id,
-                        requested_method=requested_method,
+                        requested_method=authentication_intent.value,
                         from_stage=before.stage.value,
                         to_stage=state.stage.value,
                         authenticated=state.stage is VoiceCallStage.AUTHENTICATED,
@@ -1144,7 +1184,7 @@ class SipRealtimeGateway:
                             "session": {
                                 "type": "realtime",
                                 "instructions": self._system_instructions(state),
-                                "audio": self._input_audio_configuration(),
+                                "audio": self._input_audio_configuration(state),
                                 "tool_choice": self._tool_choice_for(state),
                             },
                         }
@@ -1201,16 +1241,39 @@ class SipRealtimeGateway:
             raise ValueError("remove_filters must be a list of filter names")
         return criteria, replace_existing, clear_filters, tuple(remove_filters_value)
 
-    def _input_audio_configuration(self) -> dict[str, Any]:
-        """Keep the demo transcript setting consistent across session updates."""
+    def _input_audio_configuration(
+        self,
+        state: VoiceCallState | None = None,
+    ) -> dict[str, Any]:
+        """Configure transcription and suppress noise-driven terminal responses."""
         transcription = (
             {"model": self.input_transcription_model} if self.log_full_transcripts else None
         )
-        return {
-            "input": {
-                "transcription": transcription,
+        input_configuration: dict[str, Any] = {"transcription": transcription}
+        if state is not None and state.stage is VoiceCallStage.DISPUTE_CLASSIFIED:
+            input_configuration["turn_detection"] = {
+                "type": "server_vad",
+                "create_response": False,
+                "interrupt_response": True,
             }
+        return {
+            "input": input_configuration,
         }
+
+    @staticmethod
+    async def _create_terminal_followup(websocket: Any) -> None:
+        """Respond once to a real post-resolution utterance, never to empty VAD turns."""
+        await websocket.send(
+            json.dumps(
+                {
+                    "type": "response.create",
+                    "response": {
+                        "output_modalities": ["audio"],
+                        "tool_choice": "none",
+                    },
+                }
+            )
+        )
 
     def _log_full_transcript(
         self,
@@ -1260,11 +1323,17 @@ class SipRealtimeGateway:
         return {
             "type": "function",
             "name": "set_language",
-            "description": "Record an explicit request to use English, Portuguese, or Spanish.",
+            "description": (
+                "Classify the caller's explicit language choice. Use unclear for "
+                "unintelligible, ambiguous, unrelated, or low-confidence speech; never guess."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "language": {"type": "string", "enum": ["en", "pt", "es"]},
+                    "language": {
+                        "type": "string",
+                        "enum": ["en", "pt", "es", "unclear"],
+                    },
                     "accent": {
                         "type": "string",
                         "enum": [
@@ -1305,16 +1374,16 @@ class SipRealtimeGateway:
             "type": "function",
             "name": "set_authentication_method",
             "description": (
-                "Record whether the caller wants to authenticate using the "
-                "phone number used for this call or by entering a document "
-                "number on the telephone keypad."
+                "Classify whether the caller explicitly chose authentication using the "
+                "phone number or a document number. Use unclear for unintelligible, ambiguous, "
+                "unrelated, or low-confidence speech; never infer a choice."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "method": {
                         "type": "string",
-                        "enum": ["phone", "document"],
+                        "enum": ["phone", "document", "unclear"],
                     }
                 },
                 "required": ["method"],
@@ -1527,12 +1596,16 @@ Language workflow:
 - Do not present {language_name} as a switch option because the conversation is already using it.
 - If the caller clearly wants to keep the proposed language, call confirm_language.
 - If the caller explicitly chooses Portuguese, English, or Spanish, call set_language.
+- For unintelligible, ambiguous, unrelated, or low-confidence speech, call
+  set_language with language=unclear. Never guess a language.
 - Do not claim that the caller's physical location or nationality is known. The language is only inferred from the telephone calling code.
 
 Authentication workflow:
 - At needs_auth_method, ask whether the caller prefers authentication using the phone number used for this call or a document number.
 - If the caller chooses the phone number, call set_authentication_method with method=phone.
 - If the caller chooses document authentication, call set_authentication_method with method=document.
+- For unintelligible, ambiguous, unrelated, or low-confidence speech, call
+  set_authentication_method with method=unclear. Never guess an authentication method.
 - Authentication decisions are server-owned. Never claim authentication succeeded unless a tool result says it did.
 - If phone authentication fails, explain that document authentication will be used instead.
 
