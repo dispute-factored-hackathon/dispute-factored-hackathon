@@ -69,7 +69,6 @@ dev = [
 target-version = "py311"
 line-length = 100
 
-
 [tool.ruff.lint]
 select = [
     "B",

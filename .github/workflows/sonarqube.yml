@@ -1,0 +1,43 @@
+name: SonarQube Cloud
+
+on:
+  pull_request:
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  sonar:
+    name: SonarQube quality gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: ${{ vars.SONAR_ENABLED == 'true' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          working-directory: visa-dispute-hackathon
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Generate coverage XML
+        working-directory: visa-dispute-hackathon
+        run: |
+          uv sync --locked --dev
+          uv run coverage run --source=dispute_agent -m unittest discover -s tests
+          uv run coverage xml
+
+      - name: Analyze source and pull request
+        uses: SonarSource/sonarqube-scan-action@c7ee0f9df90b7aa20e8dcf9695dcfe2e7da5b4f2 # v7
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

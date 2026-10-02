@@ -1,0 +1,17 @@
+{
+  "rules": [
+    {
+      "rulePriority": 1,
+      "description": "Keep only the three newest tagged images",
+      "selection": {
+        "tagStatus": "tagged",
+        "tagPatternList": ["*"],
+        "countType": "imageCountMoreThan",
+        "countNumber": 3
+      },
+      "action": {
+        "type": "expire"
+      }
+    }
+  ]
+}

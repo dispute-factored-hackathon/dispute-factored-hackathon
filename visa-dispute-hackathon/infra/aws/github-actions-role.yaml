@@ -1,0 +1,130 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Least-privilege GitHub Actions role for the demo application deployment.
+
+Parameters:
+  GitHubOidcProviderArn:
+    Type: String
+    Description: Existing IAM OIDC provider ARN for token.actions.githubusercontent.com.
+  GitHubOrganization:
+    Type: String
+    Default: dispute-factored-hackathon
+  GitHubRepository:
+    Type: String
+    Default: dispute-factored-hackathon
+  ProjectName:
+    Type: String
+    Default: dispute-factored
+    AllowedPattern: "[a-z0-9-]+"
+
+Resources:
+  GitHubDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-github-deploy"
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref GitHubOidcProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub:
+                  - !Sub "repo:${GitHubOrganization}/${GitHubRepository}:pull_request"
+                  - !Sub "repo:${GitHubOrganization}/${GitHubRepository}:ref:refs/heads/main"
+                  - !Sub "repo:${GitHubOrganization}/${GitHubRepository}:ref:refs/tags/*"
+      Policies:
+        - PolicyName: DeployDemoApplication
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadDeploymentStacks
+                Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:GetTemplateSummary
+                Resource: "*"
+              - Sid: ChangeApplicationStack
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:ExecuteChangeSet
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${ProjectName}-demo/*
+              - Sid: ReadAndPushApplicationImages
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:CompleteLayerUpload
+                  - ecr:DescribeImages
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:InitiateLayerUpload
+                  - ecr:PutImage
+                  - ecr:UploadLayerPart
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/${ProjectName}-sip
+              - Sid: AuthenticateToEcr
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Sid: ManageDemoLambda
+                Effect: Allow
+                Action:
+                  - lambda:AddPermission
+                  - lambda:CreateFunction
+                  - lambda:CreateFunctionUrlConfig
+                  - lambda:DeleteFunction
+                  - lambda:DeleteFunctionUrlConfig
+                  - lambda:GetFunction
+                  - lambda:GetFunctionUrlConfig
+                  - lambda:GetPolicy
+                  - lambda:ListTags
+                  - lambda:PutFunctionEventInvokeConfig
+                  - lambda:RemovePermission
+                  - lambda:TagResource
+                  - lambda:UntagResource
+                  - lambda:UpdateFunctionCode
+                  - lambda:UpdateFunctionConfiguration
+                  - lambda:UpdateFunctionEventInvokeConfig
+                  - lambda:UpdateFunctionUrlConfig
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-demo-sip
+              - Sid: ManageDemoExecutionRole
+                Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:DeleteRolePolicy
+                  - iam:GetRole
+                  - iam:GetRolePolicy
+                  - iam:PassRole
+                  - iam:PutRolePolicy
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:UpdateAssumeRolePolicy
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-demo-*
+              - Sid: ManageDemoLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:DeleteLogGroup
+                  - logs:DescribeLogGroups
+                  - logs:ListTagsForResource
+                  - logs:PutRetentionPolicy
+                  - logs:TagResource
+                  - logs:UntagResource
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-demo-sip:*
+
+Outputs:
+  RoleArn:
+    Value: !GetAtt GitHubDeployRole.Arn

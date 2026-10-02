@@ -11,16 +11,7 @@ from dotenv import load_dotenv
 from .agent_graph import LangGraphAuthenticationAgent
 from .authentication import AuthenticationAgent, AuthStatus
 from .country_context import normalize_country_code
-from .intent_classifier import (
-    LocalAvoidanceClassifier,
-    LocalConfirmationClassifier,
-    LocalPromptAbuseClassifier,
-)
-from .language_classifier import LocalLanguageClassifier
-from .openai_interpreter import (
-    OpenAINameExtractor,
-    OpenAITurnInterpreter,
-)
+from .openai_interpreter import OpenAITurnInterpreter
 
 
 def country_code_argument(value: str) -> str:
@@ -38,14 +29,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to customers.csv (or set CUSTOMERS_CSV).",
     )
     parser.add_argument(
-        "--language",
-        choices=("auto", "en", "pt", "es"),
-        default=os.getenv("CALLER_LANGUAGE", "auto"),
-        help="Caller language: auto, en, pt or es (default: auto).",
-    )
-    parser.add_argument(
         "--country-code",
         type=country_code_argument,
+        required=True,
         help="Caller's telephone country code, for example +55, 52 or +1.",
     )
     parser.add_argument("--debug", action="store_true", help="Show internal demo identifiers.")
@@ -61,21 +47,12 @@ def main() -> int:
         return 2
     args = build_parser().parse_args()
     interpreter = OpenAITurnInterpreter()
-    intent_classifier = LocalAvoidanceClassifier()
     policy = AuthenticationAgent(
         args.customers,
-        intent_classifier,
-        language=args.language,
-        language_classifier=LocalLanguageClassifier(),
-        name_extractor=OpenAINameExtractor(interpreter),
+        language="auto",
         country_code=args.country_code,
-        confirmation_classifier=LocalConfirmationClassifier(intent_classifier),
     )
-    agent = LangGraphAuthenticationAgent(
-        policy,
-        interpreter,
-        LocalPromptAbuseClassifier(intent_classifier),
-    )
+    agent = LangGraphAuthenticationAgent(policy, interpreter)
     result = agent.start()
     try:
         while result.status in {
