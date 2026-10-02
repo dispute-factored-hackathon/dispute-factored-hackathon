@@ -1,0 +1,97 @@
+.coming-soon-page {
+    min-height: 100vh;
+    padding-bottom: 6rem;
+    background: var(--color-background);
+}
+
+.coming-soon-header {
+    padding:
+        var(--space-4)
+        var(--space-4);
+
+    background: var(--color-surface);
+
+    border-bottom:
+        1px
+        solid
+        var(--color-border);
+}
+
+.brand-name {
+    color: var(--color-text);
+
+    font-family: var(--font-display);
+    font-weight: 700;
+
+    letter-spacing: -0.025em;
+
+    text-decoration: none;
+}
+
+.coming-soon-content {
+    width: 100%;
+    max-width: 36rem;
+
+    margin: 0 auto;
+
+    padding:
+        var(--space-10)
+        var(--space-4);
+}
+
+.eyebrow {
+    margin:
+        0
+        0
+        var(--space-3);
+
+    color: var(--color-success);
+
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+}
+
+.coming-soon-content h1 {
+    margin:
+        0
+        0
+        var(--space-3);
+
+    font-family: var(--font-display);
+
+    font-size:
+        clamp(
+            2.5rem,
+            12vw,
+            4.5rem
+        );
+
+    line-height: 0.95;
+    letter-spacing: -0.055em;
+}
+
+.coming-soon-content > p {
+    margin:
+        0
+        0
+        var(--space-6);
+
+    color: var(--color-text-secondary);
+
+    line-height: 1.6;
+}
+
+@media (min-width: 700px) {
+    .coming-soon-header {
+        padding:
+            var(--space-4)
+            var(--space-8);
+    }
+
+    .coming-soon-content {
+        padding:
+            var(--space-10)
+            var(--space-8);
+    }
+}

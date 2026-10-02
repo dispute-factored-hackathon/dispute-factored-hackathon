@@ -1,0 +1,701 @@
+.home-page {
+    min-height: 100vh;
+    padding-bottom: 6rem;
+    background: var(--color-background);
+}
+
+.app-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+
+    padding: var(--space-4);
+
+    background: var(--color-surface);
+
+    border-bottom:
+        1px
+        solid
+        var(--color-border);
+}
+
+.brand-name {
+    color: var(--color-text);
+
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: -0.025em;
+
+    text-decoration: none;
+}
+
+.profile-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    width: 2.75rem;
+    height: 2.75rem;
+
+    color: #ffffff;
+    background: var(--color-primary);
+
+    border-radius: 50%;
+
+    font-family: var(--font-display);
+    font-weight: 700;
+
+    text-decoration: none;
+}
+
+.home-content {
+    width: 100%;
+    max-width: 64rem;
+
+    margin: 0 auto;
+
+    padding:
+        var(--space-8)
+        var(--space-4)
+        var(--space-10);
+}
+
+.welcome {
+    margin-bottom: var(--space-6);
+}
+
+.eyebrow,
+.section-eyebrow,
+.izzy-eyebrow,
+.shady-eyebrow,
+.phone-label,
+.tutorial-replay-eyebrow {
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+}
+
+.eyebrow {
+    margin:
+        0
+        0
+        var(--space-2);
+
+    color: var(--color-success);
+}
+
+.welcome h1 {
+    margin:
+        0
+        0
+        var(--space-2);
+
+    font-family: var(--font-display);
+
+    font-size:
+        clamp(
+            2.25rem,
+            11vw,
+            4rem
+        );
+
+    line-height: 0.98;
+    letter-spacing: -0.055em;
+}
+
+.welcome > p:last-child {
+    margin: 0;
+
+    color: var(--color-text-secondary);
+    line-height: 1.5;
+}
+
+
+/* Izzy */
+
+.izzy-hero {
+    overflow: hidden;
+
+    margin-bottom: var(--space-8);
+
+    color: #ffffff;
+    background: var(--color-primary);
+
+    border-radius: var(--radius-lg);
+
+    box-shadow: var(--shadow-card);
+}
+
+.izzy-wordmark {
+    padding:
+        var(--space-5)
+        var(--space-5)
+        0;
+
+    font-family: var(--font-display);
+
+    font-size:
+        clamp(
+            3.5rem,
+            18vw,
+            7rem
+        );
+
+    font-weight: 700;
+
+    line-height: 0.85;
+    letter-spacing: -0.08em;
+
+    opacity: 0.12;
+}
+
+.izzy-content {
+    padding: var(--space-5);
+}
+
+.izzy-eyebrow {
+    margin:
+        0
+        0
+        var(--space-3);
+
+    color:
+        rgba(
+            255,
+            255,
+            255,
+            0.68
+        );
+}
+
+.izzy-content h2 {
+    max-width: 28rem;
+
+    margin:
+        0
+        0
+        var(--space-3);
+
+    font-family: var(--font-display);
+
+    font-size:
+        clamp(
+            2rem,
+            9vw,
+            3.4rem
+        );
+
+    line-height: 1;
+    letter-spacing: -0.05em;
+}
+
+.izzy-content > p {
+    max-width: 32rem;
+
+    margin:
+        0
+        0
+        var(--space-5);
+
+    color:
+        rgba(
+            255,
+            255,
+            255,
+            0.76
+        );
+
+    line-height: 1.5;
+}
+
+.izzy-primary-action {
+    color: var(--color-primary);
+    background: #ffffff;
+}
+
+.izzy-primary-action:hover {
+    background:
+        rgba(
+            255,
+            255,
+            255,
+            0.9
+        );
+}
+
+.phone-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+
+    gap: var(--space-4);
+
+    padding:
+        var(--space-4)
+        var(--space-5);
+
+    background:
+        rgba(
+            255,
+            255,
+            255,
+            0.08
+        );
+
+    border-top:
+        1px
+        solid
+        rgba(
+            255,
+            255,
+            255,
+            0.12
+        );
+}
+
+.phone-label {
+    display: block;
+
+    margin-bottom: var(--space-1);
+
+    color:
+        rgba(
+            255,
+            255,
+            255,
+            0.58
+        );
+}
+
+.phone-number {
+    color: #ffffff;
+
+    font-family: var(--font-display);
+    font-weight: 600;
+
+    text-decoration: none;
+}
+
+.call-button {
+    flex: 0 0 auto;
+
+    padding:
+        var(--space-2)
+        var(--space-4);
+
+    color: var(--color-primary);
+    background: #ffffff;
+
+    border-radius: 999px;
+
+    font-size: 0.85rem;
+    font-weight: 800;
+
+    text-decoration: none;
+}
+
+
+/* Banking */
+
+.banking-section {
+    margin-bottom: var(--space-8);
+}
+
+.section-heading {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+
+    gap: var(--space-4);
+
+    margin-bottom: var(--space-4);
+}
+
+.section-eyebrow {
+    margin:
+        0
+        0
+        var(--space-1);
+
+    color: var(--color-text-secondary);
+}
+
+.section-heading h2 {
+    margin: 0;
+
+    font-family: var(--font-display);
+
+    font-size: 1.6rem;
+    letter-spacing: -0.035em;
+}
+
+.hub-grid {
+    display: grid;
+    grid-template-columns:
+        repeat(
+            2,
+            minmax(0, 1fr)
+        );
+
+    gap: var(--space-3);
+}
+
+.hub-card {
+    position: relative;
+
+    display: flex;
+    flex-direction: column;
+
+    min-height: 11rem;
+
+    padding: var(--space-4);
+
+    color: var(--color-text);
+    background: var(--color-surface);
+
+    border:
+        1px
+        solid
+        var(--color-border);
+
+    border-radius: var(--radius-lg);
+
+    box-shadow: var(--shadow-card);
+
+    text-decoration: none;
+
+    transition:
+        transform 120ms ease,
+        border-color 120ms ease;
+}
+
+.hub-card:hover {
+    border-color: var(--color-accent);
+    transform: translateY(-2px);
+}
+
+.hub-card:active {
+    transform: translateY(0);
+}
+
+.hub-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    width: 2.5rem;
+    height: 2.5rem;
+
+    margin-bottom: var(--space-4);
+
+    color: var(--color-primary);
+    background: var(--color-background);
+
+    border-radius: var(--radius-md);
+
+}
+
+.hub-icon svg {
+    width: 1.35rem;
+    height: 1.35rem;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.hub-card h3 {
+    margin:
+        0
+        0
+        var(--space-1);
+
+    font-family: var(--font-display);
+
+    font-size: 1.05rem;
+    letter-spacing: -0.02em;
+}
+
+.hub-card p {
+    margin: 0;
+
+    color: var(--color-text-secondary);
+
+    font-size: 0.8rem;
+    line-height: 1.4;
+}
+
+.hub-arrow {
+    position: absolute;
+
+    right: var(--space-4);
+    bottom: var(--space-4);
+
+    color: var(--color-primary);
+
+    font-size: 1.15rem;
+}
+
+
+/* Shady Business */
+
+.shady-business {
+    display: grid;
+    gap: var(--space-5);
+
+    margin-bottom: var(--space-8);
+    padding: var(--space-5);
+
+    color: #f8f5e9;
+    background: #171815;
+
+    border-radius: var(--radius-lg);
+}
+
+.shady-eyebrow {
+    margin:
+        0
+        0
+        var(--space-2);
+
+    color: #d4c86c;
+}
+
+.shady-business h2 {
+    margin:
+        0
+        0
+        var(--space-2);
+
+    font-family: var(--font-display);
+
+    font-size: 1.8rem;
+    letter-spacing: -0.04em;
+}
+
+.shady-business p {
+    max-width: 35rem;
+
+    margin: 0;
+
+    color:
+        rgba(
+            248,
+            245,
+            233,
+            0.68
+        );
+
+    line-height: 1.5;
+}
+
+.shady-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+
+    gap: var(--space-3);
+
+    width: 100%;
+
+    padding:
+        var(--space-3)
+        var(--space-4);
+
+    color: #171815;
+    background: #d4c86c;
+
+    border-radius: var(--radius-md);
+
+    font-weight: 800;
+
+    text-decoration: none;
+}
+
+.shady-link:hover {
+    background: #e0d474;
+}
+
+
+/* Tutorial replay */
+
+.tutorial-replay {
+    display: grid;
+    gap: var(--space-4);
+
+    margin-bottom: var(--space-5);
+    padding: var(--space-5);
+
+    background: var(--color-surface);
+
+    border:
+        1px
+        solid
+        var(--color-border);
+
+    border-radius: var(--radius-lg);
+}
+
+.tutorial-replay[hidden] {
+    display: none !important;
+}
+
+.tutorial-replay-eyebrow {
+    margin:
+        0
+        0
+        var(--space-2);
+
+    color: var(--color-success);
+}
+
+.tutorial-replay h2 {
+    margin:
+        0
+        0
+        var(--space-2);
+
+    font-family: var(--font-display);
+
+    font-size: 1.35rem;
+    letter-spacing: -0.03em;
+}
+
+.tutorial-replay p:not(
+    .tutorial-replay-eyebrow
+) {
+    margin: 0;
+
+    color: var(--color-text-secondary);
+
+    line-height: 1.5;
+}
+
+.tutorial-replay-button {
+    width: 100%;
+}
+
+
+/* Sign out */
+
+.sign-out-button {
+    display: block;
+
+    width: 100%;
+
+    padding: var(--space-4);
+
+    color: var(--color-text-secondary);
+    background: transparent;
+
+    border:
+        1px
+        solid
+        var(--color-border);
+
+    border-radius: var(--radius-md);
+
+    font: inherit;
+    font-weight: 600;
+
+    cursor: pointer;
+}
+
+.sign-out-button:hover {
+    color: var(--color-text);
+    border-color: var(--color-text-secondary);
+}
+
+
+/* Tablet */
+
+@media (min-width: 700px) {
+    .app-header {
+        padding:
+            var(--space-4)
+            var(--space-8);
+    }
+
+    .home-content {
+        padding:
+            var(--space-10)
+            var(--space-8)
+            8rem;
+    }
+
+    .izzy-content {
+        padding:
+            var(--space-6)
+            var(--space-8);
+    }
+
+    .izzy-wordmark {
+        padding:
+            var(--space-8)
+            var(--space-8)
+            0;
+    }
+
+    .phone-option {
+        padding:
+            var(--space-5)
+            var(--space-8);
+    }
+
+    .hub-grid {
+        gap: var(--space-4);
+    }
+
+    .hub-card {
+        min-height: 13rem;
+        padding: var(--space-5);
+    }
+
+    .shady-business {
+        grid-template-columns:
+            minmax(0, 1fr)
+            auto;
+
+        align-items: end;
+
+        padding: var(--space-6);
+    }
+
+    .shady-link {
+        width: auto;
+        min-width: 14rem;
+    }
+
+    .tutorial-replay {
+        grid-template-columns:
+            minmax(0, 1fr)
+            auto;
+
+        align-items: center;
+
+        padding: var(--space-6);
+    }
+
+    .tutorial-replay-button {
+        width: auto;
+    }
+}
+
+
+/* Desktop */
+
+@media (min-width: 1000px) {
+    .hub-grid {
+        grid-template-columns:
+            repeat(
+                4,
+                minmax(0, 1fr)
+            );
+    }
+
+    .hub-card {
+        min-height: 14rem;
+    }
+}

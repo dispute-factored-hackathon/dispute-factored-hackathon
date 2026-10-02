@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+    >
+
+    <meta
+        name="description"
+        content="Create your Factored Bank demo account."
+    >
+
+    <title>Create account · Factored Bank</title>
+
+    <link rel="icon" type="image/svg+xml" href="/static/assets/favicons/factored-bank.svg">
+
+    <link
+        rel="stylesheet"
+        href="/static/css/tokens.css"
+    >
+
+    <link
+        rel="stylesheet"
+        href="/static/css/global.css"
+    >
+
+    <link
+        rel="stylesheet"
+        href="/static/css/pages/signup.css"
+    >
+</head>
+
+<body>
+    <main class="signup-page">
+        <div class="signup-container">
+
+            <header class="brand">
+                <p class="brand-name">
+                    FACTORED BANK
+                </p>
+            </header>
+
+            <!-- Signup form -->
+            <section
+                id="signup-section"
+                aria-labelledby="signup-title"
+            >
+                <header class="signup-header">
+                    <h1 id="signup-title">
+                        Create your account
+                    </h1>
+
+                    <p>
+                        Create a demo Factored Bank profile
+                        to experience the dispute journey.
+                    </p>
+                </header>
+
+                <div class="signup-card">
+                    <form
+                        id="signup-form"
+                        class="signup-form"
+                        novalidate
+                    >
+                        <div
+                            id="form-error"
+                            class="form-error"
+                            role="alert"
+                            hidden
+                        ></div>
+
+                        <!-- Name -->
+                        <div
+                            class="
+                                form-row
+                                form-row-two-columns
+                            "
+                        >
+                            <div class="form-field">
+                                <label for="first-name">
+                                    First name
+                                </label>
+
+                                <input
+                                    id="first-name"
+                                    name="given-name"
+                                    type="text"
+                                    autocomplete="section-signup given-name"
+                                    autocapitalize="words"
+                                    enterkeyhint="next"
+                                    maxlength="100"
+                                    required
+                                >
+                            </div>
+
+                            <div class="form-field">
+                                <label for="last-name">
+                                    Last name
+                                </label>
+
+                                <input
+                                    id="last-name"
+                                    name="family-name"
+                                    type="text"
+                                    autocomplete="section-signup family-name"
+                                    autocapitalize="words"
+                                    enterkeyhint="next"
+                                    maxlength="100"
+                                    required
+                                >
+                            </div>
+                        </div>
+
+                        <!-- Birth date and gender -->
+                        <div
+                            class="
+                                form-row
+                                form-row-two-columns
+                            "
+                        >
+                            <div class="form-field">
+                                <label for="date-of-birth">
+                                    Birth date
+                                </label>
+
+                                <input
+                                    id="date-of-birth"
+                                    name="dateOfBirth"
+                                    type="date"
+                                    autocomplete="bday"
+                                    required
+                                >
+                            </div>
+
+                            <div class="form-field">
+                                <label for="gender">
+                                    Gender
+                                </label>
+
+                                <select
+                                    id="gender"
+                                    name="gender"
+                                    required
+                                >
+                                    <option value="">
+                                        Select
+                                    </option>
+
+                                    <option value="female">
+                                        Female
+                                    </option>
+
+                                    <option value="male">
+                                        Male
+                                    </option>
+
+                                    <option value="other">
+                                        Other / non-binary
+                                    </option>
+
+                                    <option value="prefer_not_to_say">
+                                        Prefer not to say
+                                    </option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Phone -->
+                        <div class="form-field">
+                            <label for="mobile-phone">
+                                Mobile phone
+                                <span aria-hidden="true">
+                                    · optional
+                                </span>
+                            </label>
+
+                            <input
+                                id="mobile-phone"
+                                name="mobilePhone"
+                                type="tel"
+                                autocomplete="tel"
+                                inputmode="tel"
+                                maxlength="16"
+                                placeholder="+5511123456890"
+                            >
+
+                            <p class="field-help">
+                                Include your country code.
+                                We'll format the number
+                                automatically. This number can
+                                also be used to authenticate
+                                when calling Izzy.
+                            </p>
+                        </div>
+
+                        <!-- Language -->
+                        <div class="form-field">
+                            <label for="preferred-locale">
+                                Preferred language
+                            </label>
+
+                            <select
+                                id="preferred-locale"
+                                name="preferredLocale"
+                                required
+                            >
+                                <option value="">
+                                    Select
+                                </option>
+
+                                <option value="en-US">
+                                    English
+                                </option>
+
+                                <option value="pt-BR">
+                                    Portuguese
+                                </option>
+
+                                <option value="es-419">
+                                    Spanish
+                                </option>
+                            </select>
+
+                            <p class="field-help">
+                                Factored Bank and Izzy will use
+                                this language after you sign in
+                                with your Factored ID.
+                            </p>
+                        </div>
+
+                        <!-- Factored ID -->
+                        <section
+                            class="factored-id-section"
+                            aria-labelledby="factored-id-title"
+                        >
+                            <div class="factored-id-header">
+                                <div>
+                                    <div
+                                        id="factored-id-title"
+                                        class="field-label"
+                                    >
+                                        Factored ID
+                                    </div>
+
+                                    <p class="field-help">
+                                        Your six-digit demo
+                                        authentication ID.
+                                    </p>
+                                </div>
+
+                                <button
+                                    id="generate-id-button"
+                                    class="
+                                        button
+                                        button-secondary
+                                    "
+                                    type="button"
+                                >
+                                    Generate
+                                </button>
+                            </div>
+
+                            <p
+                                id="factored-id-display"
+                                class="
+                                    factored-id-value
+                                    factored-id-placeholder
+                                "
+                                aria-live="polite"
+                            >
+                                — — — — — —
+                            </p>
+
+                            <input
+                                id="factored-id"
+                                name="factoredId"
+                                type="hidden"
+                            >
+                        </section>
+
+                        <!-- Submit -->
+                        <button
+                            id="submit-button"
+                            class="
+                                button
+                                button-primary
+                            "
+                            type="submit"
+                        >
+                            Create account
+                        </button>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Successful signup -->
+            <section
+                id="success-section"
+                class="signup-card success-panel"
+                aria-labelledby="success-title"
+                hidden
+            >
+                <div class="success-badge">
+                    Account created
+                </div>
+
+                <div>
+                    <h2 id="success-title">
+                        Welcome,
+                        <span id="success-name"></span>.
+                    </h2>
+
+                    <p>
+                        Your Factored Bank demo account
+                        and credit card are ready.
+                    </p>
+                </div>
+
+                <!-- Factored ID -->
+                <section
+                    class="identity-card"
+                    aria-labelledby="identity-title"
+                >
+                    <p
+                        id="identity-title"
+                        class="identity-card-label"
+                    >
+                        YOUR FACTORED ID
+                    </p>
+
+                    <p
+                        id="success-factored-id"
+                        class="identity-card-value"
+                    ></p>
+                </section>
+
+                <!-- Demo credit card -->
+                <section
+                    class="demo-card"
+                    aria-label="Demo credit card"
+                >
+                    <div class="demo-card-top">
+                        <span class="demo-card-name">
+                            FACTORED BANK
+                        </span>
+
+                        <span>
+                            USD
+                        </span>
+                    </div>
+
+                    <div class="demo-card-number">
+                        •••• •••• ••••
+                        <span id="card-last-four"></span>
+                    </div>
+
+                    <div class="demo-card-bottom">
+                        <span class="demo-card-type">
+                            DEMO CREDIT
+                        </span>
+
+                        <span id="card-status"></span>
+                    </div>
+                </section>
+
+                <!-- Voice authentication explanation -->
+                <div class="call-info">
+                    <p>
+                        <strong>
+                            Want to try Izzy by phone?
+                        </strong>
+                    </p>
+
+                    <p id="phone-auth-message">
+                        You can authenticate using your
+                        Factored ID when Izzy asks for it.
+                    </p>
+                </div>
+
+                <button
+                    id="continue-button"
+                    class="
+                        button
+                        button-primary
+                    "
+                    type="button"
+                >
+                    Continue to Factored Bank
+                </button>
+            </section>
+
+        </div>
+    </main>
+
+    <script
+        type="module"
+        src="/static/js/pages/signup.js?v=20261001-i18n1"
+    ></script>
+</body>
+</html>

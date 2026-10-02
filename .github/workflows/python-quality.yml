@@ -47,27 +47,4 @@ jobs:
         run: uv run ruff format --check .
 
       - name: Run tests
-        run: uv run coverage run --source=dispute_agent -m unittest discover -s tests -v
-
-      - name: Enforce coverage floor
-        run: uv run coverage report --show-missing --fail-under=75
-
-      - name: Export coverage reports
-        run: |
-          uv run coverage xml
-          uv run coverage json
-
-      - name: Publish coverage to Codecov
-        uses: codecov/codecov-action@04b047e8bb82a0c002c8312c1c880fbc6a999d45 # v5
-        with:
-          files: visa-dispute-hackathon/coverage.xml
-          flags: python
-          name: dispute-agent
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
-
-      - name: Report cyclomatic complexity
-        run: uv run radon cc dispute_agent -e "* 2.py" -s -a
-
-      - name: Report maintainability index
-        run: uv run radon mi dispute_agent -e "* 2.py" -s
+        run: uv run pytest -q

@@ -1,17 +1,20 @@
 # macOS
 .DS_Store
+**/.DS_Store
 .AppleDouble
 .LSOverride
 
 # Python
 __pycache__/
 *.py[cod]
+*.pyo
 *$py.class
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
 .coverage
 .coverage.*
+coverage.xml
 htmlcov/
 
 # Virtual environments
@@ -25,7 +28,14 @@ ENV/
 .env.*
 !.env.example
 
-# IDEs
+# Logs
+*.log
+call-debug*.log
+call-live*.log
+realtime-events*.log
+successful-call*.log
+
+# IDE
 .vscode/
 .idea/
 *.swp
@@ -34,16 +44,10 @@ ENV/
 # Jupyter
 .ipynb_checkpoints/
 
-# Build / packaging
+# Python build artifacts
 build/
 dist/
 *.egg-info/
-
-# Logs and local debugging
-*.log
-call-debug.log
-realtime-events.log
-successful-call.log
 
 # Local temporary files
 *.tmp
@@ -58,7 +62,6 @@ successful-call.log
 .aws-sam/
 
 # Coverage / test artifacts
-coverage.xml
 junit.xml
 
 # Python tooling

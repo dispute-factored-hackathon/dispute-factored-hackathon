@@ -1,0 +1,378 @@
+.transactions-page {
+    min-height: 100vh;
+    padding-bottom: 6rem;
+    background: var(--color-background);
+}
+
+.app-header {
+    display: grid;
+    grid-template-columns:
+        2.75rem
+        1fr
+        2.75rem;
+
+    align-items: center;
+    gap: var(--space-3);
+
+    padding: var(--space-4);
+
+    background: var(--color-surface);
+
+    border-bottom:
+        1px
+        solid
+        var(--color-border);
+}
+
+.brand-name {
+    justify-self: center;
+
+    color: var(--color-text);
+
+    font-family: var(--font-display);
+    font-weight: 700;
+
+    text-decoration: none;
+}
+
+.back-link,
+.profile-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    width: 2.75rem;
+    height: 2.75rem;
+
+    text-decoration: none;
+}
+
+.back-link {
+    color: var(--color-text);
+    background: var(--color-surface);
+
+    border:
+        1px
+        solid
+        var(--color-border);
+
+    border-radius: 50%;
+
+    font-size: 1.25rem;
+}
+
+.profile-button {
+    color: #ffffff;
+    background: var(--color-primary);
+
+    border-radius: 50%;
+
+    font-family: var(--font-display);
+    font-weight: 700;
+}
+
+.transactions-content {
+    width: 100%;
+    max-width: 48rem;
+
+    margin: 0 auto;
+
+    padding:
+        var(--space-8)
+        var(--space-4)
+        var(--space-10);
+}
+
+.page-heading {
+    margin-bottom: var(--space-6);
+}
+
+.eyebrow {
+    margin:
+        0
+        0
+        var(--space-2);
+
+    color: var(--color-success);
+
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+}
+
+.page-heading h1 {
+    margin:
+        0
+        0
+        var(--space-2);
+
+    font-family: var(--font-display);
+
+    font-size:
+        clamp(
+            2.5rem,
+            12vw,
+            4.5rem
+        );
+
+    line-height: 0.95;
+    letter-spacing: -0.055em;
+}
+
+.page-heading > p:last-child {
+    max-width: 35rem;
+
+    margin: 0;
+
+    color: var(--color-text-secondary);
+    line-height: 1.5;
+}
+
+.fraud-notice {
+    margin-bottom: var(--space-5);
+    padding: var(--space-4);
+
+    background: #fff8e7;
+
+    border:
+        1px
+        solid
+        #e8d9a7;
+
+    border-radius: var(--radius-md);
+}
+
+.fraud-notice[hidden] {
+    display: none;
+}
+
+.fraud-notice strong {
+    display: block;
+    margin-bottom: var(--space-1);
+}
+
+.fraud-notice p {
+    margin: 0;
+
+    color: var(--color-text-secondary);
+
+    font-size: 0.85rem;
+    line-height: 1.45;
+}
+
+.transactions-list {
+    display: grid;
+    gap: var(--space-3);
+}
+
+.transaction-item {
+    display: grid;
+    grid-template-columns:
+        auto
+        minmax(0, 1fr)
+        auto;
+
+    align-items: center;
+    gap: var(--space-3);
+
+    padding: var(--space-4);
+
+    color: var(--color-text);
+    background: var(--color-surface);
+
+    border:
+        1px
+        solid
+        var(--color-border);
+
+    border-radius: var(--radius-md);
+
+    text-decoration: none;
+
+    transition:
+        border-color 120ms ease,
+        transform 120ms ease;
+}
+
+.transaction-item:hover {
+    border-color: var(--color-accent);
+    transform: translateY(-1px);
+}
+
+.transaction-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    width: 2.75rem;
+    height: 2.75rem;
+
+    color: var(--color-primary);
+    background: var(--color-background);
+
+    border-radius: var(--radius-md);
+
+    font-weight: 800;
+}
+
+.transaction-icon.is-suspicious {
+    color: #8a4b00;
+    background: #fff1d6;
+}
+
+.transaction-main {
+    min-width: 0;
+}
+
+.transaction-merchant {
+    overflow: hidden;
+
+    margin:
+        0
+        0
+        var(--space-1);
+
+    font-weight: 700;
+
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.transaction-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+
+    color: var(--color-text-secondary);
+
+    font-size: 0.75rem;
+    line-height: 1.4;
+}
+
+.transaction-side {
+    min-width: 5.5rem;
+    text-align: right;
+}
+
+.transaction-amount {
+    display: block;
+
+    margin-bottom: var(--space-1);
+
+    font-family: var(--font-display);
+    font-weight: 700;
+}
+
+.transaction-status {
+    color: var(--color-text-secondary);
+    font-size: 0.7rem;
+}
+
+.fraud-badge {
+    display: inline-block;
+
+    margin-top: var(--space-2);
+    padding:
+        var(--space-1)
+        var(--space-2);
+
+    color: #8a4b00;
+    background: #fff1d6;
+
+    border-radius: 999px;
+
+    font-size: 0.65rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.page-error {
+    margin-bottom: var(--space-5);
+    padding: var(--space-4);
+
+    color: var(--color-error);
+
+    background:
+        rgba(
+            180,
+            35,
+            24,
+            0.06
+        );
+
+    border:
+        1px
+        solid
+        rgba(
+            180,
+            35,
+            24,
+            0.2
+        );
+
+    border-radius: var(--radius-md);
+}
+
+.page-error[hidden] {
+    display: none;
+}
+
+.empty-state {
+    padding:
+        var(--space-10)
+        var(--space-5);
+
+    text-align: center;
+
+    background: var(--color-surface);
+
+    border:
+        1px
+        solid
+        var(--color-border);
+
+    border-radius: var(--radius-lg);
+}
+
+.empty-state[hidden] {
+    display: none;
+}
+
+.empty-state h2 {
+    margin:
+        0
+        0
+        var(--space-2);
+
+    font-family: var(--font-display);
+}
+
+.empty-state p {
+    margin: 0;
+    color: var(--color-text-secondary);
+}
+
+@media (min-width: 700px) {
+    .app-header {
+        padding:
+            var(--space-4)
+            var(--space-8);
+    }
+
+    .transactions-content {
+        padding:
+            var(--space-10)
+            var(--space-8)
+            8rem;
+    }
+
+    .transaction-item {
+        padding: var(--space-5);
+    }
+
+    .transaction-icon {
+        width: 3rem;
+        height: 3rem;
+    }
+}

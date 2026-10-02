@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Questionable products for discerning demo shoppers.">
+    <title>Shady Business · Definitely a store</title>
+    <link rel="icon" type="image/svg+xml" href="/static/assets/favicons/shady-business.svg">
+    <link rel="stylesheet" href="/static/css/global.css">
+    <link rel="stylesheet" href="/static/css/pages/store.css">
+</head>
+<body class="shady-body">
+    <header class="shady-header">
+        <a class="shady-logo" href="/shop"><span>SHADY</span> BUSINESS</a>
+        <nav aria-label="Store navigation">
+            <a href="/home">Factored Bank</a>
+            <a class="cart-link" href="/shop/cart">Cart <span data-cart-count hidden>0</span></a>
+        </nav>
+    </header>
+    <main id="store-page" hidden>
+        <section class="store-hero">
+            <p class="store-kicker">Probably legal · Definitely synthetic</p>
+            <h1>Things you never knew<br>you should not need.</h1>
+            <p>Every purchase is fake. The buyer's remorse is simulated with remarkable accuracy.</p>
+            <a class="shady-button" href="#catalog">Shop questionable deals</a>
+        </section>
+        <section id="catalog" class="catalog-section" aria-labelledby="catalog-title">
+            <div class="section-heading">
+                <div><p>HOT INVENTORY</p><h2 id="catalog-title">Fresh from the back of a van</h2></div>
+                <span>Free shipping eventually*</span>
+            </div>
+            <div id="store-error" class="store-message error" role="alert" hidden></div>
+            <div id="product-grid" class="product-grid" aria-live="polite"></div>
+        </section>
+    </main>
+    <script type="module" src="/static/js/pages/store.js?v=20261001-i18n1"></script>
+</body>
+</html>

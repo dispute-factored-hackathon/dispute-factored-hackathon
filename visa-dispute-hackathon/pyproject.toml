@@ -2,44 +2,56 @@
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+
 [project]
 name = "dispute-agent"
 version = "0.1.0"
 description = "Call-center dispute agent prototype"
 requires-python = ">=3.11"
+
 dependencies = [
-  "fastapi>=0.115,<1",
-  "langchain-openai>=0.3,<2",
-  "langgraph>=0.4,<2",
-  "langsmith>=0.3,<1",
-  "openai>=3.19,<4",
-  "python-dotenv>=1,<2",
-  "uvicorn>=0.30,<1",
-  "websockets>=15,<17",
+    "fastapi>=0.115,<1",
+    "langchain-openai>=0.3,<2",
+    "langgraph>=0.4,<2",
+    "langsmith>=0.3,<1",
+    "openai>=3.19,<4",
+    "pydantic-settings>=2,<3",
+    "python-dotenv>=1,<2",
+    "uvicorn>=0.30,<1",
+    "websockets>=15,<17",
 ]
+
 
 [project.scripts]
 dispute-sip-server = "dispute_agent.sip_realtime:run"
 
+
 [project.optional-dependencies]
 analytics = [
-  "duckdb>=1.5.5",
-  "matplotlib>=3.11.2",
-  "pandas>=3.0.6",
-  "seaborn>=0.13.2",
-  "wordcloud>=1.9.6",
+    "duckdb>=1.5.5",
+    "matplotlib>=3.11.2",
+    "pandas>=3.0.6",
+    "seaborn>=0.13.2",
+    "wordcloud>=1.9.6",
 ]
+
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["dispute_agent*"]
+include = [
+    "dispute_agent*",
+    "webapp*",
+]
+
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
 
+
 [tool.uv]
 package = true
+
 
 [dependency-groups]
 dev = [
@@ -52,12 +64,25 @@ dev = [
     "ruff>=0.14,<1",
 ]
 
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["B", "E4", "E7", "E9", "F", "I", "ISC", "RUF", "SIM", "UP"]
+select = [
+    "B",
+    "E4",
+    "E7",
+    "E9",
+    "F",
+    "I",
+    "ISC",
+    "RUF",
+    "SIM",
+    "UP",
+]
+
 
 [tool.ruff.format]
 quote-style = "double"

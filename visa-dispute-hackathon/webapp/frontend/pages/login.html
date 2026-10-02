@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+    >
+
+    <meta
+        name="description"
+        content="Sign in to your Factored Bank demo account."
+    >
+
+    <title>Sign in · Factored Bank</title>
+
+    <link rel="icon" type="image/svg+xml" href="/static/assets/favicons/factored-bank.svg">
+
+    <link
+        rel="stylesheet"
+        href="/static/css/tokens.css"
+    >
+
+    <link
+        rel="stylesheet"
+        href="/static/css/global.css"
+    >
+
+    <link
+        rel="stylesheet"
+        href="/static/css/pages/login.css?v=20261001"
+    >
+</head>
+
+<body>
+    <main class="login-page">
+        <section class="login-container">
+
+            <header class="brand">
+                <p class="brand-name">
+                    FACTORED BANK
+                </p>
+            </header>
+
+            <div class="login-copy">
+                <p class="eyebrow">
+                    DEMO BANKING
+                </p>
+
+                <h1>
+                    Welcome back.
+                </h1>
+
+                <p>
+                    Sign in with your Factored ID or choose
+                    a synthetic customer profile.
+                </p>
+            </div>
+
+            <div class="login-card">
+                <form
+                    id="login-form"
+                    class="login-form"
+                    novalidate
+                >
+                    <div
+                        id="login-error"
+                        class="form-error"
+                        role="alert"
+                        hidden
+                    ></div>
+
+                    <div class="login-methods" role="tablist" aria-label="Sign-in method">
+                        <button
+                            id="factored-id-method"
+                            class="login-method active"
+                            type="button"
+                            role="tab"
+                            aria-selected="true"
+                            aria-controls="factored-id-login-panel"
+                            data-method="factored-id"
+                        >
+                            Use Factored ID
+                        </button>
+                        <button
+                            id="customer-method"
+                            class="login-method"
+                            type="button"
+                            role="tab"
+                            aria-selected="false"
+                            aria-controls="customer-login-panel"
+                            data-method="customer"
+                        >
+                            Choose customer
+                        </button>
+                    </div>
+
+                    <div class="demo-warning" role="note">
+                        <strong>Demo access only.</strong>
+                        No password is required because every profile and transaction is synthetic.
+                        Never use this pattern for real banking access.
+                    </div>
+
+                    <div class="demo-warning" role="note">
+                        <strong>Judges:</strong>
+                        create a profile, then sign in with its Factored ID for the guided first experience.
+                        Choosing a customer opens the demo without onboarding.
+                    </div>
+
+                    <div
+                        id="factored-id-login-panel"
+                        class="form-field"
+                        role="tabpanel"
+                        aria-labelledby="factored-id-method"
+                    >
+                        <label for="factored-id">Factored ID</label>
+                        <input
+                            id="factored-id"
+                            name="factoredId"
+                            type="text"
+                            inputmode="numeric"
+                            autocomplete="one-time-code"
+                            maxlength="6"
+                            pattern="[0-9]{6}"
+                            placeholder="123456"
+                        >
+                        <p class="field-help">
+                            Enter the six-digit ID generated when the demo account was created.
+                        </p>
+                    </div>
+
+                    <div
+                        id="customer-login-panel"
+                        class="form-field customer-picker"
+                        role="tabpanel"
+                        aria-labelledby="customer-method"
+                        hidden
+                    >
+                        <label for="customer-search">
+                            Customer name
+                        </label>
+
+                        <input
+                            id="customer-search"
+                            name="customerSearch"
+                            type="search"
+                            autocomplete="off"
+                            placeholder="Search by full name"
+                            role="combobox"
+                            aria-autocomplete="list"
+                            aria-controls="customer-options"
+                            aria-describedby="customer-help"
+                            aria-expanded="false"
+                            aria-required="true"
+                            aria-activedescendant=""
+                        >
+
+                        <div
+                            id="customer-options"
+                            class="customer-options"
+                            role="listbox"
+                            aria-label="Matching demo customers"
+                            aria-live="polite"
+                            hidden
+                        ></div>
+
+                        <input id="customer-selection" type="hidden" name="customerSelection">
+
+                        <p id="customer-help" class="field-help">
+                            Search ignores capitalization and accents. A short profile label distinguishes
+                            customers with the same name without exposing document numbers.
+                        </p>
+                    </div>
+
+                    <button
+                        id="login-button"
+                        class="
+                            button
+                            button-primary
+                        "
+                        type="submit"
+                    >
+                        Sign in
+                    </button>
+                </form>
+
+                <div class="signup-link">
+                    <span>
+                        Don't have a demo account?
+                    </span>
+
+                    <a href="/signup">
+                        Create one
+                    </a>
+                </div>
+            </div>
+
+        </section>
+    </main>
+
+    <script
+        type="module"
+        src="/static/js/pages/login.js?v=20261001-i18n1"
+    ></script>
+</body>
+</html>
