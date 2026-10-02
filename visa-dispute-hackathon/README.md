@@ -32,6 +32,29 @@ The caller number is evaluated before the model speaks. A unique exact normalize
 
 This remains a synthetic demonstration. A SIP `From` header can be spoofed and is explicitly treated as untrusted metadata by OpenAI. Even when it uniquely matches the synthetic table, `DEMO_ONLY_PHONE_MATCH` is not production-grade authentication.
 
+### Mock voice transaction search
+
+After authentication, Izzy asks whether the caller is having a problem with a transaction. The caller can describe a merchant or descriptor, approximate amount, currency, date or date range, country, city, channel, or transaction type. The Realtime model passes only schema-constrained criteria to the backend; it never sends executable SQL.
+
+`SQLiteTransactionSearchRepository` creates a replaceable SQLite database with the same 22 columns as the synthetic `transactions` table. Its ten demonstration rows cover lemon, strawberry, coconut, passion fruit, banana, apple, papaya, peach, grapes, and mango purchases. Merchants and amounts are distinct. Countries and cities are assigned pseudo-randomly from a fixed synthetic catalog using a fixed seed, so the demo is varied but reproducible.
+
+The backend compiles the model's criteria into one parameterized `SELECT`:
+
+- the authenticated `customer_id` is always injected by trusted server state;
+- approximate amounts match within the greater of five currency units or 10%;
+- values are bound parameters and cannot alter the statement;
+- only the known `transactions` table and supported filters are used;
+- no more than ten rows are returned;
+- denied candidates are excluded from later proposals.
+
+Izzy speaks one ranked candidate at a time with merchant, date, amount/currency, city, and country. Only an explicit confirmation selects it. After three denied candidates, Izzy explains that a specialist would normally help, but human operators are unavailable and handoff is outside this demonstration. Dispute creation, Visa reason-code classification, real transaction systems, and real human transfer remain out of scope.
+
+Run the SQLite, state-machine, and SIP-sideband coverage with:
+
+```bash
+uv run pytest tests/test_transaction_search.py tests/test_voice_call.py tests/test_sip_realtime.py -q
+```
+
 ### 1. Configure and start the backend
 
 Copy `.env.example` to `.env`, then set `OPENAI_API_KEY`, `OPENAI_WEBHOOK_SECRET`, and the customer table. For a safe first call, use the fixture:

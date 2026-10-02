@@ -9,6 +9,7 @@ import os
 import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +20,9 @@ from webapp.backend.demo_seed import seed_demo_customers
 from webapp.backend.repositories.interfaces import CustomerRepository
 from webapp.backend.repositories.mock import customer_repository
 
+from .transaction_search import TransactionSearchCriteria, TransactionSearchRepository
 from .voice_call import (
+    TransactionSelectionOutcome,
     VoiceAuthenticationMethod,
     VoiceCallService,
     VoiceCallStage,
@@ -83,6 +86,7 @@ class SipRealtimeGateway:
         webhook_secret: str | None = None,
         openai_client: Any | None = None,
         websocket_connect: Callable[..., Any] | None = None,
+        transaction_repository: TransactionSearchRepository | None = None,
     ) -> None:
 
         self.api_key = api_key or os.getenv("OPENAI_API_KEY", "")
@@ -97,6 +101,7 @@ class SipRealtimeGateway:
         )
 
         self._customer_source = customer_source
+        self._transaction_repository = transaction_repository
 
         self._calls: VoiceCallService | None = None
 
@@ -107,7 +112,10 @@ class SipRealtimeGateway:
         """Load the synthetic directory only when a valid call needs it."""
 
         if self._calls is None:
-            self._calls = VoiceCallService(self._customer_source)
+            self._calls = VoiceCallService(
+                self._customer_source,
+                transaction_repository=self._transaction_repository,
+            )
 
         return self._calls
 
@@ -157,6 +165,8 @@ class SipRealtimeGateway:
                     self._language_tool(),
                     self._confirm_language_tool(),
                     self._authentication_method_tool(),
+                    self._transaction_search_tool(),
+                    self._transaction_confirmation_tool(),
                 ],
                 tool_choice="auto",
                 tracing={
@@ -595,6 +605,7 @@ class SipRealtimeGateway:
 
             tool_name = str(output.get("name", ""))
             tool_call_id = output.get("call_id")
+            tool_metadata: dict[str, Any] = {}
 
             try:
                 arguments = json.loads(output.get("arguments", "{}"))
@@ -610,6 +621,12 @@ class SipRealtimeGateway:
                         result = self._message_for(state, "auth_method_prompt")
                     elif state.stage is VoiceCallStage.NEEDS_DOCUMENT:
                         result = self._message_for(state, "document_prompt")
+                    elif state.stage is VoiceCallStage.CONFIRM_TRANSACTION:
+                        result = self._message_for(state, "transaction_candidate")
+                    elif state.stage is VoiceCallStage.NEEDS_TRANSACTION_DETAILS:
+                        result = self._message_for(state, "transaction_clarification")
+                    elif state.stage is VoiceCallStage.TRANSACTION_SELECTED:
+                        result = self._message_for(state, "transaction_confirmed")
                     else:
                         result = self._message_for(state, "language_changed")
 
@@ -667,6 +684,56 @@ class SipRealtimeGateway:
                         authenticated=state.stage is VoiceCallStage.AUTHENTICATED,
                     )
 
+                elif tool_name == "search_transactions":
+                    criteria = TransactionSearchCriteria.from_mapping(arguments)
+                    replace_existing = arguments.get("replace_existing", False)
+                    if not isinstance(replace_existing, bool):
+                        raise ValueError("replace_existing must be true or false")
+                    selection = self.calls.search_transactions(
+                        call_id,
+                        criteria,
+                        replace_existing=replace_existing,
+                    )
+                    state = selection.state
+                    reason = {
+                        TransactionSelectionOutcome.NEEDS_CLARIFICATION: (
+                            "transaction_clarification"
+                        ),
+                        TransactionSelectionOutcome.NO_MATCH: "transaction_no_match",
+                        TransactionSelectionOutcome.CANDIDATE: "transaction_candidate",
+                        TransactionSelectionOutcome.EXHAUSTED: "transaction_handoff",
+                    }[selection.outcome]
+                    result = self._message_for(state, reason)
+                    tool_metadata = {
+                        "outcome": selection.outcome.value,
+                        "candidate_count": selection.result_count,
+                        "guess_number": state.transaction_guess_attempts,
+                    }
+
+                elif tool_name == "confirm_transaction":
+                    confirmed = arguments.get("confirmed")
+                    if not isinstance(confirmed, bool):
+                        raise ValueError("confirmed must be true or false")
+                    selection = self.calls.resolve_transaction_candidate(
+                        call_id,
+                        confirmed=confirmed,
+                    )
+                    state = selection.state
+                    reason = {
+                        TransactionSelectionOutcome.NEEDS_CLARIFICATION: (
+                            "transaction_clarification"
+                        ),
+                        TransactionSelectionOutcome.CANDIDATE: "transaction_candidate",
+                        TransactionSelectionOutcome.CONFIRMED: "transaction_confirmed",
+                        TransactionSelectionOutcome.EXHAUSTED: "transaction_handoff",
+                    }[selection.outcome]
+                    result = self._message_for(state, reason)
+                    tool_metadata = {
+                        "outcome": selection.outcome.value,
+                        "candidate_count": selection.result_count,
+                        "guess_number": state.transaction_guess_attempts,
+                    }
+
                 else:
                     continue
 
@@ -689,6 +756,11 @@ class SipRealtimeGateway:
                     result = self._message_for(
                         state,
                         "invalid_auth_method",
+                    )
+                elif tool_name in {"search_transactions", "confirm_transaction"}:
+                    result = self._message_for(
+                        state,
+                        "transaction_invalid",
                     )
                 else:
                     continue
@@ -724,7 +796,7 @@ class SipRealtimeGateway:
                             "type": "function_call_output",
                             "call_id": tool_call_id,
                             "output": json.dumps(
-                                {"message": result},
+                                {"message": result, **tool_metadata},
                                 ensure_ascii=False,
                             ),
                         },
@@ -824,6 +896,57 @@ class SipRealtimeGateway:
         }
 
     @staticmethod
+    def _transaction_search_tool() -> dict[str, Any]:
+        return {
+            "type": "function",
+            "name": "search_transactions",
+            "description": (
+                "Search only the authenticated caller's synthetic transaction history. "
+                "Extract only details the caller actually supplied. Amounts are approximate. "
+                "Call again when the caller adds or corrects a detail."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "merchant_query": {"type": "string"},
+                    "approximate_amount": {"type": "number", "exclusiveMinimum": 0},
+                    "currency": {"type": "string"},
+                    "date_from": {"type": "string", "format": "date"},
+                    "date_to": {"type": "string", "format": "date"},
+                    "country": {"type": "string"},
+                    "city": {"type": "string"},
+                    "channel": {"type": "string"},
+                    "transaction_type": {"type": "string"},
+                    "replace_existing": {
+                        "type": "boolean",
+                        "description": (
+                            "Use true only when the caller explicitly corrects or replaces "
+                            "previous search details. Otherwise omit it or use false."
+                        ),
+                    },
+                },
+                "additionalProperties": False,
+            },
+        }
+
+    @staticmethod
+    def _transaction_confirmation_tool() -> dict[str, Any]:
+        return {
+            "type": "function",
+            "name": "confirm_transaction",
+            "description": (
+                "Record the caller's explicit yes or no answer about the transaction "
+                "candidate Izzy just described. Never infer confirmation from unrelated text."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"confirmed": {"type": "boolean"}},
+                "required": ["confirmed"],
+                "additionalProperties": False,
+            },
+        }
+
+    @staticmethod
     def _system_instructions(state: VoiceCallState) -> str:
         language_name = {
             "pt": "Portuguese",
@@ -879,6 +1002,18 @@ Document workflow:
 - At needs_document, instruct the caller to type the document number and press pound/numeral/hash (#). Star (*) clears the current entry.
 - Never repeat, expose, infer, or summarize document digits.
 
+Transaction-search workflow:
+- Today's server date is {date.today().isoformat()}. Resolve relative dates such as today or yesterday against this date.
+- At authenticated, ask whether the caller is having a problem with a transaction and invite them to describe whatever they remember.
+- Useful details include merchant or descriptor, approximate amount, currency, date or date range, country, city, channel, and transaction type.
+- Call search_transactions with only details the caller supplied. Do not invent missing values.
+- Preserve earlier details by default. Set replace_existing=true only when the caller explicitly corrects or replaces the previous search description.
+- The backend, not you, creates parameterized customer-scoped SQL and ranks at most ten results.
+- If the tool asks for clarification, ask exactly one focused question and preserve details already collected.
+- At confirm_transaction, describe only the server-selected candidate and call confirm_transaction only after an explicit yes or no.
+- Never disclose internal transaction IDs, SQL, hidden candidates, or another customer's transactions.
+- After three denied candidates the server ends in handoff. Explain honestly that human operators are unavailable and handoff is outside this demo.
+
 General behavior:
 - Introduce yourself as Izzy from Factored Bank.
 - Explain that you help with card disputes.
@@ -909,8 +1044,9 @@ General behavior:
                 ),
                 "phone_success": (
                     "Olá, {name}. Encontrei seu cadastro usando o número de telefone "
-                    "desta ligação e você está autenticado. "
-                    "Como posso ajudar com sua contestação de cartão?"
+                    "desta ligação e sua autenticação foi concluída. "
+                    "Você está com algum problema em uma transação? Diga o que lembrar, "
+                    "como estabelecimento, valor aproximado, data ou local."
                 ),
                 "phone_fallback": (
                     "Não consegui autenticar você usando o número de telefone desta ligação. "
@@ -925,7 +1061,8 @@ General behavior:
                 ),
                 "document_success": (
                     "Olá, {name}. Encontrei seu cadastro usando o documento informado "
-                    "e você está autenticado. Como posso ajudar com sua contestação de cartão?"
+                    "e sua autenticação foi concluída. Você está com algum problema em uma transação? "
+                    "Diga o que lembrar, como estabelecimento, valor aproximado, data ou local."
                 ),
                 "retry": (
                     "Não localizei esse documento. Confira os números, digite novamente "
@@ -953,6 +1090,28 @@ General behavior:
                 "language_changed": (
                     "Idioma alterado. Podemos continuar sua contestação neste idioma."
                 ),
+                "transaction_clarification": (
+                    "Preciso de mais um detalhe para localizar a transação. Qual era o "
+                    "estabelecimento? Se não lembrar, diga o valor aproximado."
+                ),
+                "transaction_no_match": (
+                    "Não encontrei uma transação com esses dados. O estabelecimento informado "
+                    "está correto? Você também pode corrigir ou acrescentar outro detalhe."
+                ),
+                "transaction_invalid": (
+                    "Não consegui usar esses dados na busca. Diga um estabelecimento, valor "
+                    "aproximado, data ou local."
+                ),
+                "transaction_confirmed": (
+                    "Obrigado. Confirmei a transação. A próxima etapa da contestação está "
+                    "fora do escopo desta demonstração."
+                ),
+                "transaction_handoff": (
+                    "Não consegui identificar a transação depois de três tentativas. "
+                    "Normalmente eu encaminharia para um especialista, mas os atendentes "
+                    "humanos não estão disponíveis e essa transferência está fora do escopo "
+                    "desta demonstração."
+                ),
             },
             "es": {
                 "opening": (
@@ -967,8 +1126,9 @@ General behavior:
                 ),
                 "phone_success": (
                     "Hola, {name}. Encontré tu registro usando el número de teléfono "
-                    "de esta llamada y ya estás autenticado. "
-                    "¿Cómo puedo ayudarte con tu reclamo de tarjeta?"
+                    "de esta llamada y tu autenticación está completa. "
+                    "¿Tienes algún problema con una transacción? Dime lo que recuerdes, "
+                    "como el comercio, el valor aproximado, la fecha o el lugar."
                 ),
                 "phone_fallback": (
                     "No pude autenticarte usando el número de teléfono de esta llamada. "
@@ -983,7 +1143,9 @@ General behavior:
                 ),
                 "document_success": (
                     "Hola, {name}. Encontré tu registro usando el documento ingresado "
-                    "y ya estás autenticado. ¿Cómo puedo ayudarte con tu reclamo de tarjeta?"
+                    "y tu autenticación está completa. ¿Tienes algún problema con una transacción? "
+                    "Dime lo que recuerdes, como el comercio, el valor aproximado, la fecha "
+                    "o el lugar."
                 ),
                 "retry": (
                     "No encontré ese documento. Verifica los números, ingrésalos otra vez "
@@ -1009,6 +1171,27 @@ General behavior:
                 "language_changed": (
                     "Idioma cambiado. Podemos continuar tu reclamo en este idioma."
                 ),
+                "transaction_clarification": (
+                    "Necesito un dato más para encontrar la transacción. ¿Cuál era el "
+                    "comercio? Si no lo recuerdas, dime el valor aproximado."
+                ),
+                "transaction_no_match": (
+                    "No encontré una transacción con esos datos. ¿El comercio informado es "
+                    "correcto? También puedes corregir o agregar otro dato."
+                ),
+                "transaction_invalid": (
+                    "No pude usar esos datos en la búsqueda. Indica un comercio, valor "
+                    "aproximado, fecha o lugar."
+                ),
+                "transaction_confirmed": (
+                    "Gracias. Confirmé la transacción. La siguiente etapa del reclamo está "
+                    "fuera del alcance de esta demostración."
+                ),
+                "transaction_handoff": (
+                    "No pude identificar la transacción después de tres intentos. Normalmente "
+                    "te transferiría a un especialista, pero los agentes humanos no están "
+                    "disponibles y esa transferencia está fuera del alcance de esta demostración."
+                ),
             },
             "en": {
                 "opening": (
@@ -1023,7 +1206,9 @@ General behavior:
                 ),
                 "phone_success": (
                     "Hello, {name}. I found your profile using the phone number for this call, "
-                    "and you're authenticated. How can I help with your card dispute?"
+                    "and you're authenticated. Are you having a problem with a transaction? "
+                    "Tell me what you remember, such as the merchant, approximate amount, "
+                    "date, or location."
                 ),
                 "phone_fallback": (
                     "I couldn't authenticate you using the phone number for this call. "
@@ -1036,7 +1221,9 @@ General behavior:
                 ),
                 "document_success": (
                     "Hello, {name}. I found your profile using the document you entered, "
-                    "and you're authenticated. How can I help with your card dispute?"
+                    "and you're authenticated. Are you having a problem with a transaction? "
+                    "Tell me what you remember, such as the merchant, approximate amount, "
+                    "date, or location."
                 ),
                 "retry": (
                     "I couldn't find that document. Check the digits, enter it again, "
@@ -1058,8 +1245,35 @@ General behavior:
                 "language_changed": (
                     "Language changed. We can continue your card dispute in this language."
                 ),
+                "transaction_clarification": (
+                    "I need one more detail to find the transaction. What was the merchant? "
+                    "If you don't remember, tell me the approximate amount."
+                ),
+                "transaction_no_match": (
+                    "I couldn't find a transaction with those details. Is the merchant correct? "
+                    "You can also correct or add another detail."
+                ),
+                "transaction_invalid": (
+                    "I couldn't use those details in the search. Provide a merchant, approximate "
+                    "amount, date, or location."
+                ),
+                "transaction_confirmed": (
+                    "Thank you. I confirmed the transaction. The next dispute step is outside "
+                    "the scope of this demonstration."
+                ),
+                "transaction_handoff": (
+                    "I couldn't identify the transaction after three attempts. I would normally "
+                    "transfer you to a specialist, but human operators are unavailable and that "
+                    "handoff is outside this demonstration."
+                ),
             },
         }[language]
+
+        if (
+            state.stage is VoiceCallStage.HANDOFF
+            and state.handoff_reason == "transaction_search_exhausted"
+        ):
+            return messages["transaction_handoff"]
 
         if state.stage is VoiceCallStage.HANDOFF:
             return messages["handoff"]
@@ -1072,6 +1286,18 @@ General behavior:
 
         if reason == "language_changed":
             return messages["language_changed"]
+
+        if reason == "transaction_candidate":
+            return SipRealtimeGateway._transaction_candidate_message(state)
+
+        if reason in {
+            "transaction_clarification",
+            "transaction_no_match",
+            "transaction_invalid",
+            "transaction_confirmed",
+            "transaction_handoff",
+        }:
+            return messages[reason]
 
         if reason == "phone_auth_success":
             return messages["phone_success"].format(name=customer_name)
@@ -1114,7 +1340,76 @@ General behavior:
                 return messages["phone_success"].format(name=customer_name)
             return messages["document_success"].format(name=customer_name)
 
+        if state.stage is VoiceCallStage.NEEDS_TRANSACTION_DETAILS:
+            return messages["transaction_clarification"]
+
+        if state.stage is VoiceCallStage.CONFIRM_TRANSACTION:
+            return SipRealtimeGateway._transaction_candidate_message(state)
+
+        if state.stage is VoiceCallStage.TRANSACTION_SELECTED:
+            return messages["transaction_confirmed"]
+
         return messages["opening"]
+
+    @staticmethod
+    def _transaction_candidate_message(state: VoiceCallState) -> str:
+        transaction = state.current_transaction
+        if transaction is None:
+            return SipRealtimeGateway._message_for(state, "transaction_clarification")
+
+        merchant = transaction.merchant_name or "unknown merchant"
+        city = transaction.transaction_city or "unknown city"
+        country = transaction.transaction_country
+        amount = f"{transaction.amount:.2f}"
+        language = state.locale.language
+        if language in {"pt", "es"}:
+            amount = amount.replace(".", ",")
+            spoken_date = transaction.transaction_date.strftime("%d/%m/%Y")
+        else:
+            spoken_date = transaction.transaction_date.strftime("%B %d, %Y")
+
+        if language == "pt":
+            country = {
+                "Argentina": "Argentina",
+                "Brazil": "Brasil",
+                "Chile": "Chile",
+                "Colombia": "Colômbia",
+                "Costa Rica": "Costa Rica",
+                "Mexico": "México",
+                "Peru": "Peru",
+                "Portugal": "Portugal",
+                "Spain": "Espanha",
+                "United States": "Estados Unidos",
+            }.get(country, country)
+            city = {
+                "Lisbon": "Lisboa",
+                "Mexico City": "Cidade do México",
+            }.get(city, city)
+            return (
+                f"Encontrei uma possibilidade: uma compra de {amount} {transaction.currency} "
+                f"na {merchant}, em {spoken_date}, em {city}, "
+                f"{country}. É essa transação?"
+            )
+        if language == "es":
+            country = {
+                "Brazil": "Brasil",
+                "United States": "Estados Unidos",
+                "Spain": "España",
+            }.get(country, country)
+            city = {
+                "Lisbon": "Lisboa",
+                "Mexico City": "Ciudad de México",
+            }.get(city, city)
+            return (
+                f"Encontré una posibilidad: una compra de {amount} {transaction.currency} "
+                f"en {merchant}, el {spoken_date}, en {city}, "
+                f"{country}. ¿Es esa transacción?"
+            )
+        return (
+            f"I found one possibility: a {amount} {transaction.currency} purchase at "
+            f"{merchant} on {spoken_date} in {city}, {country}. "
+            "Is that the transaction?"
+        )
 
 
 class WebhookDeduplicator:

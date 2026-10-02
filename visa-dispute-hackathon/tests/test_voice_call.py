@@ -1,7 +1,12 @@
 import unittest
 from pathlib import Path
 
+from dispute_agent.transaction_search import (
+    SQLiteTransactionSearchRepository,
+    TransactionSearchCriteria,
+)
 from dispute_agent.voice_call import (
+    TransactionSelectionOutcome,
     VoiceAuthenticationMethod,
     VoiceCallService,
     VoiceCallStage,
@@ -12,7 +17,25 @@ FIXTURE = Path(__file__).parent / "fixtures" / "customers.csv"
 
 class VoiceCallServiceTests(unittest.TestCase):
     def setUp(self):
-        self.calls = VoiceCallService(FIXTURE)
+        self.transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        self.calls = VoiceCallService(
+            FIXTURE,
+            transaction_repository=self.transactions,
+        )
+
+    def tearDown(self):
+        self.transactions.close()
+
+    def authenticate_known_phone(self, call_id: str):
+        state = self.calls.start(
+            "+55 11 99999-0001",
+            call_id=call_id,
+        )
+        state = self.calls.confirm_language(state.call_id)
+        return self.calls.choose_authentication_method(
+            state.call_id,
+            method="phone",
+        )
 
     def test_known_phone_starts_with_language_confirmation_not_authentication(self):
         state = self.calls.start(
@@ -306,6 +329,124 @@ class VoiceCallServiceTests(unittest.TestCase):
                 state.call_id,
                 method="phone",
             )
+
+    def test_transaction_search_requires_authenticated_caller(self):
+        state = self.calls.start(
+            "+55 11 99999-0001",
+            call_id="call_unauthenticated_search",
+        )
+
+        with self.assertRaises(ValueError):
+            self.calls.search_transactions(
+                state.call_id,
+                TransactionSearchCriteria(merchant_query="lemon"),
+            )
+
+    def test_transaction_is_selected_only_after_explicit_confirmation(self):
+        state = self.authenticate_known_phone("call_transaction_confirmation")
+
+        selection = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(approximate_amount=13.0),
+        )
+
+        self.assertEqual(selection.outcome, TransactionSelectionOutcome.CANDIDATE)
+        self.assertEqual(selection.state.stage, VoiceCallStage.CONFIRM_TRANSACTION)
+        self.assertEqual(
+            selection.state.current_transaction.merchant_name,
+            "Lemon Drop Market",
+        )
+        self.assertIsNone(selection.state.confirmed_transaction)
+
+        confirmed = self.calls.resolve_transaction_candidate(
+            state.call_id,
+            confirmed=True,
+        )
+
+        self.assertEqual(confirmed.outcome, TransactionSelectionOutcome.CONFIRMED)
+        self.assertEqual(confirmed.state.stage, VoiceCallStage.TRANSACTION_SELECTED)
+        self.assertEqual(
+            confirmed.state.confirmed_transaction.transaction_id,
+            selection.state.current_transaction.transaction_id,
+        )
+
+    def test_missing_details_request_clarification_and_preserve_context(self):
+        state = self.authenticate_known_phone("call_transaction_clarification")
+
+        unclear = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(currency="USD"),
+        )
+
+        self.assertEqual(
+            unclear.outcome,
+            TransactionSelectionOutcome.NEEDS_CLARIFICATION,
+        )
+        self.assertEqual(unclear.state.stage, VoiceCallStage.NEEDS_TRANSACTION_DETAILS)
+        self.assertEqual(unclear.state.transaction_criteria.currency, "USD")
+
+        refined = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(merchant_query="mango"),
+        )
+
+        self.assertEqual(refined.outcome, TransactionSelectionOutcome.CANDIDATE)
+        self.assertEqual(refined.state.transaction_criteria.currency, "USD")
+        self.assertEqual(refined.state.current_transaction.merchant_name, "Mango Gold Store")
+
+    def test_no_match_can_be_corrected_without_losing_the_call(self):
+        state = self.authenticate_known_phone("call_transaction_correction")
+
+        missing = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(merchant_query="dragonfruit"),
+        )
+        corrected = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(merchant_query="papaya"),
+        )
+
+        self.assertEqual(missing.outcome, TransactionSelectionOutcome.NO_MATCH)
+        self.assertEqual(corrected.outcome, TransactionSelectionOutcome.CANDIDATE)
+        self.assertEqual(corrected.state.current_transaction.merchant_name, "Papaya Sunrise Market")
+
+    def test_explicit_correction_can_replace_wrong_prior_details(self):
+        state = self.authenticate_known_phone("call_transaction_replace_correction")
+        missing = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(merchant_query="dragonfruit"),
+        )
+
+        corrected = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(approximate_amount=13),
+            replace_existing=True,
+        )
+
+        self.assertEqual(missing.outcome, TransactionSelectionOutcome.NO_MATCH)
+        self.assertIsNone(corrected.state.transaction_criteria.merchant_query)
+        self.assertEqual(corrected.outcome, TransactionSelectionOutcome.CANDIDATE)
+        self.assertEqual(corrected.state.current_transaction.merchant_name, "Lemon Drop Market")
+
+    def test_three_denied_candidates_end_with_unavailable_human_handoff(self):
+        state = self.authenticate_known_phone("call_transaction_exhaustion")
+        selection = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(merchant_query="fruit"),
+        )
+
+        proposed_ids = []
+        for _ in range(3):
+            proposed_ids.append(selection.state.current_transaction.transaction_id)
+            selection = self.calls.resolve_transaction_candidate(
+                state.call_id,
+                confirmed=False,
+            )
+
+        self.assertEqual(len(set(proposed_ids)), 3)
+        self.assertEqual(selection.outcome, TransactionSelectionOutcome.EXHAUSTED)
+        self.assertEqual(selection.state.stage, VoiceCallStage.HANDOFF)
+        self.assertEqual(selection.state.handoff_reason, "transaction_search_exhausted")
 
 
 if __name__ == "__main__":

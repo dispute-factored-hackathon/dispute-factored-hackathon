@@ -10,6 +10,10 @@ from dispute_agent.sip_realtime import (
     create_sip_app,
     extract_caller_phone,
 )
+from dispute_agent.transaction_search import (
+    SQLiteTransactionSearchRepository,
+    TransactionSearchCriteria,
+)
 
 FIXTURE = Path(__file__).parent / "fixtures" / "customers.csv"
 
@@ -244,7 +248,7 @@ class FakeAcceptCalls:
 
 class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
     @staticmethod
-    def _gateway(events):
+    def _gateway(events, *, transaction_repository=None):
         websocket = FakeWebsocket(events)
         calls = FakeAcceptCalls()
         client = SimpleNamespace(realtime=SimpleNamespace(calls=calls))
@@ -253,6 +257,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             api_key="sk-test",
             openai_client=client,
             websocket_connect=FakeConnector(websocket),
+            transaction_repository=transaction_repository,
         )
         return gateway, websocket, calls
 
@@ -618,6 +623,120 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             "123456789",
             outbound,
         )
+
+    async def test_authenticated_caller_searches_and_confirms_transaction(self):
+        events = [
+            session_updated_event(),
+            tool_call_event("confirm_language", "tool_language", {}),
+            tool_call_event(
+                "set_authentication_method",
+                "tool_auth",
+                {"method": "phone"},
+            ),
+            tool_call_event(
+                "search_transactions",
+                "tool_search",
+                {"approximate_amount": 13, "currency": "USD"},
+            ),
+            tool_call_event(
+                "confirm_transaction",
+                "tool_confirm_transaction",
+                {"confirmed": True},
+            ),
+        ]
+        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        self.addCleanup(transactions.close)
+        gateway, websocket, calls = self._gateway(
+            events,
+            transaction_repository=transactions,
+        )
+
+        await gateway.accept_and_control(
+            "call_transaction_search",
+            "+5511999990001",
+        )
+
+        state = gateway.calls.get("call_transaction_search")
+        self.assertEqual(state.stage, "transaction_selected")
+        self.assertEqual(state.confirmed_transaction.merchant_name, "Lemon Drop Market")
+
+        configured_tools = {tool["name"] for tool in calls.accepted[0][1]["tools"]}
+        self.assertIn("search_transactions", configured_tools)
+        self.assertIn("confirm_transaction", configured_tools)
+
+        outbound = json.dumps(websocket.sent, ensure_ascii=False)
+        self.assertIn("Lemon Drop Market", outbound)
+        self.assertIn("12,49", outbound)
+        self.assertIn("Confirmei a transação", outbound)
+        self.assertNotIn("SELECT", outbound)
+        self.assertNotIn(state.confirmed_transaction.transaction_id, outbound)
+
+    def test_candidate_summaries_are_voice_friendly_in_supported_languages(self):
+        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        self.addCleanup(transactions.close)
+        gateway, _, _ = self._gateway([], transaction_repository=transactions)
+        scenarios = {
+            "pt": ("brazilian", "Encontrei uma possibilidade", "É essa transação?"),
+            "es": ("colombian", "Encontré una posibilidad", "¿Es esa transacción?"),
+            "en": ("american", "I found one possibility", "Is that the transaction?"),
+        }
+
+        for index, (language, (accent, opening, question)) in enumerate(
+            scenarios.items(),
+            start=1,
+        ):
+            with self.subTest(language=language):
+                call_id = f"call_summary_{index}"
+                state = gateway.calls.start("+5511999990001", call_id=call_id)
+                state = gateway.calls.confirm_language(state.call_id)
+                state = gateway.calls.choose_authentication_method(
+                    state.call_id,
+                    method="phone",
+                )
+                state = gateway.calls.choose_language(
+                    state.call_id,
+                    language=language,
+                    accent=accent,
+                )
+                selection = gateway.calls.search_transactions(
+                    state.call_id,
+                    TransactionSearchCriteria(merchant_query="lemon"),
+                )
+
+                message = gateway._message_for(
+                    selection.state,
+                    "transaction_candidate",
+                )
+
+                self.assertIn(opening, message)
+                self.assertIn(question, message)
+                self.assertIn("Lemon Drop Market", message)
+                self.assertNotIn("transaction_id", message)
+
+    def test_three_denials_explain_that_human_handoff_is_unavailable(self):
+        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        self.addCleanup(transactions.close)
+        gateway, _, _ = self._gateway([], transaction_repository=transactions)
+        state = gateway.calls.start(
+            "+5511999990001",
+            call_id="call_handoff_message",
+        )
+        state = gateway.calls.confirm_language(state.call_id)
+        state = gateway.calls.choose_authentication_method(state.call_id, method="phone")
+        selection = gateway.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(merchant_query="fruit"),
+        )
+
+        for _ in range(3):
+            selection = gateway.calls.resolve_transaction_candidate(
+                state.call_id,
+                confirmed=False,
+            )
+
+        message = gateway._message_for(selection.state, "transaction_handoff")
+        self.assertIn("atendentes humanos não estão disponíveis", message)
+        self.assertIn("fora do escopo desta demonstração", message)
 
 
 if __name__ == "__main__":
