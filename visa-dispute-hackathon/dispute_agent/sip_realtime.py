@@ -819,6 +819,16 @@ class SipRealtimeGateway:
 
     @staticmethod
     def _system_instructions(state: VoiceCallState) -> str:
+        language_name = {
+            "pt": "Portuguese",
+            "es": "Spanish",
+            "en": "English",
+        }[state.locale.language]
+        switch_options = {
+            "pt": "English or Spanish",
+            "es": "English or Portuguese",
+            "en": "Portuguese or Spanish",
+        }[state.locale.language]
         profile_context = "The caller has not been authenticated."
         if state.identity is not None:
             profile_context = f"""Authenticated synthetic customer profile:
@@ -843,7 +853,9 @@ The server-owned authentication stage is {state.stage.value}.
 
 Language workflow:
 - At needs_language_confirmation, the server has inferred a language from the caller's telephone country code.
-- Ask whether the caller wants to keep speaking in that language or switch to Portuguese, English, or Spanish.
+- The current inferred language is {language_name}.
+- Ask whether the caller wants to continue in the current language or switch to {switch_options}.
+- Do not present {language_name} as a switch option because the conversation is already using it.
 - If the caller clearly wants to keep the proposed language, call confirm_language.
 - If the caller explicitly chooses Portuguese, English, or Spanish, call set_language.
 - Do not claim that the caller's physical location or nationality is known. The language is only inferred from the telephone calling code.
@@ -883,7 +895,7 @@ General behavior:
                     "Olá! Eu sou Izzy, assistente virtual do Factored Bank. "
                     "Posso ajudar você com contestações de cartão. "
                     "Pelo código telefônico desta ligação, selecionei português. "
-                    "Deseja continuar em português ou prefere inglês ou espanhol?"
+                    "Deseja continuar neste idioma ou prefere mudar para inglês ou espanhol?"
                 ),
                 "auth_method": (
                     "Perfeito. Para continuar, você prefere se autenticar usando "
@@ -918,7 +930,7 @@ General behavior:
                     "Vou encaminhar para o atendimento humano simulado."
                 ),
                 "invalid_language": (
-                    "Você pode continuar em português ou escolher inglês ou espanhol."
+                    "Você pode continuar neste idioma ou mudar para inglês ou espanhol."
                 ),
                 "invalid_auth_method": (
                     "Para continuar, escolha autenticação pelo número de telefone "
@@ -938,7 +950,7 @@ General behavior:
                     "¡Hola! Soy Izzy, el asistente virtual de Factored Bank. "
                     "Puedo ayudarte con reclamos o disputas de tarjeta. "
                     "Por el código telefónico de esta llamada, seleccioné español. "
-                    "¿Quieres continuar en español o prefieres inglés o portugués?"
+                    "¿Quieres continuar en este idioma o cambiar a inglés o portugués?"
                 ),
                 "auth_method": (
                     "Perfecto. Para continuar, ¿prefieres autenticarte usando el número "
@@ -972,7 +984,9 @@ General behavior:
                     "No pude autenticarte después de tres intentos. "
                     "Te transferiré a la atención humana simulada."
                 ),
-                "invalid_language": ("Puedes continuar en español o elegir inglés o portugués."),
+                "invalid_language": (
+                    "Puedes continuar en este idioma o cambiar a inglés o portugués."
+                ),
                 "invalid_auth_method": (
                     "Para continuar, elige autenticación con el número de teléfono "
                     "de esta llamada o con tu documento."
@@ -989,7 +1003,7 @@ General behavior:
                     "Hello! I'm Izzy, Factored Bank's virtual assistant. "
                     "I can help you with card disputes. "
                     "Based on this call's telephone country code, I selected English. "
-                    "Would you like to continue in English, or would you prefer Portuguese or Spanish?"
+                    "Would you like to continue in this language, or switch to Portuguese or Spanish?"
                 ),
                 "auth_method": (
                     "Great. To continue, would you prefer to authenticate using the phone "
@@ -1021,7 +1035,7 @@ General behavior:
                     "I'll transfer you to simulated human support."
                 ),
                 "invalid_language": (
-                    "You can continue in English or choose Portuguese or Spanish."
+                    "You can continue in this language or switch to Portuguese or Spanish."
                 ),
                 "invalid_auth_method": (
                     "To continue, choose authentication using the phone number for this call "
