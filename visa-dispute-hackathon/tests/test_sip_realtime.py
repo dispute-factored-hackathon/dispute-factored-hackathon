@@ -288,6 +288,18 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             "needs_language_confirmation",
         )
 
+    async def test_uses_cedar_as_default_voice(self):
+        gateway, _, calls = self._gateway([])
+
+        await gateway.accept_call(
+            "call_voice",
+            "+5511999990001",
+        )
+
+        _, configuration = calls.accepted[0]
+        self.assertEqual(gateway.voice, "cedar")
+        self.assertEqual(configuration["audio"]["output"]["voice"], "cedar")
+
     async def test_opening_waits_for_session_updated(self):
         events = [
             json.dumps(

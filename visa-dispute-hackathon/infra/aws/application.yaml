@@ -91,7 +91,7 @@ Resources:
 
 
           OPENAI_REALTIME_MODEL: gpt-realtime-2.1
-          OPENAI_REALTIME_VOICE: marin
+          OPENAI_REALTIME_VOICE: cedar
 
           LANGSMITH_TRACING: "true"
           LANGSMITH_PROJECT: !Ref LangSmithProject

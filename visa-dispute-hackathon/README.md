@@ -39,7 +39,7 @@ Copy `.env.example` to `.env`, then set `OPENAI_API_KEY`, `OPENAI_WEBHOOK_SECRET
 ```dotenv
 CUSTOMERS_CSV=tests/fixtures/customers.csv
 OPENAI_REALTIME_MODEL=gpt-realtime-2.1
-OPENAI_REALTIME_VOICE=marin
+OPENAI_REALTIME_VOICE=cedar
 PORT=8001
 ```
 

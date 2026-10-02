@@ -89,7 +89,7 @@ class SipRealtimeGateway:
 
         self.model = model or os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1")
 
-        self.voice = voice or os.getenv("OPENAI_REALTIME_VOICE", "marin")
+        self.voice = voice or os.getenv("OPENAI_REALTIME_VOICE", "cedar")
 
         self.client = openai_client or OpenAI(
             api_key=self.api_key,
