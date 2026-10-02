@@ -7,7 +7,6 @@ from fastapi.testclient import TestClient
 
 from dispute_agent.sip_realtime import (
     SipRealtimeGateway,
-    _explicit_confirmation_from_transcript,
     create_sip_app,
     extract_caller_phone,
 )
@@ -462,6 +461,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("Izzy", instructions)
         self.assertIn("Factored Bank", instructions)
+        self.assertEqual(opening["response"]["tool_choice"], "none")
 
     async def test_confirm_language_then_phone_authentication_succeeds(self):
         events = [
@@ -542,6 +542,51 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("Izzy", outbound)
         self.assertIn("Factored Bank", outbound)
+
+    async def test_unclear_language_does_not_change_language_or_advance(self):
+        events = [
+            session_updated_event(),
+            tool_call_event(
+                "set_language",
+                "tool_language_unclear",
+                {"language": "unclear"},
+            ),
+        ]
+        gateway, websocket, _ = self._gateway(events)
+
+        await gateway.accept_and_control("call_unclear_language", "+5511999990001")
+
+        state = gateway.calls.get("call_unclear_language")
+        self.assertEqual(state.stage, "needs_language_confirmation")
+        self.assertEqual(state.locale.language, "pt")
+        outbound = json.dumps(websocket.sent, ensure_ascii=False)
+        self.assertIn(
+            "Você pode continuar neste idioma ou mudar para inglês ou espanhol.",
+            outbound,
+        )
+
+    async def test_unclear_authentication_method_does_not_authenticate(self):
+        events = [
+            session_updated_event(),
+            tool_call_event("confirm_language", "tool_language", {}),
+            tool_call_event(
+                "set_authentication_method",
+                "tool_auth_unclear",
+                {"method": "unclear"},
+            ),
+        ]
+        gateway, websocket, _ = self._gateway(events)
+
+        await gateway.accept_and_control("call_unclear_auth", "+5511999990001")
+
+        state = gateway.calls.get("call_unclear_auth")
+        self.assertEqual(state.stage, "needs_auth_method")
+        self.assertIsNone(state.identity)
+        outbound = json.dumps(websocket.sent, ensure_ascii=False)
+        self.assertIn(
+            "escolha autenticação pelo número de telefone desta ligação ou pelo documento",
+            outbound,
+        )
 
     async def test_language_change_after_authentication_keeps_authenticated_session(self):
         events = [
@@ -749,7 +794,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             tool_call_event(
                 "confirm_transaction",
                 "tool_confirm_transaction",
-                {"confirmed": True},
+                {"confirmation_intent": "CONFIRM"},
             ),
             tool_call_event(
                 "classify_dispute",
@@ -760,6 +805,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                     "customer_reports_duplicate": False,
                 },
             ),
+            completed_transcript_event(speaker="customer", transcript=""),
         ]
         transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
         self.addCleanup(transactions.close)
@@ -788,8 +834,14 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("12,49", outbound)
         self.assertIn("não fez nem autorizou", outbound)
         self.assertIn("código Visa candidato é 10.4", outbound)
+        self.assertIn("cartão final 9999 foi bloqueado", outbound)
+        self.assertNotIn("9999999999999999", outbound)
         self.assertNotIn("SELECT", outbound)
         self.assertNotIn(state.confirmed_transaction.transaction_id, outbound)
+        response_creates = [
+            event for event in websocket.sent if event.get("type") == "response.create"
+        ]
+        self.assertTrue(all("instructions" in event["response"] for event in response_creates))
 
     async def test_duplicate_report_maps_to_visa_12_6_1(self):
         events = [
@@ -809,7 +861,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             tool_call_event(
                 "confirm_transaction",
                 "tool_confirm",
-                {"confirmed": True},
+                {"confirmation_intent": "CONFIRM"},
             ),
             tool_call_event(
                 "classify_dispute",
@@ -833,6 +885,8 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         outbound = json.dumps(websocket.sent, ensure_ascii=False)
         self.assertIn("processamento duplicado", outbound)
         self.assertIn("12.6.1", outbound)
+        self.assertNotIn("cartão final", outbound)
+        self.assertNotIn("foi bloqueado", outbound)
 
     async def test_ambiguous_problem_asks_for_clarification_without_code(self):
         events = [
@@ -849,7 +903,11 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                 {"merchant_query": "lemon"},
             ),
             completed_transcript_event(speaker="customer", transcript="Sim."),
-            tool_call_event("confirm_transaction", "tool_confirm", {"confirmed": True}),
+            tool_call_event(
+                "confirm_transaction",
+                "tool_confirm",
+                {"confirmation_intent": "CONFIRM"},
+            ),
             tool_call_event(
                 "classify_dispute",
                 "tool_classify",
@@ -872,42 +930,74 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         outbound = json.dumps(websocket.sent, ensure_ascii=False)
         self.assertIn("Não consegui distinguir", outbound)
 
-    def test_confirmation_guard_requires_unambiguous_speech(self):
-        self.assertIs(_explicit_confirmation_from_transcript("Sim."), True)
-        self.assertIs(_explicit_confirmation_from_transcript("Sí, es esa."), True)
-        self.assertIs(_explicit_confirmation_from_transcript("Não, foi em Lima."), False)
-        self.assertIs(_explicit_confirmation_from_transcript("No, that is wrong."), False)
-        self.assertIsNone(_explicit_confirmation_from_transcript("جتين"))
-        self.assertIsNone(_explicit_confirmation_from_transcript("talvez"))
-        self.assertIs(
-            _explicit_confirmation_from_transcript(
-                "S\u0131n.",
-                model_confirmation=True,
-                language="pt",
-            ),
-            True,
+    def test_confirmation_tool_uses_language_agnostic_intent_classes(self):
+        tool = SipRealtimeGateway._transaction_confirmation_tool()
+        properties = tool["parameters"]["properties"]
+        intent = properties["confirmation_intent"]
+
+        self.assertEqual(intent["enum"], ["CONFIRM", "DENY", "UNCLEAR"])
+        self.assertIn("complete response", intent["description"])
+        self.assertNotIn("confirmed", properties)
+
+    def test_language_and_authentication_tools_support_unclear_intent(self):
+        language = SipRealtimeGateway._language_tool()["parameters"]["properties"]
+        authentication = SipRealtimeGateway._authentication_method_tool()["parameters"][
+            "properties"
+        ]
+
+        self.assertIn("unclear", language["language"]["enum"])
+        self.assertIn("unclear", authentication["method"]["enum"])
+
+    def test_terminal_audio_configuration_disables_automatic_vad_responses(self):
+        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        self.addCleanup(transactions.close)
+        gateway, _, _ = self._gateway([], transaction_repository=transactions)
+        state = gateway.calls.start("+5511999990001", call_id="call_terminal_vad")
+        state = gateway.calls.confirm_language(state.call_id)
+        state = gateway.calls.choose_authentication_method(state.call_id, method="phone")
+        gateway.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(merchant_query="lemon"),
         )
-        self.assertIs(
-            _explicit_confirmation_from_transcript(
-                "Sihir.",
-                model_confirmation=True,
-                language="pt",
-            ),
-            True,
+        gateway.calls.resolve_transaction_candidate(state.call_id, confirmed=True)
+        classified = gateway.calls.classify_dispute(
+            state.call_id,
+            allegation="DUPLICATE_PROCESSING",
+            customer_reports_duplicate=True,
         )
-        self.assertIsNone(
-            _explicit_confirmation_from_transcript(
-                "Sihir.",
-                model_confirmation=False,
-                language="pt",
-            )
+
+        turn_detection = gateway._input_audio_configuration(classified.state)["input"][
+            "turn_detection"
+        ]
+        self.assertEqual(turn_detection["type"], "server_vad")
+        self.assertFalse(turn_detection["create_response"])
+        self.assertTrue(turn_detection["interrupt_response"])
+
+    def test_server_requires_tool_only_turns_for_confirmation_and_classification(self):
+        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        self.addCleanup(transactions.close)
+        gateway, _, _ = self._gateway([], transaction_repository=transactions)
+        state = gateway.calls.start("+5511999990001", call_id="call_tool_choice")
+        self.assertEqual(gateway._tool_choice_for(state), "auto")
+
+        state = gateway.calls.confirm_language(state.call_id)
+        state = gateway.calls.choose_authentication_method(state.call_id, method="phone")
+        selection = gateway.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(merchant_query="lemon"),
         )
-        self.assertIsNone(
-            _explicit_confirmation_from_transcript(
-                "Silva.",
-                model_confirmation=True,
-                language="pt",
-            )
+        self.assertEqual(
+            gateway._tool_choice_for(selection.state),
+            {"type": "function", "name": "confirm_transaction"},
+        )
+
+        confirmed = gateway.calls.resolve_transaction_candidate(
+            state.call_id,
+            confirmed=True,
+        )
+        self.assertEqual(
+            gateway._tool_choice_for(confirmed.state),
+            {"type": "function", "name": "classify_dispute"},
         )
 
     async def test_asr_distorted_sim_reaches_problem_classification_question(self):
@@ -928,7 +1018,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             tool_call_event(
                 "confirm_transaction",
                 "tool_confirm_transaction",
-                {"confirmed": True},
+                {"confirmation_intent": "CONFIRM"},
             ),
         ]
         transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
@@ -964,7 +1054,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             tool_call_event(
                 "confirm_transaction",
                 "tool_false_positive",
-                {"confirmed": True},
+                {"confirmation_intent": "UNCLEAR"},
             ),
         ]
         transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
@@ -985,7 +1075,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         outbound = json.dumps(websocket.sent, ensure_ascii=False)
         self.assertIn("transação ainda não foi confirmada", outbound)
 
-    async def test_denial_overrides_model_and_keeps_new_detail_for_reranking(self):
+    async def test_denial_intent_keeps_new_detail_for_reranking(self):
         events = [
             session_updated_event(),
             tool_call_event("confirm_language", "tool_language", {}),
@@ -1006,7 +1096,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             tool_call_event(
                 "confirm_transaction",
                 "tool_denial_with_city",
-                {"confirmed": True, "city": "Lima"},
+                {"confirmation_intent": "DENY", "city": "Lima"},
             ),
         ]
         transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")

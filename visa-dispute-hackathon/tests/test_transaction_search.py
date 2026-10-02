@@ -8,6 +8,7 @@ from dispute_agent.transaction_search import (
     SQLiteTransactionSearchRepository,
     TransactionSearchCriteria,
 )
+from webapp.backend.demo_card import demo_card_product_id
 
 CUSTOMER_ID = "SYNTHETIC-CUSTOMER-19"
 
@@ -40,6 +41,10 @@ class SQLiteTransactionSearchTests(unittest.TestCase):
         self.assertEqual(
             len({transaction.transaction_city for transaction in result.transactions}),
             10,
+        )
+        self.assertEqual(
+            {transaction.product_id for transaction in result.transactions},
+            {demo_card_product_id(CUSTOMER_ID)},
         )
 
         searchable_text = " ".join(

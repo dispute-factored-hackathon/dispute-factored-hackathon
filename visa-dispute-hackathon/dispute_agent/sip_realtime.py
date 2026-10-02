@@ -11,6 +11,7 @@ import time
 import unicodedata
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import date
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -18,12 +19,13 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from openai import OpenAI
 
 from webapp.backend.demo_seed import seed_demo_customers
-from webapp.backend.repositories.interfaces import CustomerRepository
-from webapp.backend.repositories.mock import customer_repository
+from webapp.backend.repositories.interfaces import CustomerRepository, ProductRepository
+from webapp.backend.repositories.mock import customer_repository, product_repository
 
 from .dispute_classification import DisputeAllegation
 from .transaction_search import TransactionSearchCriteria, TransactionSearchRepository
 from .voice_call import (
+    CardSecurityActionStatus,
     DisputeClassificationOutcome,
     TransactionSelectionOutcome,
     VoiceAuthenticationMethod,
@@ -52,42 +54,23 @@ def _normalized_words(text: str) -> tuple[str, set[str]]:
     return normalized, set(normalized.split())
 
 
-def _explicit_confirmation_from_transcript(
-    transcript: str,
-    *,
-    model_confirmation: bool | None = None,
-    language: str | None = None,
-) -> bool | None:
-    """Accept only an unambiguous spoken yes or no from the ASR transcript."""
-    normalized, tokens = _normalized_words(transcript)
-    denied = bool(tokens.intersection({"nao", "no", "nope"})) or any(
-        phrase in normalized
-        for phrase in (
-            "not that",
-            "wrong transaction",
-            "transacao errada",
-            "transaccion incorrecta",
-        )
-    )
-    confirmed = bool(tokens.intersection({"sim", "si", "yes", "yeah", "yep"})) or any(
-        phrase in normalized for phrase in ("e essa", "es esa", "that is it", "thats it")
-    )
-    if confirmed == denied:
-        # Portuguese/Spanish phone ASR can render a short spoken "sim/sí" as
-        # Turkish-looking tokens containing a dotless-i or extra syllable.
-        # Accept this narrow
-        # phonetic family only when the Realtime model independently called the
-        # confirmation tool with true. Arbitrary short speech still cannot
-        # confirm a financial transaction.
-        if (
-            model_confirmation is True
-            and language in {"pt", "es"}
-            and len(tokens) == 1
-            and re.fullmatch(r"si[mnhir]*", next(iter(tokens), ""))
-        ):
-            return True
-        return None
-    return confirmed
+class TransactionConfirmationIntent(StrEnum):
+    CONFIRM = "CONFIRM"
+    DENY = "DENY"
+    UNCLEAR = "UNCLEAR"
+
+
+class LanguageSelectionIntent(StrEnum):
+    ENGLISH = "en"
+    PORTUGUESE = "pt"
+    SPANISH = "es"
+    UNCLEAR = "unclear"
+
+
+class AuthenticationMethodIntent(StrEnum):
+    PHONE = "phone"
+    DOCUMENT = "document"
+    UNCLEAR = "unclear"
 
 
 def _guard_extracted_numeric_filters(
@@ -329,6 +312,7 @@ class SipRealtimeGateway:
         openai_client: Any | None = None,
         websocket_connect: Callable[..., Any] | None = None,
         transaction_repository: TransactionSearchRepository | None = None,
+        product_repository: ProductRepository | None = None,
         log_full_transcripts: bool | None = None,
     ) -> None:
 
@@ -355,6 +339,7 @@ class SipRealtimeGateway:
 
         self._customer_source = customer_source
         self._transaction_repository = transaction_repository
+        self._product_repository = product_repository
 
         self._calls: VoiceCallService | None = None
 
@@ -368,6 +353,7 @@ class SipRealtimeGateway:
             self._calls = VoiceCallService(
                 self._customer_source,
                 transaction_repository=self._transaction_repository,
+                product_repository=self._product_repository,
             )
 
         return self._calls
@@ -582,7 +568,8 @@ class SipRealtimeGateway:
                                 "session": {
                                     "type": "realtime",
                                     "instructions": self._system_instructions(state),
-                                    "audio": self._input_audio_configuration(),
+                                    "audio": self._input_audio_configuration(state),
+                                    "tool_choice": self._tool_choice_for(state),
                                 },
                             }
                         )
@@ -602,6 +589,7 @@ class SipRealtimeGateway:
                     active_response = False
                     opening_sent = False
                     last_customer_transcript = ""
+                    terminal_followup_pending = False
 
                     async for raw_event in websocket:
                         try:
@@ -636,6 +624,18 @@ class SipRealtimeGateway:
                                 transcript=last_customer_transcript,
                                 item_id=str(event.get("item_id", "")),
                             )
+                            current_state = self.calls.get(call_id)
+                            if current_state.stage is VoiceCallStage.DISPUTE_CLASSIFIED:
+                                if last_customer_transcript.strip():
+                                    terminal_followup_pending = True
+                                    if not active_response:
+                                        await self._create_terminal_followup(websocket)
+                                        terminal_followup_pending = False
+                                else:
+                                    _telemetry(
+                                        "voice.empty_terminal_transcript.ignored",
+                                        call_id=call_id,
+                                    )
 
                         elif event_type in {
                             "response.output_audio_transcript.done",
@@ -690,6 +690,11 @@ class SipRealtimeGateway:
                                 last_customer_transcript=last_customer_transcript,
                             )
                             last_customer_transcript = ""
+                            if terminal_followup_pending:
+                                current_state = self.calls.get(call_id)
+                                if current_state.stage is VoiceCallStage.DISPUTE_CLASSIFIED:
+                                    await self._create_terminal_followup(websocket)
+                                terminal_followup_pending = False
 
                         elif event_type in {
                             "input_audio_buffer.dtmf_event_received",
@@ -890,32 +895,39 @@ class SipRealtimeGateway:
 
                 if tool_name == "set_language":
                     before = self.calls.get(call_id)
-                    state = self.calls.choose_language(
-                        call_id,
-                        language=arguments.get("language", ""),
-                        accent=arguments.get("accent"),
-                    )
-                    if before.stage is VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION:
-                        result = self._message_for(state, "auth_method_prompt")
-                    elif state.stage is VoiceCallStage.NEEDS_DOCUMENT:
-                        result = self._message_for(state, "document_prompt")
-                    elif state.stage is VoiceCallStage.CONFIRM_TRANSACTION:
-                        result = self._message_for(state, "transaction_candidate")
-                    elif state.stage is VoiceCallStage.NEEDS_TRANSACTION_DETAILS:
-                        result = self._message_for(state, "transaction_clarification")
-                    elif state.stage is VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION:
-                        result = self._message_for(state, "classification_question")
-                    elif state.stage is VoiceCallStage.DISPUTE_CLASSIFIED:
-                        result = self._message_for(state, "classification_complete")
+                    language_intent = LanguageSelectionIntent(arguments.get("language", ""))
+                    if language_intent is LanguageSelectionIntent.UNCLEAR:
+                        state = before
+                        result = self._message_for(state, "invalid_language")
+                        tool_metadata = {"outcome": "unclear"}
                     else:
-                        result = self._message_for(state, "language_changed")
+                        state = self.calls.choose_language(
+                            call_id,
+                            language=language_intent.value,
+                            accent=arguments.get("accent"),
+                        )
+                        if before.stage is VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION:
+                            result = self._message_for(state, "auth_method_prompt")
+                        elif state.stage is VoiceCallStage.NEEDS_DOCUMENT:
+                            result = self._message_for(state, "document_prompt")
+                        elif state.stage is VoiceCallStage.CONFIRM_TRANSACTION:
+                            result = self._message_for(state, "transaction_candidate")
+                        elif state.stage is VoiceCallStage.NEEDS_TRANSACTION_DETAILS:
+                            result = self._message_for(state, "transaction_clarification")
+                        elif state.stage is VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION:
+                            result = self._message_for(state, "classification_question")
+                        elif state.stage is VoiceCallStage.DISPUTE_CLASSIFIED:
+                            result = self._message_for(state, "classification_complete")
+                        else:
+                            result = self._message_for(state, "language_changed")
 
                     _telemetry(
-                        "voice.language.selected",
+                        "voice.language.selection_processed",
                         call_id=call_id,
                         language=state.locale.language,
                         locale=state.locale.locale,
                         accent=state.locale.accent,
+                        outcome=language_intent.value,
                     )
 
                 elif tool_name == "confirm_language":
@@ -930,35 +942,37 @@ class SipRealtimeGateway:
                     )
 
                 elif tool_name == "set_authentication_method":
-                    requested_method = str(arguments.get("method", ""))
+                    authentication_intent = AuthenticationMethodIntent(arguments.get("method", ""))
                     before = self.calls.get(call_id)
-
-                    state = self.calls.choose_authentication_method(
-                        call_id,
-                        method=requested_method,
-                    )
-
-                    if requested_method == VoiceAuthenticationMethod.PHONE.value:
-                        if state.stage is VoiceCallStage.AUTHENTICATED:
-                            result = self._message_for(
-                                state,
-                                "phone_auth_success",
-                            )
+                    if authentication_intent is AuthenticationMethodIntent.UNCLEAR:
+                        state = before
+                        result = self._message_for(state, "invalid_auth_method")
+                    else:
+                        state = self.calls.choose_authentication_method(
+                            call_id,
+                            method=authentication_intent.value,
+                        )
+                        if authentication_intent is AuthenticationMethodIntent.PHONE:
+                            if state.stage is VoiceCallStage.AUTHENTICATED:
+                                result = self._message_for(
+                                    state,
+                                    "phone_auth_success",
+                                )
+                            else:
+                                result = self._message_for(
+                                    state,
+                                    "phone_auth_fallback",
+                                )
                         else:
                             result = self._message_for(
                                 state,
-                                "phone_auth_fallback",
+                                "document_prompt",
                             )
-                    else:
-                        result = self._message_for(
-                            state,
-                            "document_prompt",
-                        )
 
                     _telemetry(
                         "voice.authentication.method_processed",
                         call_id=call_id,
-                        requested_method=requested_method,
+                        requested_method=authentication_intent.value,
                         from_stage=before.stage.value,
                         to_stage=state.stage.value,
                         authenticated=state.stage is VoiceCallStage.AUTHENTICATED,
@@ -1008,29 +1022,28 @@ class SipRealtimeGateway:
                     }
 
                 elif tool_name == "confirm_transaction":
-                    model_confirmation = arguments.get("confirmed")
-                    if not isinstance(model_confirmation, bool):
-                        raise ValueError("confirmed must be true or false")
-                    spoken_confirmation = _explicit_confirmation_from_transcript(
-                        last_customer_transcript,
-                        model_confirmation=model_confirmation,
-                        language=self.calls.get(call_id).locale.language,
-                    )
-                    if spoken_confirmation is None:
+                    try:
+                        confirmation_intent = TransactionConfirmationIntent(
+                            arguments.get("confirmation_intent", "")
+                        )
+                    except ValueError as error:
+                        raise ValueError("invalid confirmation intent") from error
+                    if confirmation_intent is TransactionConfirmationIntent.UNCLEAR:
                         state = self.calls.get(call_id)
                         result = self._message_for(state, "transaction_confirmation_unclear")
                         tool_metadata = {
                             "outcome": "confirmation_unclear",
                             "candidate_count": len(state.transaction_candidates),
                             "guess_number": state.transaction_guess_attempts,
-                            "model_confirmation": model_confirmation,
+                            "confirmation_intent": confirmation_intent.value,
                         }
                     else:
+                        confirmed = confirmation_intent is TransactionConfirmationIntent.CONFIRM
                         selection = self.calls.resolve_transaction_candidate(
                             call_id,
-                            confirmed=spoken_confirmation,
+                            confirmed=confirmed,
                         )
-                        if not spoken_confirmation:
+                        if not confirmed:
                             criteria, replace_existing, clear_filters, remove_filters = (
                                 self._transaction_search_arguments(arguments)
                             )
@@ -1075,11 +1088,7 @@ class SipRealtimeGateway:
                             "outcome": selection.outcome.value,
                             "candidate_count": selection.result_count,
                             "guess_number": state.transaction_guess_attempts,
-                            "model_confirmation": model_confirmation,
-                            "spoken_confirmation": spoken_confirmation,
-                            "confirmation_overridden": (
-                                spoken_confirmation is not model_confirmation
-                            ),
+                            "confirmation_intent": confirmation_intent.value,
                         }
 
                 elif tool_name == "classify_dispute":
@@ -1114,6 +1123,11 @@ class SipRealtimeGateway:
                         "allegation": classification.allegation.value,
                         "visa_condition_code": classification.visa_condition_code,
                         "clarification_key": classification.next_question_key,
+                        "card_security_action": (
+                            state.card_security_action.value
+                            if state.card_security_action is not None
+                            else None
+                        ),
                     }
 
                 else:
@@ -1170,7 +1184,8 @@ class SipRealtimeGateway:
                             "session": {
                                 "type": "realtime",
                                 "instructions": self._system_instructions(state),
-                                "audio": self._input_audio_configuration(),
+                                "audio": self._input_audio_configuration(state),
+                                "tool_choice": self._tool_choice_for(state),
                             },
                         }
                     )
@@ -1226,16 +1241,39 @@ class SipRealtimeGateway:
             raise ValueError("remove_filters must be a list of filter names")
         return criteria, replace_existing, clear_filters, tuple(remove_filters_value)
 
-    def _input_audio_configuration(self) -> dict[str, Any]:
-        """Keep the demo transcript setting consistent across session updates."""
+    def _input_audio_configuration(
+        self,
+        state: VoiceCallState | None = None,
+    ) -> dict[str, Any]:
+        """Configure transcription and suppress noise-driven terminal responses."""
         transcription = (
             {"model": self.input_transcription_model} if self.log_full_transcripts else None
         )
-        return {
-            "input": {
-                "transcription": transcription,
+        input_configuration: dict[str, Any] = {"transcription": transcription}
+        if state is not None and state.stage is VoiceCallStage.DISPUTE_CLASSIFIED:
+            input_configuration["turn_detection"] = {
+                "type": "server_vad",
+                "create_response": False,
+                "interrupt_response": True,
             }
+        return {
+            "input": input_configuration,
         }
+
+    @staticmethod
+    async def _create_terminal_followup(websocket: Any) -> None:
+        """Respond once to a real post-resolution utterance, never to empty VAD turns."""
+        await websocket.send(
+            json.dumps(
+                {
+                    "type": "response.create",
+                    "response": {
+                        "output_modalities": ["audio"],
+                        "tool_choice": "none",
+                    },
+                }
+            )
+        )
 
     def _log_full_transcript(
         self,
@@ -1269,6 +1307,7 @@ class SipRealtimeGateway:
                     "type": "response.create",
                     "response": {
                         "output_modalities": ["audio"],
+                        "tool_choice": "none",
                         "instructions": (
                             "Say exactly the following message. Do not add or omit information: "
                             f"{message}"
@@ -1284,11 +1323,17 @@ class SipRealtimeGateway:
         return {
             "type": "function",
             "name": "set_language",
-            "description": "Record an explicit request to use English, Portuguese, or Spanish.",
+            "description": (
+                "Classify the caller's explicit language choice. Use unclear for "
+                "unintelligible, ambiguous, unrelated, or low-confidence speech; never guess."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "language": {"type": "string", "enum": ["en", "pt", "es"]},
+                    "language": {
+                        "type": "string",
+                        "enum": ["en", "pt", "es", "unclear"],
+                    },
                     "accent": {
                         "type": "string",
                         "enum": [
@@ -1329,16 +1374,16 @@ class SipRealtimeGateway:
             "type": "function",
             "name": "set_authentication_method",
             "description": (
-                "Record whether the caller wants to authenticate using the "
-                "phone number used for this call or by entering a document "
-                "number on the telephone keypad."
+                "Classify whether the caller explicitly chose authentication using the "
+                "phone number or a document number. Use unclear for unintelligible, ambiguous, "
+                "unrelated, or low-confidence speech; never infer a choice."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "method": {
                         "type": "string",
-                        "enum": ["phone", "document"],
+                        "enum": ["phone", "document", "unclear"],
                     }
                 },
                 "required": ["method"],
@@ -1418,9 +1463,10 @@ class SipRealtimeGateway:
             "type": "function",
             "name": "confirm_transaction",
             "description": (
-                "Record the caller's explicit yes or no answer about the transaction "
-                "candidate Izzy just described. Never infer confirmation from unrelated or "
-                "unclear speech. When the caller says no and provides a correction or another "
+                "Classify the caller's semantic intent about the transaction candidate Izzy "
+                "just described, using the full response rather than matching specific words. "
+                "Never infer confirmation from unrelated or unclear speech. When the caller "
+                "denies the candidate and provides a correction or another "
                 "detail in the same utterance, include those filter fields in this call so the "
                 "backend can reject the candidate and rerun retrieval atomically. Call this "
                 "tool silently: do not say that confirmation was recorded or will be recorded. "
@@ -1429,10 +1475,19 @@ class SipRealtimeGateway:
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "confirmed": {"type": "boolean"},
+                    "confirmation_intent": {
+                        "type": "string",
+                        "enum": ["CONFIRM", "DENY", "UNCLEAR"],
+                        "description": (
+                            "Classify the meaning of the caller's complete response, independent "
+                            "of its exact wording or language. CONFIRM means they identify the "
+                            "presented transaction as the one they meant; DENY means it is not; "
+                            "UNCLEAR means neither intent is sufficiently clear."
+                        ),
+                    },
                     **refinement_properties,
                 },
-                "required": ["confirmed"],
+                "required": ["confirmation_intent"],
                 "additionalProperties": False,
             },
         }
@@ -1447,7 +1502,9 @@ class SipRealtimeGateway:
                 "UNAUTHORIZED_CARD only when the caller explicitly says they did not make or "
                 "authorize it. Use DUPLICATE_PROCESSING only when the caller recognizes the "
                 "purchase but says the same purchase was charged more than once. Otherwise use "
-                "INSUFFICIENT_INFO."
+                "INSUFFICIENT_INFO. Call this tool immediately and silently: do not acknowledge, "
+                "summarize, or promise to classify before the call. The server response is the "
+                "only message that should be spoken."
             ),
             "parameters": {
                 "type": "object",
@@ -1539,12 +1596,16 @@ Language workflow:
 - Do not present {language_name} as a switch option because the conversation is already using it.
 - If the caller clearly wants to keep the proposed language, call confirm_language.
 - If the caller explicitly chooses Portuguese, English, or Spanish, call set_language.
+- For unintelligible, ambiguous, unrelated, or low-confidence speech, call
+  set_language with language=unclear. Never guess a language.
 - Do not claim that the caller's physical location or nationality is known. The language is only inferred from the telephone calling code.
 
 Authentication workflow:
 - At needs_auth_method, ask whether the caller prefers authentication using the phone number used for this call or a document number.
 - If the caller chooses the phone number, call set_authentication_method with method=phone.
 - If the caller chooses document authentication, call set_authentication_method with method=document.
+- For unintelligible, ambiguous, unrelated, or low-confidence speech, call
+  set_authentication_method with method=unclear. Never guess an authentication method.
 - Authentication decisions are server-owned. Never claim authentication succeeded unless a tool result says it did.
 - If phone authentication fails, explain that document authentication will be used instead.
 
@@ -1567,10 +1628,11 @@ Transaction-search workflow:
 - On every search turn, the backend retrieves up to ten customer-scoped candidates, reranks them against all collected details, and returns only the Top-1 candidate for presentation.
 - When the caller adds or corrects any transaction detail, call search_transactions again so retrieval and reranking run again. Do not keep presenting a stale candidate.
 - If the tool asks for clarification, ask exactly one focused question and preserve details already collected.
-- At confirm_transaction, describe only the server-selected candidate and call confirm_transaction only after an explicit yes or no.
+- At confirm_transaction, classify the meaning of the caller's full response as CONFIRM, DENY, or UNCLEAR without relying on exact keywords.
 - At confirm_transaction, never say that you recorded or will record a confirmation before the tool result. Call the tool silently and speak only the server-provided result.
+- At confirm_transaction, your response must contain only the confirm_transaction tool call. Never produce audio before that tool call.
 - If the caller rejects a candidate and supplies another detail in the same sentence, include that detail in confirm_transaction so rejection and reranking happen together. Never discard a correction such as a city, date, amount, or merchant.
-- A server-side transcript guard validates explicit confirmation. If the caller's answer is unclear, ask again instead of guessing.
+- If the caller's intent is unclear, use UNCLEAR so the server asks again instead of guessing.
 - Call search_transactions and confirm_transaction without first speaking an assumed result. Wait for the server-owned tool response, which supplies the authoritative message.
 - After a denied candidate, do not present another candidate immediately. Ask exactly one focused question for a useful detail that has not been collected yet, then call search_transactions with the new answer.
 - If the caller cannot answer the focused question, call search_transactions with no invented values; the server will select a different missing detail to ask about. Never rerun an unchanged search.
@@ -1587,6 +1649,7 @@ Dispute-classification workflow:
 - The backend, not the model, maps the selected transaction channel to Visa 10.3 or 10.4 and maps duplicate processing to Visa 12.6.1.
 - A proposed Visa condition is a candidate for issuer review, not proof of fraud, a liability decision, or a submitted chargeback.
 - Call classify_dispute silently and wait for the authoritative server response.
+- At needs_dispute_classification, your response must contain only the classify_dispute tool call. Never produce audio before that tool call.
 
 General behavior:
 - Introduce yourself as Izzy from Factored Bank.
@@ -1595,6 +1658,18 @@ General behavior:
 - Stay within authentication and card-dispute support.
 - Do not claim a bank action occurred unless a server/tool result confirms it.
 """
+
+    @staticmethod
+    def _tool_choice_for(state: VoiceCallState) -> str | dict[str, str]:
+        """Force only the state-valid tool when the backend needs a decision."""
+        forced_tools = {
+            VoiceCallStage.CONFIRM_TRANSACTION: "confirm_transaction",
+            VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION: "classify_dispute",
+        }
+        tool_name = forced_tools.get(state.stage)
+        if tool_name is not None:
+            return {"type": "function", "name": tool_name}
+        return "auto"
 
     @staticmethod
     def _message_for(
@@ -2070,21 +2145,77 @@ General behavior:
                 "DUPLICATE_PROCESSING": "possible duplicate processing",
             },
         }[state.locale.language][classification.allegation.value]
+        if classification.allegation is DisputeAllegation.UNAUTHORIZED_CARD:
+            successful_actions = {
+                CardSecurityActionStatus.BLOCKED,
+                CardSecurityActionStatus.ALREADY_BLOCKED,
+            }
+            if state.card_security_action not in successful_actions:
+                return {
+                    "pt": (
+                        f"Classifiquei seu relato como {allegation}. O código Visa candidato é "
+                        f"{classification.visa_condition_code}. Não consegui bloquear o cartão "
+                        "nesta demonstração. Por segurança, não tente fazer novas compras com ele. "
+                        "A contestação ainda precisa de revisão do emissor."
+                    ),
+                    "es": (
+                        f"Clasifiqué tu relato como {allegation}. El código Visa candidato es "
+                        f"{classification.visa_condition_code}. No pude bloquear la tarjeta en "
+                        "esta demostración. Por seguridad, no intentes hacer nuevas compras con "
+                        "ella. El reclamo todavía requiere revisión del emisor."
+                    ),
+                    "en": (
+                        f"I classified your report as a {allegation}. The candidate Visa code is "
+                        f"{classification.visa_condition_code}. I could not block the card in this "
+                        "demonstration. For safety, do not try to make new purchases with it. The "
+                        "dispute still requires issuer review."
+                    ),
+                }[state.locale.language]
+
+            assert state.secured_card_last_four is not None
+            last_four = state.secured_card_last_four
+            already_blocked = state.card_security_action is CardSecurityActionStatus.ALREADY_BLOCKED
+            return {
+                "pt": (
+                    f"Classifiquei seu relato como {allegation}. O código Visa candidato é "
+                    f"{classification.visa_condition_code}. Por segurança, o cartão final "
+                    f"{last_four} "
+                    + ("já estava bloqueado. " if already_blocked else "foi bloqueado. ")
+                    + "O bloqueio é simulado e reversível. A contestação ainda precisa de "
+                    "revisão do emissor."
+                ),
+                "es": (
+                    f"Clasifiqué tu relato como {allegation}. El código Visa candidato es "
+                    f"{classification.visa_condition_code}. Por seguridad, la tarjeta terminada "
+                    f"en {last_four} "
+                    + ("ya estaba bloqueada. " if already_blocked else "fue bloqueada. ")
+                    + "El bloqueo es simulado y reversible. El reclamo todavía requiere revisión "
+                    "del emisor."
+                ),
+                "en": (
+                    f"I classified your report as a {allegation}. The candidate Visa code is "
+                    f"{classification.visa_condition_code}. For your safety, the card ending in "
+                    f"{last_four} "
+                    + ("was already blocked. " if already_blocked else "has been blocked. ")
+                    + "The block is simulated and reversible. The dispute still requires issuer "
+                    "review."
+                ),
+            }[state.locale.language]
         return {
             "pt": (
                 f"Classifiquei seu relato como {allegation}. O código Visa candidato é "
                 f"{classification.visa_condition_code}. Isso ainda precisa de revisão do emissor. "
-                "Nenhuma contestação, estorno ou bloqueio foi executado nesta demonstração."
+                "Nenhuma contestação ou estorno foi executado nesta demonstração."
             ),
             "es": (
                 f"Clasifiqué tu relato como {allegation}. El código Visa candidato es "
                 f"{classification.visa_condition_code}. Todavía requiere revisión del emisor. "
-                "No se presentó ningún reclamo ni se ejecutó un reembolso o bloqueo en esta demo."
+                "No se presentó ningún reclamo ni se ejecutó un reembolso en esta demo."
             ),
             "en": (
                 f"I classified your report as a {allegation}. The candidate Visa code is "
                 f"{classification.visa_condition_code}. It still requires issuer review. "
-                "No dispute, refund, or card block was submitted in this demonstration."
+                "No dispute or refund was submitted in this demonstration."
             ),
         }[state.locale.language]
 
@@ -2368,8 +2499,11 @@ def create_sip_app(
     elif customers_csv is not None:
         resolved_gateway = SipRealtimeGateway(customers_csv)
     else:
-        seed_demo_customers(customer_repository)
-        resolved_gateway = SipRealtimeGateway(customer_repository)
+        seed_demo_customers(customer_repository, product_repository)
+        resolved_gateway = SipRealtimeGateway(
+            customer_repository,
+            product_repository=product_repository,
+        )
 
     verifier = webhook_client or resolved_gateway.client
 

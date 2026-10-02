@@ -72,7 +72,7 @@ After the caller confirms a transaction, Izzy asks whether the customer did not 
 
 Ambiguous, missing, or conflicting evidence produces no code and one neutral clarification question. The result is stored in the synthetic call state with the allegation, candidate Visa code, workflow, supporting evidence, missing evidence, transaction reference, and channel. Structured logs expose class, code, clarification rate, and latency without customer identity or transaction IDs.
 
-This is an intake recommendation, not a final fraud finding or Visa eligibility decision. The demo does not submit a chargeback, issue a refund, block a card, query VROL, or retrieve issuer/network evidence. The shared classifier is independent of SIP so a later GUI chat can call the same contract; the current `/agent` GUI remains a placeholder.
+This is an intake recommendation, not a final fraud finding or Visa eligibility decision. After a validated unauthorized-card classification, the call demo automatically blocks the server-resolved mock card ending in `9999`; duplicate and inconclusive reports never trigger or suggest a block. The state change uses the backend product service, validates customer ownership, is idempotent, and is available to the GUI only when both channels share the same in-memory repository. The demo does not submit a chargeback, issue a refund, query VROL, retrieve issuer/network evidence, or order a replacement card. The shared classifier is independent of SIP so a later GUI chat can call the same contract; the current `/agent` GUI remains a placeholder.
 
 Run the SQLite, state-machine, and SIP-sideband coverage with:
 

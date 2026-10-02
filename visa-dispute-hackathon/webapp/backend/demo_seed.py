@@ -1,7 +1,7 @@
 from datetime import UTC, date, datetime
 
+from webapp.backend.demo_card import seed_demo_card
 from webapp.backend.models.customer import Accent, Customer, Gender
-from webapp.backend.models.product import Product
 from webapp.backend.repositories.interfaces import CustomerRepository, ProductRepository
 
 DEMO_CUSTOMERS = (
@@ -106,20 +106,4 @@ def seed_demo_customers(
                 )
             )
         if products and not products.list_by_customer(data["customer_id"]):
-            products.create(
-                Product(
-                    product_id=f"CARD-{data['customer_id']}",
-                    customer_id=data["customer_id"],
-                    product_type="Credit Card",
-                    product_number=f"4111111111{data['document_number']}",
-                    currency="USD",
-                    current_balance=0.0,
-                    credit_limit=10_000.0,
-                    opening_date=now.date(),
-                    opening_branch_id=1,
-                    product_status="Active",
-                    opening_channel="Web",
-                    has_linked_app=True,
-                    last_updated=now,
-                )
-            )
+            seed_demo_card(products, data["customer_id"])

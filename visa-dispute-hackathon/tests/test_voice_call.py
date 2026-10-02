@@ -7,12 +7,14 @@ from dispute_agent.transaction_search import (
     TransactionSearchCriteria,
 )
 from dispute_agent.voice_call import (
+    CardSecurityActionStatus,
     DisputeClassificationOutcome,
     TransactionSelectionOutcome,
     VoiceAuthenticationMethod,
     VoiceCallService,
     VoiceCallStage,
 )
+from webapp.backend.demo_card import demo_card_product_id
 
 FIXTURE = Path(__file__).parent / "fixtures" / "customers.csv"
 
@@ -386,6 +388,108 @@ class VoiceCallServiceTests(unittest.TestCase):
         self.assertEqual(
             classified.state.dispute_classification.visa_condition_code,
             "10.4",
+        )
+        self.assertEqual(
+            classified.state.card_security_action,
+            CardSecurityActionStatus.BLOCKED,
+        )
+        self.assertEqual(classified.state.secured_card_last_four, "9999")
+        self.assertEqual(
+            self.calls.products.get_by_id(demo_card_product_id("CLI-002")).product_status,
+            "Blocked",
+        )
+
+    def test_duplicate_classification_does_not_block_or_suggest_card_action(self):
+        state = self.authenticate_known_phone("call_duplicate_no_block")
+        self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(merchant_query="lemon"),
+        )
+        self.calls.resolve_transaction_candidate(state.call_id, confirmed=True)
+
+        classified = self.calls.classify_dispute(
+            state.call_id,
+            allegation="DUPLICATE_PROCESSING",
+            customer_reports_duplicate=True,
+        )
+
+        self.assertEqual(classified.outcome, DisputeClassificationOutcome.CLASSIFIED)
+        self.assertIsNone(classified.state.card_security_action)
+        self.assertIsNone(classified.state.secured_card_last_four)
+        self.assertEqual(
+            self.calls.products.get_by_id(demo_card_product_id("CLI-002")).product_status,
+            "Active",
+        )
+
+    def test_insufficient_classification_does_not_block_card(self):
+        state = self.authenticate_known_phone("call_insufficient_no_block")
+        self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(merchant_query="lemon"),
+        )
+        self.calls.resolve_transaction_candidate(state.call_id, confirmed=True)
+
+        classified = self.calls.classify_dispute(
+            state.call_id,
+            allegation="INSUFFICIENT_INFO",
+        )
+
+        self.assertEqual(
+            classified.outcome,
+            DisputeClassificationOutcome.NEEDS_CLARIFICATION,
+        )
+        self.assertIsNone(classified.state.card_security_action)
+        self.assertEqual(
+            self.calls.products.get_by_id(demo_card_product_id("CLI-002")).product_status,
+            "Active",
+        )
+
+    def test_fraud_block_is_idempotent_across_calls(self):
+        for index, expected_status in enumerate(
+            (
+                CardSecurityActionStatus.BLOCKED,
+                CardSecurityActionStatus.ALREADY_BLOCKED,
+            ),
+            start=1,
+        ):
+            state = self.authenticate_known_phone(f"call_fraud_idempotent_{index}")
+            self.calls.search_transactions(
+                state.call_id,
+                TransactionSearchCriteria(merchant_query="lemon"),
+            )
+            self.calls.resolve_transaction_candidate(state.call_id, confirmed=True)
+            classified = self.calls.classify_dispute(
+                state.call_id,
+                allegation="UNAUTHORIZED_CARD",
+                customer_denies_authorization=True,
+            )
+            self.assertEqual(classified.state.card_security_action, expected_status)
+
+    def test_card_ownership_failure_is_reported_without_false_success(self):
+        state = self.authenticate_known_phone("call_wrong_card_owner")
+        product_id = demo_card_product_id("CLI-002")
+        product = self.calls.products.get_by_id(product_id)
+        self.calls.products.update(product.model_copy(update={"customer_id": "OTHER"}))
+        self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(merchant_query="lemon"),
+        )
+        self.calls.resolve_transaction_candidate(state.call_id, confirmed=True)
+
+        classified = self.calls.classify_dispute(
+            state.call_id,
+            allegation="UNAUTHORIZED_CARD",
+            customer_denies_authorization=True,
+        )
+
+        self.assertEqual(
+            classified.state.card_security_action,
+            CardSecurityActionStatus.FAILED,
+        )
+        self.assertIsNone(classified.state.secured_card_last_four)
+        self.assertEqual(
+            self.calls.products.get_by_id(product_id).product_status,
+            "Active",
         )
 
     def test_dispute_classification_requires_a_confirmed_transaction(self):

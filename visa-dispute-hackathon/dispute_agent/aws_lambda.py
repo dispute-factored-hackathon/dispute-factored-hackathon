@@ -11,7 +11,7 @@ import time
 from typing import Any
 
 from webapp.backend.demo_seed import seed_demo_customers
-from webapp.backend.repositories.mock import customer_repository
+from webapp.backend.repositories.mock import customer_repository, product_repository
 
 from .sip_realtime import SipRealtimeGateway, _value, extract_caller_phone
 
@@ -134,9 +134,10 @@ def _get_gateway() -> SipRealtimeGateway:
 
         secret = _load_openai_secret()
 
-        seed_demo_customers(customer_repository)
+        seed_demo_customers(customer_repository, product_repository)
         _gateway = SipRealtimeGateway(
             customer_repository,
+            product_repository=product_repository,
             api_key=secret["OPENAI_API_KEY"],
             webhook_secret=secret["OPENAI_WEBHOOK_SECRET"],
         )
