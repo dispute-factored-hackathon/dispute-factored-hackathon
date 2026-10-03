@@ -1,8 +1,7 @@
 """PostgreSQL implementations of the repository contracts in `interfaces.py`.
 
-They are drop-in replacements for the in-memory mocks: same method names, same semantics, same
-errors. Every statement is parameterised (identifiers come from fixed model field names), so
-customer input can never change a query.
+This is the web app's only data store. Every statement is parameterised (identifiers come from
+fixed model field names), so customer input can never change a query.
 """
 
 import hashlib
@@ -14,7 +13,9 @@ from typing import Any, Generic, TypeVar
 from psycopg import errors, sql
 from pydantic import BaseModel
 
+from webapp.backend.config import Settings
 from webapp.backend.db.database import Database
+from webapp.backend.db.migrate import expected_revision
 from webapp.backend.models.call_center_interaction import CallCenterInteraction
 from webapp.backend.models.call_transcript import CallTranscript
 from webapp.backend.models.complaint import Complaint
@@ -24,12 +25,17 @@ from webapp.backend.models.satisfaction_survey import SatisfactionSurvey
 from webapp.backend.models.service_agent import ServiceAgent
 from webapp.backend.models.session import CustomerSession
 from webapp.backend.models.transaction import Transaction
+from webapp.backend.repositories.interfaces import Repositories
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
+class BackendConfigurationError(RuntimeError):
+    """The database settings are incomplete. Messages never include credentials."""
+
+
 def normalize_search_name(value: str) -> str:
-    """Case- and accent-insensitive form used for name search (same rules as the mock)."""
+    """Case- and accent-insensitive form used for name search."""
 
     decomposed = unicodedata.normalize("NFKD", value.casefold())
     without_marks = "".join(
@@ -450,3 +456,33 @@ class PostgresSessionRepository:
             cursor.execute(
                 "DELETE FROM sessions WHERE session_hash = %s", (hash_session_id(session_id),)
             )
+
+
+def open_repositories(settings: Settings) -> Repositories:
+    """Open the connection pool, verify the schema revision and build every repository."""
+
+    if settings.database_url is None:
+        raise BackendConfigurationError(
+            "DATABASE_URL (the factored_app role) is not set. See .env.example."
+        )
+    database = Database(
+        settings.database_url.get_secret_value(), max_size=settings.database_pool_max_size
+    )
+    database.open()
+    try:
+        database.check_migrated(expected_revision())
+    except Exception:
+        database.close()
+        raise
+    return Repositories(
+        customers=PostgresCustomerRepository(database),
+        products=PostgresProductRepository(database),
+        transactions=PostgresTransactionRepository(database),
+        complaints=PostgresComplaintRepository(database),
+        sessions=PostgresSessionRepository(database),
+        service_agents=PostgresServiceAgentRepository(database),
+        call_center_interactions=PostgresCallCenterInteractionRepository(database),
+        call_transcripts=PostgresCallTranscriptRepository(database),
+        satisfaction_surveys=PostgresSatisfactionSurveyRepository(database),
+        close=database.close,
+    )

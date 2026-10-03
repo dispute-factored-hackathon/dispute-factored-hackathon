@@ -3,16 +3,25 @@ import secrets
 from collections.abc import Iterator
 from dataclasses import dataclass
 
+import fakes
 import psycopg
 import pytest
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
-# The webapp tests exercise the in-memory backend through the module-level repositories. A
-# developer's .env may select PostgreSQL, so pin the backend before `webapp` is imported.
-os.environ["REPOSITORY_BACKEND"] = "mock"
-
+from webapp.backend.api.dependencies import get_repositories
 from webapp.backend.db import migrate
+from webapp.backend.main import app
+from webapp.backend.repositories.interfaces import Repositories
+
+
+@pytest.fixture(autouse=True)
+def in_memory_repositories() -> Iterator[Repositories]:
+    """Route tests use the in-memory doubles; the app itself only ever opens PostgreSQL."""
+
+    app.dependency_overrides[get_repositories] = lambda: fakes.repositories
+    yield fakes.repositories
+    app.dependency_overrides.pop(get_repositories, None)
 
 
 @dataclass(frozen=True)

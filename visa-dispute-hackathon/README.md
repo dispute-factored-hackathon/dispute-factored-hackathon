@@ -2,7 +2,7 @@
 
 Issuer-side Visa dispute resolution for the call-center channel.
 
-Project documentation is maintained in the repository's [`docs`](../docs/README.md) directory. Open that directory as an Obsidian vault and start with `Home`.
+Project documentation is maintained in the [GitHub Wiki](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki).
 
 ## Synthetic GUI login contract
 
@@ -42,15 +42,15 @@ OpenAI Realtime remains responsible for speech recognition, speech generation, c
 
 `JEV_API_KEY` is server-only. It must stay in `.env` locally and in the existing combined Secrets Manager JSON in AWS; it must never be sent to a browser, included in a model prompt, or written to logs. Jev telemetry contains only model, action, confidence, latency, and token counts. Because the external decision request contains the completed caller transcript, this integration is authorized only for the synthetic demonstration data used by this repository.
 
-### Mock voice transaction search
+### Voice transaction search
 
 After authentication, Izzy asks whether the caller is having a problem with a transaction. The caller can describe a merchant or descriptor, approximate amount, currency, date or date range, country, city, channel, or transaction type. The Realtime model passes only schema-constrained criteria to the backend; it never sends executable SQL.
 
-`SQLiteTransactionSearchRepository` creates a replaceable SQLite database with the same 22 columns as the synthetic `transactions` table. Its ten demonstration rows cover lemon, strawberry, coconut, passion fruit, banana, apple, papaya, peach, grapes, and mango purchases. Merchants and amounts are distinct. Countries and cities are assigned pseudo-randomly from a fixed synthetic catalog using a fixed seed, so the demo is varied but reproducible.
+The voice channel shares the web app's PostgreSQL. `RepositoryTransactionSearch` reads the authenticated caller's card transactions through the `TransactionRepository` contract. Those transactions come from `dispute-db-seed-lakehouse` (synthetic lakehouse data) plus purchases made in the web shop. Nothing is seeded in code. `SQLiteTransactionSearchRepository` remains as an isolated adapter over transactions the caller supplies; the tests use it with ten synthetic fruit purchases.
 
 The backend uses a small, structured RAG pipeline for every search turn:
 
-1. **Retrieve:** a parameterized `SELECT` retrieves up to ten recent, untried transactions belonging to the authenticated customer.
+1. **Retrieve:** the authenticated customer's most recent untried transactions are read through the repository contract (parameterized SQL in PostgreSQL), at most 500.
 2. **Rerank:** an explainable ranker scores the retrieved candidates against only the details supplied by the caller. Merchant similarity has the greatest weight, followed by amount proximity, date, location, currency, channel, and transaction type.
 3. **Top-1:** only the highest-ranked relevant transaction is given to Izzy for presentation and explicit confirmation.
 4. **Refine:** whenever the caller adds or corrects a detail, the backend merges the new criteria and repeats retrieval, reranking, and Top-1 selection from the beginning.
@@ -61,7 +61,7 @@ The retrieval boundary guarantees that:
 - approximate amounts are ranked by their distance using the greater of five currency units or 10% as the scale;
 - values are bound parameters and cannot alter the statement;
 - only the known `transactions` table and supported filters are used;
-- no more than ten rows are returned;
+- no more than ten ranked candidates are returned;
 - denied candidates are excluded from later proposals.
 
 Izzy speaks one ranked candidate at a time with merchant, date, amount/currency, city, and country. Only an explicit confirmation selects it. After each denial, Izzy asks for exactly one useful detail that has not already been requested before running retrieval and reranking again. If the caller cannot provide that detail, Izzy moves to a different question instead of repeating the same search. Refining the current candidate does not consume an additional guess; only an explicit denial does. After three denied candidates, Izzy preserves the search context and starts the same human-handoff path available through an explicit caller request. The backend, not the model, resolves the fixed destination and asks OpenAI to relay a SIP REFER only after Izzy finishes the transfer notice.
@@ -80,14 +80,13 @@ After the caller confirms a transaction, Izzy asks whether the customer did not 
 
 Ambiguous, missing, or conflicting evidence produces no code and one neutral clarification question. The result is stored in the synthetic call state with the allegation, candidate Visa code, workflow, supporting evidence, missing evidence, transaction reference, and channel. Structured logs expose class, code, clarification rate, and latency without customer identity or transaction IDs.
 
-This is an intake recommendation, not a final fraud finding or Visa eligibility decision. After a validated unauthorized-card classification, the call demo automatically blocks the server-resolved mock card ending in `9999`; duplicate and inconclusive reports never trigger or suggest a block. The state change uses the backend product service, validates customer ownership, is idempotent, and is available to the GUI only when both channels share the same in-memory repository. The demo does not submit a chargeback, issue a refund, query VROL, retrieve issuer/network evidence, or order a replacement card. The shared classifier is independent of SIP so a later GUI chat can call the same contract; the current `/agent` GUI remains a placeholder.
+This is an intake recommendation, not a final fraud finding or Visa eligibility decision. After a validated unauthorized-card classification, the call demo automatically blocks the synthetic card that the confirmed transaction was charged to; duplicate and inconclusive reports never trigger or suggest a block. The state change uses the backend product service, validates customer ownership, is idempotent, and is visible in the web app because both channels share the same PostgreSQL. The demo does not submit a chargeback, issue a refund, query VROL, retrieve issuer/network evidence, or order a replacement card. The shared classifier is independent of SIP so a later GUI chat can call the same contract; the current `/agent` GUI remains a placeholder.
 
 ### Complaint persistence after classification
 
 After a supported Visa condition is validated, the server—not the language model—creates a
-trackable complaint through the shared `ComplaintRepository` contract. The same filing service
-works with the thread-safe in-memory adapter used by the Lambda demo and the PostgreSQL adapter
-selected with `REPOSITORY_BACKEND=postgres`.
+trackable complaint through the shared `ComplaintRepository` contract, stored in the same
+PostgreSQL as the web app (`DATABASE_URL`, used by both the local SIP server and the Lambda worker).
 
 The complaint follows the synthetic `complaints` table: it belongs to the authenticated customer,
 links the selected card product, records the Realtime call as its origin interaction, uses `Call
@@ -263,17 +262,41 @@ The document digits are accumulated and checked only in backend memory. They are
 ```bash
 uv run python -m unittest tests.test_sip_realtime tests.test_voice_call -v
 ```
+
+## Run the web app (PostgreSQL + lakehouse seed)
+
+The web app stores customers, cards (bank products), transactions, complaints and sessions only in a local PostgreSQL started with Docker. It does not start without that database, and it no longer creates customers or history in code. All customer data is copied from the synthetic hackathon lakehouse (`lakehouse.silver` on MotherDuck, read-only). Copy `.env.example` to `.env` and fill in the passwords and `MOTHERDUCK_TOKEN`. Then run, from this directory:
+
+```powershell
+docker compose up -d db
+uv sync
+uv run dispute-db-migrate
+uv run dispute-db-seed-lakehouse --dry-run      # read and validate only
+uv run dispute-db-seed-lakehouse                # 100 active customers, about 2,000 transactions
+uv run uvicorn webapp.backend.main:app --port 8000
+```
+
+The seed picks active customers with an active credit card and at least one transaction, in a stable order. Re-running it is safe because existing rows are kept. It refuses non-local databases unless `--allow-remote` is passed, and it warns when fewer than 1,000 transactions are available. Use `--customers N` for a different sample. Card numbers are masked to the last four digits before they leave the lakehouse query.
+
+New sign-ups get one demo credit card and no history. Their transactions come from purchases in `/shop`, and those purchases are what they can later dispute.
+
+Tests: `uv run pytest -q`. Web and voice tests use the in-memory test doubles and synthetic fixtures in `tests/fakes.py`. The PostgreSQL integration tests run only when `TEST_POSTGRES_URL` points at a disposable server (`postgresql://postgres:<password>@127.0.0.1:<port>/postgres`). Otherwise they are skipped.
+
+The voice channel (`dispute-sip-server` and the Lambda worker) uses the same database through `DATABASE_URL`, so customers, cards, transactions and complaints are shared between phone and web. A deployed worker needs a PostgreSQL it can reach; it does not create demo customers.
+
+Limitations: the data is synthetic, and the parody shop catalog is static copy. Purchases and complaints written by the app or by calls exist only in PostgreSQL; they are not synchronized back to the lakehouse yet.
+
 ## Demo web login
 
 The web interface offers two paths: a searchable synthetic-customer selector for judges and the original six-digit Factored ID login. Search is case- and accent-insensitive, duplicate names have a safe profile label, and the browser receives no document numbers in search results. The selected opaque value is signed, resolved to the customer document number server-side, and passed through the same Factored ID authentication method before the normal isolated customer session is created.
 
-This shortcut is controlled impersonation for the hackathon demo, not production authentication. The in-memory repository and seeded profiles are replaceable through the `CustomerRepository` contract. The selected profile exposes a regional locale (`pt-BR`, `es-CO`, `es-MX`, `es-AR`, or `en-US`) for the interface-localization layer.
+This shortcut is controlled impersonation for the hackathon demo, not production authentication. The selector searches the customers loaded by `dispute-db-seed-lakehouse` into PostgreSQL. The selected profile exposes a regional locale (`pt-BR`, `es-CO`, `es-MX`, `es-AR`, or `en-US`) for the interface-localization layer.
 
 ## Shady Business purchase simulator
 
-Authenticated demo customers can open `/shop`, browse a humorous synthetic catalog, manage a browser-session cart, and pay with one of their active mock credit cards. The server resolves authoritative catalog prices, validates card ownership and status, and writes the approved purchase to the same in-memory transaction repository used by Factored Bank.
+Authenticated demo customers can open `/shop`, browse a humorous synthetic catalog, manage a browser-session cart, and pay with one of their active mock credit cards. The server resolves authoritative catalog prices, validates card ownership and status, and writes the approved purchase to the same PostgreSQL transactions table used by Factored Bank.
 
-Every checkout also injects exactly one randomly selected training scenario: either a duplicate Shady Business charge or an unrelated high-value electronics transaction in a configured South Asian location. The receipt does not reveal the selected scenario; the judge discovers it in `/transactions` and can continue into the dispute journey. No real card network, merchant processor, money movement, inventory service, or production database is used.
+Every checkout also injects exactly one randomly selected training scenario: either a duplicate Shady Business charge or an unrelated high-value electronics transaction in a configured South Asian location. The receipt does not reveal the selected scenario; the judge discovers it in `/transactions` and can continue into the dispute journey. No real card network, merchant processor, money movement, inventory service, or production database is used; the PostgreSQL database is a local Docker container with synthetic data.
 
 ## Mock customer identification
 

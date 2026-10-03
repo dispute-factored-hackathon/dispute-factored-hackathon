@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from fakes import InMemoryComplaintRepository, fruit_search_repository, voice_repositories
 from fastapi.testclient import TestClient
 
 from dispute_agent.jev_decision import JevAction, JevVoiceDecision
@@ -11,12 +12,8 @@ from dispute_agent.sip_realtime import (
     create_sip_app,
     extract_caller_phone,
 )
-from dispute_agent.transaction_search import (
-    SQLiteTransactionSearchRepository,
-    TransactionSearchCriteria,
-)
+from dispute_agent.transaction_search import TransactionSearchCriteria
 from dispute_agent.voice_call import TransactionSelectionOutcome
-from webapp.backend.repositories.mock import MockComplaintRepository
 
 FIXTURE = Path(__file__).parent / "fixtures" / "customers.csv"
 
@@ -325,7 +322,7 @@ class FakeAcceptCalls:
         self.referrals.append((call_id, target_uri))
 
 
-class FailingComplaintRepository(MockComplaintRepository):
+class FailingComplaintRepository(InMemoryComplaintRepository):
     def create(self, complaint):
         del complaint
         raise RuntimeError("synthetic complaint storage failure")
@@ -362,8 +359,10 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             api_key="sk-test",
             openai_client=client,
             websocket_connect=FakeConnector(websocket),
-            transaction_repository=transaction_repository,
-            complaint_repository=complaint_repository,
+            **voice_repositories(
+                transaction_repository=transaction_repository,
+                complaint_repository=complaint_repository,
+            ),
             human_handoff_number=human_handoff_number,
             jev_router=jev_router,
         )
@@ -607,6 +606,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             FIXTURE,
             api_key="sk-test",
             openai_client=client,
+            **voice_repositories(),
         )
 
         self.assertIsNone(gateway._calls)
@@ -663,9 +663,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             expected,
         )
         self.assertEqual(
-            self._session_updates(websocket)[0]["session"]["audio"]["input"][
-                "noise_reduction"
-            ],
+            self._session_updates(websocket)[0]["session"]["audio"]["input"]["noise_reduction"],
             {"type": "near_field"},
         )
         self.assertIsNone(
@@ -736,6 +734,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             openai_client=SimpleNamespace(realtime=SimpleNamespace(calls=calls)),
             websocket_connect=FakeConnector(websocket),
             log_full_transcripts=False,
+            **voice_repositories(),
         )
 
         with self.assertLogs("dispute_agent.sip_realtime", level="INFO") as captured:
@@ -1420,7 +1419,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                 {"response_intent": "RATING", "rating": 4},
             ),
         ]
-        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        transactions = fruit_search_repository("CLI-002")
         self.addCleanup(transactions.close)
         gateway, websocket, calls = self._gateway(
             events,
@@ -1502,7 +1501,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                 },
             ),
         ]
-        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        transactions = fruit_search_repository("CLI-002")
         self.addCleanup(transactions.close)
         gateway, websocket, _ = self._gateway(events, transaction_repository=transactions)
 
@@ -1520,7 +1519,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("foi bloqueado", outbound)
 
     def test_complaint_storage_failure_is_disclosed_without_false_confirmation(self):
-        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        transactions = fruit_search_repository("CLI-002")
         self.addCleanup(transactions.close)
         gateway, _, _ = self._gateway(
             [],
@@ -1579,7 +1578,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                 },
             ),
         ]
-        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        transactions = fruit_search_repository("CLI-002")
         self.addCleanup(transactions.close)
         gateway, websocket, _ = self._gateway(events, transaction_repository=transactions)
 
@@ -1610,7 +1609,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("unclear", authentication["method"]["enum"])
 
     def test_csat_turn_keeps_vad_response_enabled_until_survey_is_complete(self):
-        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        transactions = fruit_search_repository("CLI-002")
         self.addCleanup(transactions.close)
         gateway, _, _ = self._gateway([], transaction_repository=transactions)
         state = gateway.calls.start("+5511999990001", call_id="call_terminal_vad")
@@ -1637,7 +1636,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(turn_detection["interrupt_response"])
 
     def test_required_turns_allow_phase_tool_or_explicit_human_handoff(self):
-        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        transactions = fruit_search_repository("CLI-002")
         self.addCleanup(transactions.close)
         gateway, _, _ = self._gateway([], transaction_repository=transactions)
         state = gateway.calls.start("+5511999990001", call_id="call_tool_choice")
@@ -1707,7 +1706,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                 {"confirmation_intent": "CONFIRM"},
             ),
         ]
-        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        transactions = fruit_search_repository("CLI-002")
         self.addCleanup(transactions.close)
         gateway, websocket, _ = self._gateway(events, transaction_repository=transactions)
 
@@ -1743,7 +1742,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                 {"confirmation_intent": "UNCLEAR"},
             ),
         ]
-        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        transactions = fruit_search_repository("CLI-002")
         self.addCleanup(transactions.close)
         gateway, websocket, _ = self._gateway(
             events,
@@ -1785,7 +1784,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                 {"confirmation_intent": "DENY", "city": "Lima"},
             ),
         ]
-        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        transactions = fruit_search_repository("CLI-002")
         self.addCleanup(transactions.close)
         gateway, _, _ = self._gateway(events, transaction_repository=transactions)
 
@@ -1821,7 +1820,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                 {"approximate_amount": 27},
             ),
         ]
-        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        transactions = fruit_search_repository("CLI-002")
         self.addCleanup(transactions.close)
         gateway, websocket, _ = self._gateway(events, transaction_repository=transactions)
 
@@ -1837,7 +1836,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("27,00", outbound)
 
     def test_candidate_summaries_are_voice_friendly_in_supported_languages(self):
-        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        transactions = fruit_search_repository("CLI-002")
         self.addCleanup(transactions.close)
         gateway, _, _ = self._gateway([], transaction_repository=transactions)
         scenarios = {
@@ -1885,7 +1884,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                 )
 
     def test_classification_is_voice_friendly_in_supported_languages(self):
-        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        transactions = fruit_search_repository("CLI-002")
         self.addCleanup(transactions.close)
         gateway, _, _ = self._gateway([], transaction_repository=transactions)
         scenarios = {
@@ -1962,7 +1961,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                 {"clear_filters": True},
             ),
         ]
-        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        transactions = fruit_search_repository("CLI-002")
         self.addCleanup(transactions.close)
         gateway, websocket, calls = self._gateway(
             events,
@@ -1987,7 +1986,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Ainda não há filtros ativos", outbound)
 
     def test_denial_asks_for_one_missing_detail_before_another_candidate(self):
-        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        transactions = fruit_search_repository("CLI-002")
         self.addCleanup(transactions.close)
         gateway, _, _ = self._gateway([], transaction_repository=transactions)
         state = gateway.calls.start(
@@ -2031,7 +2030,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("nome do estabelecimento", next_question)
 
     def test_three_denials_use_configured_handoff_availability(self):
-        transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        transactions = fruit_search_repository("CLI-002")
         self.addCleanup(transactions.close)
         gateway, _, _ = self._gateway([], transaction_repository=transactions)
         state = gateway.calls.start(

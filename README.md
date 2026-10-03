@@ -25,7 +25,7 @@ The implementation focuses on identifying a synthetic customer, understanding na
 | Path | Purpose |
 |---|---|
 | [`visa-dispute-hackathon/`](visa-dispute-hackathon/) | Python application, tests, and runtime configuration |
-| [`docs/`](docs/README.md) | Obsidian-compatible research and product documentation |
+| [GitHub Wiki](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki) | Research, product, architecture, and operating documentation |
 | [`data/`](data/) | Synthetic hackathon data and classifier labels |
 | [`agents/AGENTIC_UX_REVIEWER.md`](agents/AGENTIC_UX_REVIEWER.md) | Tool-agnostic agent definition for iterative UX reviews |
 | [`AGENTS.md`](AGENTS.md) | Instructions for coding agents working in this repository |
@@ -94,7 +94,7 @@ The automated suite uses controlled model doubles and does not consume OpenAI AP
 
 ## Documentation
 
-Open [`docs/`](docs/README.md) as an Obsidian vault and begin with [`Home.md`](docs/Home.md). It covers the dispute problem, stakeholders, Visa classification, dataset baselines, personas, journeys, requirements, metrics, architecture, controls, limitations, and research sources.
+Open the [GitHub Wiki](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki). It covers the dispute problem, stakeholders, Visa classification, dataset baselines, personas, journeys, requirements, metrics, architecture, controls, limitations, and research sources.
 
 The implementation-specific guide is available in [`visa-dispute-hackathon/README.md`](visa-dispute-hackathon/README.md).
 

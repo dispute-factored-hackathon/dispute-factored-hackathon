@@ -102,40 +102,17 @@ class AuthenticationService:
             "expires_at": int(session.expires_at.timestamp()),
             "nonce": secrets.token_urlsafe(12),
         }
-        encoded = base64.urlsafe_b64encode(
-            json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
-        ).decode().rstrip("=")
+        encoded = (
+            base64.urlsafe_b64encode(
+                json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+            )
+            .decode()
+            .rstrip("=")
+        )
         signature = hmac.new(
             settings.demo_selector_secret.encode(), encoded.encode(), hashlib.sha256
         ).hexdigest()
         return f"v1.{encoded}.{signature}"
-
-    def _session_from_signed_id(self, session_id: str) -> CustomerSession | None:
-        """Verify and decode a demo session without trusting browser-provided fields."""
-        try:
-            version, encoded, supplied_signature = session_id.split(".", maxsplit=2)
-            if version != "v1":
-                return None
-            expected_signature = hmac.new(
-                settings.demo_selector_secret.encode(), encoded.encode(), hashlib.sha256
-            ).hexdigest()
-            if not hmac.compare_digest(supplied_signature, expected_signature):
-                return None
-            padding = "=" * (-len(encoded) % 4)
-            payload = json.loads(base64.urlsafe_b64decode(encoded + padding))
-            created_at = datetime.fromtimestamp(int(payload["created_at"]), UTC)
-            expires_at = datetime.fromtimestamp(int(payload["expires_at"]), UTC)
-            if created_at > expires_at:
-                return None
-            return CustomerSession(
-                session_id=session_id,
-                customer_id=str(payload["customer_id"]),
-                authentication_method=AuthenticationMethod(payload["authentication_method"]),
-                created_at=created_at,
-                expires_at=expires_at,
-            )
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-            return None
 
     def _selection_for(self, customer_id: str) -> str:
         encoded = base64.urlsafe_b64encode(customer_id.encode()).decode().rstrip("=")
@@ -169,13 +146,6 @@ class AuthenticationService:
         session_id: str,
     ) -> tuple[Customer, CustomerSession] | None:
         session = self.sessions.get(session_id)
-
-        # The deployed demo deliberately uses process-local mock repositories. A
-        # signed session is therefore the source of truth after Lambda routes the
-        # next request to a different execution environment. PostgreSQL sessions
-        # remain server-side and never use this fallback.
-        if session is None and settings.repository_backend == "mock":
-            session = self._session_from_signed_id(session_id)
 
         if session is None:
             return None

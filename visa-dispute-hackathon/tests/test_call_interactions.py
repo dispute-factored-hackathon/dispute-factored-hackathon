@@ -1,10 +1,9 @@
 import unittest
 from pathlib import Path
 
-from dispute_agent.transaction_search import (
-    SQLiteTransactionSearchRepository,
-    TransactionSearchCriteria,
-)
+from fakes import fruit_search_repository, voice_repositories
+
+from dispute_agent.transaction_search import TransactionSearchCriteria
 from dispute_agent.voice_call import VoiceCallService, VoiceCallStage
 from webapp.backend.services.izzy_agent import IZZY_AGENT_ID, IZZY_EMPLOYEE_CODE
 
@@ -13,8 +12,10 @@ FIXTURE = Path(__file__).parent / "fixtures" / "customers.csv"
 
 class CallInteractionPersistenceTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
-        self.calls = VoiceCallService(FIXTURE, transaction_repository=self.transactions)
+        self.transactions = fruit_search_repository("CLI-002")
+        self.calls = VoiceCallService(
+            FIXTURE, **voice_repositories(transaction_repository=self.transactions)
+        )
 
     def tearDown(self) -> None:
         self.transactions.close()

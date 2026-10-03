@@ -1,14 +1,14 @@
-from fastapi.testclient import TestClient
-
-from webapp.backend.demo_seed import seed_demo_customers
-from webapp.backend.main import app
-from webapp.backend.repositories.mock import (
+from fakes import (
     complaint_repository,
     customer_repository,
     product_repository,
+    seed_demo_customers,
     session_repository,
     transaction_repository,
 )
+from fastapi.testclient import TestClient
+
+from webapp.backend.main import app
 
 
 def clear_repositories() -> None:
@@ -174,17 +174,15 @@ def test_me_returns_authenticated_customer() -> None:
     assert body["onboarding_eligible"] is True
 
 
-def test_signed_demo_session_survives_a_fresh_lambda_repository() -> None:
+def test_session_is_rejected_when_missing_from_server_side_repository() -> None:
     client = TestClient(app)
-    created = create_customer(client)
+    create_customer(client)
     response = login(client)
     assert response.status_code == 200
 
     session_repository._sessions.clear()
 
-    me = client.get("/api/auth/me")
-    assert me.status_code == 200
-    assert me.json()["customer_id"] == created["customer_id"]
+    assert client.get("/api/auth/me").status_code == 401
 
 
 def test_tampered_signed_demo_session_is_rejected() -> None:
@@ -192,7 +190,6 @@ def test_tampered_signed_demo_session_is_rejected() -> None:
     create_customer(client)
     response = login(client)
     session_id = response.cookies["factored_session"]
-    session_repository._sessions.clear()
     client.cookies.set("factored_session", f"{session_id[:-1]}x")
 
     assert client.get("/api/auth/me").status_code == 401

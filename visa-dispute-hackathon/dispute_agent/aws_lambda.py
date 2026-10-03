@@ -10,18 +10,11 @@ import os
 import time
 from typing import Any
 
-from webapp.backend.demo_seed import seed_demo_customers
-from webapp.backend.repositories.registry import (
-    call_center_interaction_repository,
-    call_transcript_repository,
-    complaint_repository,
-    customer_repository,
-    product_repository,
-    satisfaction_survey_repository,
-    service_agent_repository,
-)
+from webapp.backend.config import get_settings
+from webapp.backend.repositories.postgres import open_repositories
 
 from .sip_realtime import SipRealtimeGateway, _value, extract_caller_phone
+from .voice_call import voice_repository_arguments
 
 LOGGER = logging.getLogger(__name__)
 
@@ -145,15 +138,11 @@ def _get_gateway() -> SipRealtimeGateway:
 
         secret = _load_openai_secret()
 
-        seed_demo_customers(customer_repository, product_repository)
+        # Shared PostgreSQL configured with DATABASE_URL; customer data comes from the lakehouse seed.
+        repositories = open_repositories(get_settings())
         _gateway = SipRealtimeGateway(
-            customer_repository,
-            product_repository=product_repository,
-            complaint_repository=complaint_repository,
-            service_agent_repository=service_agent_repository,
-            interaction_repository=call_center_interaction_repository,
-            transcript_repository=call_transcript_repository,
-            satisfaction_survey_repository=satisfaction_survey_repository,
+            repositories.customers,
+            **voice_repository_arguments(repositories),
             api_key=secret["OPENAI_API_KEY"],
             webhook_secret=secret["OPENAI_WEBHOOK_SECRET"],
             jev_api_key=secret.get("JEV_API_KEY"),

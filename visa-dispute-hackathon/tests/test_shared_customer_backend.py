@@ -1,3 +1,5 @@
+from fakes import InMemoryCustomerRepository, seed_demo_customers, voice_repositories
+
 from dispute_agent.sip_realtime import SipRealtimeGateway
 from dispute_agent.voice_call import (
     VoiceAuthenticationMethod,
@@ -5,18 +7,18 @@ from dispute_agent.voice_call import (
     VoiceCallStage,
     VoiceCallState,
 )
-from webapp.backend.demo_seed import seed_demo_customers
-from webapp.backend.repositories.mock import MockCustomerRepository
+
+GABRIEL_ID = "DEMO-BR-GABRIEL-123456"
 
 
-def gabriel_repository() -> MockCustomerRepository:
-    repository = MockCustomerRepository()
+def gabriel_repository() -> InMemoryCustomerRepository:
+    repository = InMemoryCustomerRepository()
     seed_demo_customers(repository)
     return repository
 
 
 def authenticate_by_phone() -> tuple[VoiceCallService, VoiceCallState]:
-    calls = VoiceCallService(gabriel_repository())
+    calls = VoiceCallService(gabriel_repository(), **voice_repositories(GABRIEL_ID))
     state = calls.start("5511981020050", call_id="gabriel-phone")
     state = calls.confirm_language(state.call_id)
     state = calls.choose_authentication_method(state.call_id, method="phone")
@@ -39,7 +41,7 @@ def test_phone_authentication_uses_shared_backend_profile() -> None:
 
 
 def test_known_phone_supplies_brazilian_locale_without_authenticating() -> None:
-    calls = VoiceCallService(gabriel_repository())
+    calls = VoiceCallService(gabriel_repository(), **voice_repositories(GABRIEL_ID))
     state = calls.start("5511981020050", call_id="gabriel-locale-only")
 
     assert state.stage is VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION
@@ -55,7 +57,7 @@ def test_known_phone_supplies_brazilian_locale_without_authenticating() -> None:
 
 
 def test_document_authentication_uses_same_shared_backend_profile() -> None:
-    calls = VoiceCallService(gabriel_repository())
+    calls = VoiceCallService(gabriel_repository(), **voice_repositories(GABRIEL_ID))
     state = calls.start("+551100000000", call_id="gabriel-document")
     state = calls.confirm_language(state.call_id)
     state = calls.choose_authentication_method(state.call_id, method="document")
@@ -86,7 +88,7 @@ def test_authenticated_greeting_uses_first_name_naturally() -> None:
 
 
 def test_language_confirmation_only_offers_other_languages() -> None:
-    calls = VoiceCallService(gabriel_repository())
+    calls = VoiceCallService(gabriel_repository(), **voice_repositories(GABRIEL_ID))
     scenarios = (
         (
             "+5511981020050",

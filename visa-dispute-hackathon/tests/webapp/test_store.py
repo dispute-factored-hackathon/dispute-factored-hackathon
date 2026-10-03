@@ -1,21 +1,22 @@
 from datetime import timedelta
 
 import pytest
-from fastapi.testclient import TestClient
-
-from webapp.backend.api.routes.store import store_service
-from webapp.backend.main import app
-from webapp.backend.repositories.mock import (
+from fakes import (
     complaint_repository,
     customer_repository,
     product_repository,
     session_repository,
     transaction_repository,
 )
+from fastapi.testclient import TestClient
+
+from webapp.backend.api.routes.store import get_store_service, store_catalog
+from webapp.backend.main import app
 from webapp.backend.services.store import (
     FOREIGN_FRAUD_MERCHANTS,
     SOUTH_ASIAN_LOCATIONS,
     RandomAnomalyStrategy,
+    StoreService,
 )
 
 
@@ -108,13 +109,20 @@ def checkout_payload(card_id: str, product_id: str = "wifi-rock") -> dict:
     }
 
 
+def use_anomaly_strategy(strategy) -> None:
+    app.dependency_overrides[get_store_service] = lambda: StoreService(
+        store_catalog, product_repository, transaction_repository, strategy
+    )
+
+
 def setup_function() -> None:
     clear_repositories()
-    store_service.anomaly_strategy = DuplicateStrategy()
+    use_anomaly_strategy(DuplicateStrategy())
 
 
 def teardown_function() -> None:
     clear_repositories()
+    app.dependency_overrides.pop(get_store_service, None)
 
 
 def test_store_pages_are_available() -> None:
@@ -182,7 +190,7 @@ def test_foreign_fraud_scenario_supports_every_configured_location(country: str,
     client = TestClient(app)
     customer = create_customer(client)
     login(client)
-    store_service.anomaly_strategy = ForeignFraudStrategy(country, city)
+    use_anomaly_strategy(ForeignFraudStrategy(country, city))
 
     response = client.post(
         "/api/store/checkout",
@@ -203,7 +211,7 @@ def test_random_fraud_scenario_can_create_ten_searchable_merchants() -> None:
     customer = create_customer(client)
     login(client)
     card_id = customer["demo_card"]["product_id"]
-    store_service.anomaly_strategy = RandomAnomalyStrategy(FraudMerchantSequenceGenerator())
+    use_anomaly_strategy(RandomAnomalyStrategy(FraudMerchantSequenceGenerator()))
 
     for _merchant in FOREIGN_FRAUD_MERCHANTS:
         response = client.post("/api/store/checkout", json=checkout_payload(card_id))
