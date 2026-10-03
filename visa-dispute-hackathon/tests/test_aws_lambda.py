@@ -86,6 +86,7 @@ class AwsLambdaTests(unittest.TestCase):
                 return_value={
                     "OPENAI_API_KEY": "test-key",
                     "OPENAI_WEBHOOK_SECRET": "test-secret",
+                    "JEV_API_KEY": "jev-test-key",
                 },
             ),
             patch.object(
@@ -103,6 +104,7 @@ class AwsLambdaTests(unittest.TestCase):
         self.assertEqual(customer.document_number, "123456")
         self.assertEqual(customer.first_name, "Gabriel")
         self.assertEqual(customer.last_name, "Silveira")
+        self.assertEqual(gateway_type.call_args.kwargs["jev_api_key"], "jev-test-key")
 
     def test_valid_webhook_accepts_then_invokes_worker(self):
         gateway = FakeGateway(incoming_event())

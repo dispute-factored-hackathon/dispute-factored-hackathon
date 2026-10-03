@@ -94,6 +94,7 @@ def _load_openai_secret() -> dict[str, str]:
     return _load_json_secret(
         "OPENAI_SECRET_ARN",
         required_keys={
+            "JEV_API_KEY",
             "OPENAI_API_KEY",
             "OPENAI_WEBHOOK_SECRET",
         },
@@ -153,6 +154,7 @@ def _get_gateway() -> SipRealtimeGateway:
             satisfaction_survey_repository=satisfaction_survey_repository,
             api_key=secret["OPENAI_API_KEY"],
             webhook_secret=secret["OPENAI_WEBHOOK_SECRET"],
+            jev_api_key=secret.get("JEV_API_KEY"),
         )
 
         _telemetry(
