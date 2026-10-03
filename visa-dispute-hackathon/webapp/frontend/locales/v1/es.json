@@ -370,5 +370,17 @@
   "tour.profile_title": "Mantén tus datos actualizados",
   "tour.profile_body": "Aquí puedes cambiar tus preferencias de contacto e idioma. El Factored ID permanece como solo lectura.",
   "tour.finish_title": "Comienza en Shady Business",
-  "tour.finish_body": "Tu primera experiencia después del tutorial es visitar Shady Business y comprar un artículo divertido con la tarjeta ficticia. La compra crea un movimiento realista que podrás encontrar y reclamar en Factored Bank."
+  "tour.finish_body": "Tu primera experiencia después del tutorial es visitar Shady Business y comprar un artículo divertido con la tarjeta ficticia. La compra crea un movimiento realista que podrás encontrar y reclamar en Factored Bank.",
+  "izzy.role": "Asistente virtual · Reclamos de tarjeta",
+  "izzy.prefer_to_talk": "¿Prefieres hablar?",
+  "izzy.conversation_label": "Conversación con Izzy",
+  "izzy.closed": "Esta conversación terminó.",
+  "izzy.new_chat": "Iniciar un chat nuevo",
+  "izzy.message_label": "Mensaje para Izzy",
+  "izzy.placeholder": "Describe la transacción…",
+  "izzy.send": "Enviar mensaje",
+  "izzy.typing": "Izzy está escribiendo",
+  "izzy.session_expired": "Este chat expiró. Inicia un chat nuevo para continuar.",
+  "izzy.unavailable": "No puedo comunicarme con Izzy ahora. Inténtalo de nuevo en un momento o llama a Izzy.",
+  "izzy.page_description": "Chatea con Izzy, el asistente virtual de Factored Bank para reclamos de tarjeta."
 }

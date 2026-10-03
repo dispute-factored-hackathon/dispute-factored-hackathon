@@ -283,6 +283,23 @@ The voice channel (`dispute-sip-server` and the Lambda worker) uses the same dat
 
 Limitations: the data is synthetic, and the parody shop catalog is static copy. Purchases and complaints written by the app or by calls exist only in PostgreSQL; they are not synchronized back to the lakehouse yet.
 
+## Izzy web chat (`/agent`)
+
+Signed-in customers can chat with Izzy from the Izzy tab, or from **Report** on a transaction (`/agent?transaction_id=…`). The chat is mobile-first and streams Izzy's replies. The page also shows Izzy's phone line (`IZZY_PHONE_NUMBER`, served by `GET /api/izzy/contact`) as the alternative channel.
+
+How it works:
+
+- **Customer context:** the customer comes from the web session cookie, so Izzy greets them by name and never asks for the Factored ID, phone, or document again. The session id is bound to that customer; any other customer gets `404`.
+- **Same workflow as calls:** `dispute_agent/web_chat` contains the chat's own LangGraph graph (`guard_input → interpret → screen_abuse → global_controls → workflow → compose_reply`). It runs on `WebChatDisputeService`, a subclass of `VoiceCallService`, so it reuses the call stages unchanged: transaction search and confirmation, Visa classification, card blocking, complaint filing, and CSAT. The voice module is untouched. Interactions, transcripts, surveys, and complaints are recorded with the `Web Chat` channel.
+- **Decisions:** each turn goes first through Jev, with the same bounded questions and thresholds as calls. Then a schema-constrained LLM classifier (`ChatTurnInterpretation`) handles what a call's Realtime model handles: search filters and stage intents. State changes only for an allowed, non-`other` intent above the confidence gate. Prompt abuse is blocked on the single ingress before any branch runs. Human, restart, and cancel are handled before stage decisions.
+- **Replies:** the greeting is deterministic. After that, each reply is generated in streaming from authoritative facts (the transaction, Visa code, complaint number) and a reference message: the voice templates or web-specific texts. If the model fails, or drops a required identifier such as the complaint number, the reference text replaces it.
+- **Transaction context:** a `transaction_id` is used only when it belongs to the customer. Otherwise it is ignored without revealing whether it exists.
+- **API:**
+  - `POST /api/izzy/sessions` with `{transaction_id?, locale?}` opens a chat.
+  - `POST /api/izzy/sessions/{id}/messages` with `{message}` returns `text/event-stream`, with `delta`, `replace`, `error`, `state`, and `done` events.
+
+Limitations: chat sessions and LangGraph checkpoints live in process memory (`InMemorySaver`). They expire after `IZZY_CHAT_SESSION_TTL_MINUTES`, are lost on restart, and require a single server process. There is no live human handoff in the web chat; Izzy offers the phone line instead. Complaints are demo records and are never sent to Visa. Without `OPENAI_API_KEY`, the chat answers with an "unavailable" message that includes the phone number.
+
 ## Demo web login
 
 The web interface offers two paths: a searchable synthetic-customer selector for judges and the original six-digit Factored ID login. Search is case- and accent-insensitive, duplicate names have a safe profile label, and the browser receives no document numbers in search results. The selected opaque value is signed, resolved to the customer document number server-side, and passed through the same Factored ID authentication method before the normal isolated customer session is created.

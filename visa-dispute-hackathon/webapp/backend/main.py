@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from dispute_agent.web_chat import build_izzy_web_chat
 from webapp.backend.api.dependencies import (
     SESSION_COOKIE_NAME,
     AuthenticationServiceDependency,
@@ -19,6 +20,7 @@ from webapp.backend.api.routes.complaints import (
 from webapp.backend.api.routes.customers import (
     router as customers_router,
 )
+from webapp.backend.api.routes.izzy import router as izzy_router
 from webapp.backend.api.routes.localization import (
     router as localization_router,
 )
@@ -47,9 +49,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # PostgreSQL is the only data store; customer data comes from `dispute-db-seed-lakehouse`.
     repositories = open_repositories(settings)
     app.state.repositories = repositories
+    # Izzy web chat: the voice dispute workflow over the same repositories.
+    app.state.izzy_chat = build_izzy_web_chat(repositories, settings)
     try:
         yield
     finally:
+        del app.state.izzy_chat
         del app.state.repositories
         repositories.close()
 
@@ -68,6 +73,7 @@ app.include_router(transactions_router)
 app.include_router(complaints_router)
 app.include_router(onboarding_router)
 app.include_router(store_router)
+app.include_router(izzy_router)
 
 
 app.mount(
@@ -82,7 +88,9 @@ app.mount(
 def page(
     filename: str,
 ) -> FileResponse:
-    return FileResponse(PAGES_DIR / filename)
+    # Pages are small HTML shells: always revalidate so a browser never keeps an outdated page
+    # (for example the old "coming soon" placeholder at /agent?intent=new_complaint).
+    return FileResponse(PAGES_DIR / filename, headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/health")
@@ -153,7 +161,7 @@ def profile_page() -> FileResponse:
 
 @app.get("/agent")
 def agent_page() -> FileResponse:
-    return page("coming-soon.html")
+    return page("agent.html")
 
 
 @app.get("/shop")

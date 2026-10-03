@@ -1,3 +1,4 @@
+import { apiRequest } from "../api.js";
 import {
     logout,
     requireCustomer,
@@ -70,6 +71,20 @@ function displayCustomer(customer) {
 }
 
 
+async function displayIzzyPhone() {
+    try {
+        const contact = await apiRequest("/izzy/contact", { method: "GET" });
+        for (const link of document.querySelectorAll(".phone-number, .call-button")) {
+            link.href = `tel:${contact.phone_number}`;
+        }
+        const number = document.querySelector(".phone-number");
+        if (number) number.textContent = contact.phone_display;
+    } catch (error) {
+        console.warn("Unable to load Izzy's phone line; keeping the default:", error);
+    }
+}
+
+
 async function initializeHome() {
     try {
         const customer =
@@ -89,6 +104,8 @@ async function initializeHome() {
         );
 
         homePage.hidden = false;
+
+        displayIzzyPhone();
 
         await initializeGuidedTour(
             customer,
