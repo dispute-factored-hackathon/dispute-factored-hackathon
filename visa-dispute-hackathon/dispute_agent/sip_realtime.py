@@ -1630,13 +1630,13 @@ class SipRealtimeGateway:
             input_configuration["turn_detection"] = {
                 "type": "server_vad",
                 "create_response": True,
-                "interrupt_response": True,
+                "interrupt_response": False,
             }
         elif state is not None and state.stage is VoiceCallStage.COMPLETED:
             input_configuration["turn_detection"] = {
                 "type": "server_vad",
                 "create_response": False,
-                "interrupt_response": True,
+                "interrupt_response": False,
             }
         return {
             "input": input_configuration,
