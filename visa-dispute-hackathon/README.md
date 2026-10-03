@@ -182,7 +182,7 @@ The infrastructure definitions are split because ECR must exist before Docker ca
 - a GitHub release is published; or
 - a maintainer starts the workflow manually.
 
-The workflow uses GitHub OIDC to obtain short-lived AWS credentials. It does not store an AWS access key. The one-time role is defined in `infra/aws/github-actions-role.yaml`; deploy that stack and save its `RoleArn` as the repository Actions secret `AWS_DEPLOY_ROLE_ARN`. Its trust policy accepts only this repository's merged-PR event, `main`, and release tags. Manual deployments must be started from `main`.
+The workflow uses GitHub OIDC to obtain short-lived AWS credentials. It does not store an AWS access key. The one-time role is defined in `infra/aws/github-actions-role.yaml`; deploy that stack and save its `RoleArn` as the repository Actions secret `AWS_DEPLOY_ROLE_ARN`. Its trust policy accepts only this repository's merged-PR event, `main`, and release tags. Manual deployments must be started from `main`. The trust policy uses GitHub's immutable organization and repository IDs in addition to their names because those IDs are present in the repository's OIDC `sub` claim; if the repository is moved or recreated, update both ID parameters before deploying the role stack.
 
 The complete synthetic customer table is intentionally not committed. On GitHub-hosted runners, the deploy script extracts `customers.csv` from the newest immutable image already present in the project's ECR repository, then embeds it in the new image. Consequently, the first deployment must still be performed locally with `CUSTOMERS_BUILD_CONTEXT` pointing to a directory containing `customers.csv`. Subsequent automated deployments need no additional data service or paid storage.
 
