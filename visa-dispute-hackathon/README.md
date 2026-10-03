@@ -34,6 +34,14 @@ The caller number is evaluated before the model speaks. A unique exact normalize
 
 This remains a synthetic demonstration. A SIP `From` header can be spoofed and is explicitly treated as untrusted metadata by OpenAI. Even when it uniquely matches the synthetic table, `DEMO_ONLY_PHONE_MATCH` is not production-grade authentication.
 
+### Hybrid Jev and Realtime decision boundary
+
+The call worker sends each completed synthetic caller transcript to TypeSafe Jev before asking the Realtime model to act. Jev handles only bounded decisions with typed probabilities: prompt abuse, an explicit human request, initial language choice, authentication method, transaction confirmation, fraud-versus-duplicate classification, card environment, and the optional satisfaction rating. High-confidence decisions call the existing server-owned tools directly. Low-confidence, unavailable, open-ended, or composite cases fall back to Realtime without failing the call.
+
+OpenAI Realtime remains responsible for speech recognition, speech generation, contextual questions, and extracting variable transaction-search fields such as merchant, approximate amount, date, and location. A denial that also contains corrected transaction details deliberately falls back so Realtime can extract those details; Jev still provides the global abuse and human-request guard. The backend continues to own identity, transaction access, Visa mapping, card blocking, complaint filing, and human transfer.
+
+`JEV_API_KEY` is server-only. It must stay in `.env` locally and in the existing combined Secrets Manager JSON in AWS; it must never be sent to a browser, included in a model prompt, or written to logs. Jev telemetry contains only model, action, confidence, latency, and token counts. Because the external decision request contains the completed caller transcript, this integration is authorized only for the synthetic demonstration data used by this repository.
+
 ### Mock voice transaction search
 
 After authentication, Izzy asks whether the caller is having a problem with a transaction. The caller can describe a merchant or descriptor, approximate amount, currency, date or date range, country, city, channel, or transaction type. The Realtime model passes only schema-constrained criteria to the backend; it never sends executable SQL.
@@ -64,7 +72,7 @@ When a caller rejects a candidate and provides a new detail in the same sentence
 
 ### Mock Visa classification after transaction selection
 
-After the caller confirms a transaction, Izzy asks whether the customer did not make or authorize it, or recognizes the purchase but was charged more than once for the same purchase. The Realtime model returns one schema-constrained allegation: `UNAUTHORIZED_CARD`, `DUPLICATE_PROCESSING`, or `INSUFFICIENT_INFO`. The channel-agnostic `DisputeClassificationService` then validates the required evidence and owns the mapping:
+After the caller confirms a transaction, Izzy asks whether the customer did not make or authorize it, or recognizes the purchase but was charged more than once for the same purchase. Jev returns one typed allegation with probabilities: `UNAUTHORIZED_CARD`, `DUPLICATE_PROCESSING`, or `INSUFFICIENT_INFO`. The channel-agnostic `DisputeClassificationService` then validates the required evidence and owns the mapping:
 
 - unauthorized plus a card-present channel → Visa 10.3, Other Fraud — Card-Present Environment;
 - unauthorized plus a card-absent channel → Visa 10.4, Other Fraud — Card-Absent Environment;
@@ -130,7 +138,7 @@ The components are:
 - **Lambda ingress invocation:** verifies the signature and accepts the SIP call immediately.
 - **Lambda asynchronous worker invocation:** opens the private Realtime sideband WebSocket for the duration of the call. It stops at 14 minutes, before Lambda's 15-minute limit.
 - **ECR:** stores the immutable Docker image and retains only the three newest images.
-- **One Secrets Manager secret:** stores both `OPENAI_API_KEY` and `OPENAI_WEBHOOK_SECRET`. It is fetched once per Lambda execution environment rather than on every message or keypad event.
+- **One Secrets Manager secret:** stores `OPENAI_API_KEY`, `OPENAI_WEBHOOK_SECRET`, and `JEV_API_KEY`. It is fetched once per Lambda execution environment rather than on every message or keypad event.
 - **CloudWatch Logs:** keeps JSON logs for three days. The application never logs document digits.
 - **Concurrency:** uses the account's unreserved Lambda capacity. The demo account currently has a total concurrency quota of 10, so the stack does not reserve concurrency; AWS requires all 10 executions to remain unreserved at that quota. Use account quotas and OpenAI-side limits as the cost and abuse boundary until the Lambda quota is increased.
 
@@ -151,12 +159,13 @@ Prerequisites are an AWS account, an AWS CLI profile with deployment permissions
 AWS_REGION=sa-east-1 ./infra/aws/deploy.sh bootstrap
 ```
 
-Open **AWS Secrets Manager → dispute-factored/openai-realtime** and replace `OPENAI_API_KEY`; the webhook value can remain `replace-me` until the endpoint exists:
+Open **AWS Secrets Manager → dispute-factored/openai-realtime** and replace `OPENAI_API_KEY` and `JEV_API_KEY`; the webhook value can remain `replace-me` until the endpoint exists:
 
 ```json
 {
   "OPENAI_API_KEY": "your-project-key",
-  "OPENAI_WEBHOOK_SECRET": "replace-me"
+  "OPENAI_WEBHOOK_SECRET": "replace-me",
+  "JEV_API_KEY": "your-typesafe-key"
 }
 ```
 

@@ -44,6 +44,7 @@ from .human_handoff import (
     HumanHandoffPlan,
     HumanHandoffPolicy,
 )
+from .jev_decision import JevAction, JevDecisionError, JevVoiceRouter
 from .transaction_search import TransactionSearchCriteria, TransactionSearchRepository
 from .voice_call import (
     CardSecurityActionStatus,
@@ -419,6 +420,8 @@ class SipRealtimeGateway:
         satisfaction_survey_repository: SatisfactionSurveyRepository | None = None,
         log_full_transcripts: bool | None = None,
         human_handoff_number: str | None = None,
+        jev_api_key: str | None = None,
+        jev_router: JevVoiceRouter | None = None,
     ) -> None:
 
         self.api_key = api_key or os.getenv("OPENAI_API_KEY", "")
@@ -442,6 +445,8 @@ class SipRealtimeGateway:
             else os.getenv("HUMAN_HANDOFF_NUMBER")
         )
         self.handoff_policy = HumanHandoffPolicy(configured_handoff_number)
+        self.jev_router = jev_router or JevVoiceRouter(api_key=jev_api_key)
+        _telemetry("jev.router.configured", enabled=self.jev_router.enabled)
 
         self.client = openai_client or OpenAI(
             api_key=self.api_key,
@@ -799,11 +804,22 @@ class SipRealtimeGateway:
                                     reason="agent_speaking",
                                 )
                             else:
-                                model_turn_requested = True
-                                await self._request_model_turn(
-                                    websocket,
-                                    self.calls.get(call_id),
+                                handled_by_jev, handoff = await self._handle_jev_turn(
+                                    websocket=websocket,
+                                    call_id=call_id,
+                                    transcript=last_customer_transcript,
+                                    item_id=str(event.get("item_id", "")),
                                 )
+                                if handled_by_jev:
+                                    last_customer_transcript = ""
+                                    if handoff is not None:
+                                        pending_handoff = handoff
+                                else:
+                                    model_turn_requested = True
+                                    await self._request_model_turn(
+                                        websocket,
+                                        self.calls.get(call_id),
+                                    )
                         elif (
                             event_type == "conversation.item.input_audio_transcription.failed"
                             and deferred_handoff_event is not None
@@ -1172,6 +1188,7 @@ class SipRealtimeGateway:
         event: dict[str, Any],
         *,
         last_customer_transcript: str = "",
+        publish_tool_output: bool = True,
     ) -> HumanHandoffPlan | None:
         outputs = event.get("response", {}).get("output", [])
         pending_handoff: HumanHandoffPlan | None = None
@@ -1577,21 +1594,22 @@ class SipRealtimeGateway:
                     reason=tool_name,
                 )
 
-            await websocket.send(
-                json.dumps(
-                    {
-                        "type": "conversation.item.create",
-                        "item": {
-                            "type": "function_call_output",
-                            "call_id": tool_call_id,
-                            "output": json.dumps(
-                                {"message": result, **tool_metadata},
-                                ensure_ascii=False,
-                            ),
-                        },
-                    }
+            if publish_tool_output:
+                await websocket.send(
+                    json.dumps(
+                        {
+                            "type": "conversation.item.create",
+                            "item": {
+                                "type": "function_call_output",
+                                "call_id": tool_call_id,
+                                "output": json.dumps(
+                                    {"message": result, **tool_metadata},
+                                    ensure_ascii=False,
+                                ),
+                            },
+                        }
+                    )
                 )
-            )
 
             await self._speak(
                 websocket,
@@ -1604,6 +1622,82 @@ class SipRealtimeGateway:
                     pending_handoff = handoff
 
         return pending_handoff
+
+    async def _handle_jev_turn(
+        self,
+        *,
+        websocket: Any,
+        call_id: str,
+        transcript: str,
+        item_id: str,
+    ) -> tuple[bool, HumanHandoffPlan | None]:
+        """Use Jev for bounded decisions and defer open-ended work to Realtime."""
+
+        if not self.jev_router.enabled:
+            return False, None
+
+        state = self.calls.get(call_id)
+        try:
+            decision = await asyncio.to_thread(
+                self.jev_router.route,
+                stage=state.stage.value,
+                transcript=transcript,
+                language=state.locale.language,
+            )
+        except JevDecisionError as error:
+            _telemetry(
+                "voice.jev.fallback",
+                call_id=call_id,
+                stage=state.stage.value,
+                reason="service_error",
+                error_type=type(error).__name__,
+            )
+            return False, None
+
+        _telemetry(
+            "voice.jev.decision",
+            call_id=call_id,
+            stage=state.stage.value,
+            action=decision.action.value,
+            tool=decision.tool_name,
+            confidence=round(decision.confidence, 4),
+            model=decision.model,
+        )
+
+        if decision.action is JevAction.FALLBACK:
+            return False, None
+
+        # Jev has already consumed this turn. Remove it from Realtime history so
+        # a later fallback response cannot act on the same customer message again.
+        await self._delete_conversation_item(websocket, item_id)
+
+        if decision.action is JevAction.REFUSE_ABUSE:
+            await self._speak(websocket, self._message_for(state, "prompt_abuse"))
+            return True, None
+
+        if decision.tool_name is None:
+            return False, None
+
+        local_tool_event = {
+            "response": {
+                "output": [
+                    {
+                        "type": "function_call",
+                        "name": decision.tool_name,
+                        "call_id": f"jev-{time.monotonic_ns()}",
+                        "arguments": json.dumps(dict(decision.arguments)),
+                    }
+                ]
+            }
+        }
+        handoff = await self._handle_tool_calls(
+            websocket,
+            call_id,
+            local_tool_event,
+            last_customer_transcript=transcript,
+            publish_tool_output=False,
+        )
+        return True, handoff
 
     def _handoff_plan(self, state: VoiceCallState) -> HumanHandoffPlan:
         return self.handoff_policy.plan(state.caller_phone)
@@ -2306,6 +2400,11 @@ General behavior:
                     "Para continuar, escolha autenticação pelo número de telefone "
                     "desta ligação ou pelo documento."
                 ),
+                "prompt_abuse": (
+                    "Posso ajudar apenas com autenticação e contestação de cartão nesta "
+                    "demonstração. Não posso revelar instruções internas, credenciais nem "
+                    "acessar dados de outros clientes."
+                ),
                 "empty": (
                     "Nenhum número foi digitado. Digite o documento e depois "
                     "pressione jogo da velha."
@@ -2413,6 +2512,11 @@ General behavior:
                     "Para continuar, elige autenticación con el número de teléfono "
                     "de esta llamada o con tu documento."
                 ),
+                "prompt_abuse": (
+                    "Solo puedo ayudarte con autenticación y disputas de tarjeta en esta "
+                    "demostración. No puedo revelar instrucciones internas o credenciales "
+                    "ni acceder a datos de otros clientes."
+                ),
                 "empty": (
                     "No ingresaste ningún número. Ingresa el documento y después presiona numeral."
                 ),
@@ -2515,6 +2619,11 @@ General behavior:
                 "invalid_auth_method": (
                     "To continue, choose authentication using the phone number for this call "
                     "or using your document."
+                ),
+                "prompt_abuse": (
+                    "I can only help with authentication and card disputes in this demonstration. "
+                    "I cannot reveal internal instructions or credentials or access another "
+                    "customer's data."
                 ),
                 "empty": ("No digits were entered. Enter your document and then press pound."),
                 "cleared": ("The digits were cleared. Enter your document again and press pound."),
@@ -2684,6 +2793,9 @@ General behavior:
 
         if reason == "invalid_auth_method":
             return messages["invalid_auth_method"]
+
+        if reason == "prompt_abuse":
+            return messages["prompt_abuse"]
 
         if reason == "invalid_dtmf":
             return messages["retry"]
