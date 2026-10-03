@@ -1,6 +1,6 @@
-import json
 import unittest
-from unittest.mock import patch
+
+import httpx
 
 from dispute_agent.jev_decision import (
     JevAction,
@@ -36,20 +36,6 @@ class FakeClient:
             "answers": self.answers,
             "usage": {"input_tokens": 10, "output_tokens": 3},
         }
-
-
-class FakeResponse:
-    def __init__(self, payload):
-        self.payload = payload
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, traceback):
-        return False
-
-    def read(self):
-        return json.dumps(self.payload).encode()
 
 
 class JevVoiceRouterTests(unittest.TestCase):
@@ -194,29 +180,36 @@ class JevVoiceRouterTests(unittest.TestCase):
 
 class JevClientTests(unittest.TestCase):
     def test_client_sends_bearer_key_and_returns_typed_answers(self):
-        response = FakeResponse(
-            {
-                "model": "jev-test",
-                "answers": {"decision": noul(0.8)},
-                "usage": {"input_tokens": 10, "output_tokens": 1},
-            }
-        )
-        with patch("urllib.request.urlopen", return_value=response) as urlopen:
-            result = JevClient("secret", endpoint="https://example.test/v1/systemone").decide(
-                state={"customer_utterance": "hello"},
-                questions={"decision": {"type": "noul", "instructions": "Is it a greeting?"}},
+        captured_request = None
+
+        def handler(request):
+            nonlocal captured_request
+            captured_request = request
+            return httpx.Response(
+                200,
+                json={
+                    "model": "jev-test",
+                    "answers": {"decision": noul(0.8)},
+                    "usage": {"input_tokens": 10, "output_tokens": 1},
+                },
             )
 
-        request = urlopen.call_args.args[0]
-        self.assertEqual(request.get_header("Authorization"), "Bearer secret")
+        result = JevClient("secret", transport=httpx.MockTransport(handler)).decide(
+            state={"customer_utterance": "hello"},
+            questions={"decision": {"type": "noul", "instructions": "Is it a greeting?"}},
+        )
+
+        self.assertIsNotNone(captured_request)
+        self.assertEqual(captured_request.headers["Authorization"], "Bearer secret")
+        self.assertEqual(str(captured_request.url), "https://api.typesafe.ai/v1/systemone")
         self.assertEqual(result["answers"]["decision"]["noul"], 0.8)
 
     def test_client_rejects_malformed_response(self):
-        with (
-            patch("urllib.request.urlopen", return_value=FakeResponse({"model": "jev-test"})),
-            self.assertRaises(JevDecisionError),
-        ):
-            JevClient("secret").decide(
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"model": "jev-test"})
+        )
+        with self.assertRaises(JevDecisionError):
+            JevClient("secret", transport=transport).decide(
                 state={"customer_utterance": "hello"},
                 questions={"decision": {"type": "noul"}},
             )

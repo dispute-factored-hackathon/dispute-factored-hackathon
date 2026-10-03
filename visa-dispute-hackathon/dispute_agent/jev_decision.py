@@ -11,12 +11,12 @@ import json
 import logging
 import os
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
+
+import httpx
 
 LOGGER = logging.getLogger(__name__)
 
@@ -49,20 +49,20 @@ class JevVoiceDecision:
 class JevClient:
     """Small dependency-free client for TypeSafe's System One API."""
 
-    DEFAULT_ENDPOINT = "https://api.typesafe.ai/v1/systemone"
+    BASE_URL = "https://api.typesafe.ai"
 
     def __init__(
         self,
         api_key: str,
         *,
         model: str = "jev-latest",
-        endpoint: str = DEFAULT_ENDPOINT,
         timeout_seconds: float = 5.0,
+        transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.api_key = api_key.strip()
         self.model = model
-        self.endpoint = endpoint
         self.timeout_seconds = timeout_seconds
+        self.transport = transport
 
     def decide(
         self,
@@ -76,23 +76,24 @@ class JevClient:
             raise JevDecisionError("JEV_API_KEY is not configured")
 
         started = time.monotonic()
-        body = json.dumps(
-            {"model": self.model, "state": dict(state), "questions": dict(questions)}
-        ).encode("utf-8")
-        request = urllib.request.Request(
-            self.endpoint,
-            data=body,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-                payload = json.load(response)
-        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError) as error:
+            with httpx.Client(
+                base_url=self.BASE_URL,
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                timeout=self.timeout_seconds,
+                transport=self.transport,
+            ) as client:
+                response = client.post(
+                    "/v1/systemone",
+                    json={
+                        "model": self.model,
+                        "state": dict(state),
+                        "questions": dict(questions),
+                    },
+                )
+                response.raise_for_status()
+                payload = response.json()
+        except (httpx.HTTPError, ValueError) as error:
             _telemetry(
                 "jev.decision.failed",
                 model=self.model,
@@ -134,7 +135,6 @@ class JevVoiceRouter:
             JevClient(
                 resolved_key,
                 model=os.getenv("JEV_MODEL", "jev-latest"),
-                endpoint=os.getenv("JEV_API_URL", JevClient.DEFAULT_ENDPOINT),
             )
             if resolved_key.strip()
             else None
