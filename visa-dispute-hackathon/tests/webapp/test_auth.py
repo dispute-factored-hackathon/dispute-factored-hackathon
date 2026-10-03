@@ -174,6 +174,30 @@ def test_me_returns_authenticated_customer() -> None:
     assert body["onboarding_eligible"] is True
 
 
+def test_signed_demo_session_survives_a_fresh_lambda_repository() -> None:
+    client = TestClient(app)
+    created = create_customer(client)
+    response = login(client)
+    assert response.status_code == 200
+
+    session_repository._sessions.clear()
+
+    me = client.get("/api/auth/me")
+    assert me.status_code == 200
+    assert me.json()["customer_id"] == created["customer_id"]
+
+
+def test_tampered_signed_demo_session_is_rejected() -> None:
+    client = TestClient(app)
+    create_customer(client)
+    response = login(client)
+    session_id = response.cookies["factored_session"]
+    session_repository._sessions.clear()
+    client.cookies.set("factored_session", f"{session_id[:-1]}x")
+
+    assert client.get("/api/auth/me").status_code == 401
+
+
 def test_logout_invalidates_session() -> None:
     client = TestClient(app)
 

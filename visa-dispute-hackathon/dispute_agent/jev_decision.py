@@ -345,6 +345,10 @@ class JevVoiceRouter:
     @classmethod
     def _questions_for(cls, stage: str) -> dict[str, dict[str, Any]]:
         questions = cls._base_questions()
+        if stage == "dispute_classified":
+            # The caller is answering a tightly scoped 1-to-5 survey. A bare
+            # number word is expected input, not evidence of corrupted speech.
+            questions.pop("speech_clarity", None)
         criteria_by_stage: dict[str, dict[str, str]] = {
             "needs_language_confirmation": {
                 "keep": "Explicitly wants to continue in the language Izzy is already speaking.",
@@ -377,11 +381,11 @@ class JevVoiceRouter:
                 "INSUFFICIENT_INFO": "Neither claim is explicit, both conflict, or input is unrelated.",
             },
             "dispute_classified": {
-                "rating_1": "Explicit satisfaction rating of 1.",
-                "rating_2": "Explicit satisfaction rating of 2.",
-                "rating_3": "Explicit satisfaction rating of 3.",
-                "rating_4": "Explicit satisfaction rating of 4.",
-                "rating_5": "Explicit satisfaction rating of 5.",
+                "rating_1": "Rating 1: 1, one, um/uma, or uno/una, including a bare answer.",
+                "rating_2": "Rating 2: 2, two, dois/duas, or dos, including a bare answer.",
+                "rating_3": "Rating 3: 3, three, três, or tres, including a bare answer.",
+                "rating_4": "Rating 4: 4, four, quatro, or cuatro, including a bare answer.",
+                "rating_5": "Rating 5: 5, five, cinco, including a bare answer.",
                 "decline": "Clearly declines to provide a satisfaction rating.",
                 "unclear": "No explicit 1-to-5 rating or clear refusal.",
             },
@@ -393,7 +397,8 @@ class JevVoiceRouter:
                 "instructions": (
                     "Classify the caller's utterance only for the current workflow stage. "
                     "Do not infer facts that were not stated. At the satisfaction-rating stage, "
-                    "a bare digit or number word from 1 to 5 is an explicit rating."
+                    "a bare digit or number word from 1 to 5 in English, Portuguese, or Spanish "
+                    "is a complete and explicit rating; choose that rating rather than unclear."
                 ),
                 "criteria": criteria,
             }

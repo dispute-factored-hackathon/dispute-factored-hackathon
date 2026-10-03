@@ -1542,6 +1542,7 @@ class SipRealtimeGateway:
                     call_id=call_id,
                     tool=tool_name,
                     error_type=type(error).__name__,
+                    error=str(error),
                 )
 
                 if tool_name in {"set_language", "confirm_language"}:

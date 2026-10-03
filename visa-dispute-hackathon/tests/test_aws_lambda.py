@@ -106,7 +106,7 @@ class AwsLambdaTests(unittest.TestCase):
         self.assertEqual(customer.last_name, "Silveira")
         self.assertEqual(gateway_type.call_args.kwargs["jev_api_key"], "jev-test-key")
 
-    def test_valid_webhook_accepts_then_invokes_worker(self):
+    def test_valid_webhook_returns_before_worker_accepts_call(self):
         gateway = FakeGateway(incoming_event())
         request = {"body": "{}", "headers": {"webhook-signature": "test"}}
 
@@ -117,7 +117,7 @@ class AwsLambdaTests(unittest.TestCase):
             response = aws_lambda.lambda_handler(request, self.context)
 
         self.assertEqual(response["statusCode"], 202)
-        self.assertEqual(gateway.accepted, [("call_aws", "+5511999990001")])
+        self.assertEqual(gateway.accepted, [])
         invoke_worker.assert_called_once_with(
             self.context,
             call_id="call_aws",
@@ -155,6 +155,7 @@ class AwsLambdaTests(unittest.TestCase):
             response = aws_lambda.lambda_handler(event, self.context)
 
         self.assertEqual(response, {"status": "call_finished"})
+        self.assertEqual(gateway.accepted, [("call_aws", "+5511999990001")])
         self.assertEqual(
             gateway.controlled,
             [("call_aws", "+5511999990001", aws_lambda.MAX_CALL_SECONDS)],

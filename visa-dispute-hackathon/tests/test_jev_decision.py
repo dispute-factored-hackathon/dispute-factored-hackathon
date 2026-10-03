@@ -130,13 +130,31 @@ class JevVoiceRouterTests(unittest.TestCase):
         self.assertEqual(decision.tool_name, "record_csat")
         self.assertEqual(decision.arguments, {"response_intent": "RATING", "rating": 1})
 
-    def test_unclear_csat_without_rating_still_requests_clarification(self):
+    def test_csat_question_omits_generic_speech_clarity(self):
         client = FakeClient(
             {
                 "prompt_abuse": noul(0.01),
                 "explicit_human_request": noul(0.01),
                 "explicit_language_change": choice("none"),
-                "speech_clarity": choice("unclear", confidence=0.92),
+                "stage_intent": choice("rating_1", confidence=0.94),
+            }
+        )
+
+        decision = JevVoiceRouter(client=client).route(
+            stage="dispute_classified",
+            transcript="Um.",
+            language="pt",
+        )
+
+        self.assertNotIn("speech_clarity", client.requests[0]["questions"])
+        self.assertEqual(decision.arguments, {"response_intent": "RATING", "rating": 1})
+
+    def test_unclear_csat_uses_stage_specific_clarification(self):
+        client = FakeClient(
+            {
+                "prompt_abuse": noul(0.01),
+                "explicit_human_request": noul(0.01),
+                "explicit_language_change": choice("none"),
                 "stage_intent": choice("unclear", confidence=0.94),
             }
         )
@@ -147,7 +165,9 @@ class JevVoiceRouterTests(unittest.TestCase):
             language="pt",
         )
 
-        self.assertEqual(decision.action, JevAction.CLARIFY)
+        self.assertEqual(decision.action, JevAction.TOOL)
+        self.assertEqual(decision.tool_name, "record_csat")
+        self.assertEqual(decision.arguments, {"response_intent": "UNCLEAR", "rating": None})
 
     def test_prompt_abuse_takes_priority_over_stage_decision(self):
         client = FakeClient(

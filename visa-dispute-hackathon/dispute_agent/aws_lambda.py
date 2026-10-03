@@ -35,8 +35,10 @@ def _telemetry(event: str, *, call_id: str | None = None, **fields: Any) -> None
     LOGGER.info(json.dumps(payload, ensure_ascii=False, default=str))
 
 
-# The Lambda invokes itself asynchronously with this mode after the webhook
-# invocation has accepted the SIP call.
+# The Lambda invokes itself asynchronously with this mode as soon as the
+# webhook has been verified. The worker owns both accepting and controlling
+# the call so the public webhook can acknowledge delivery without waiting for
+# Secrets Manager, Jev, or OpenAI Realtime setup.
 WORKER_MODE = "control_realtime_call"
 
 # Leave headroom below a typical 15-minute Lambda timeout.
@@ -243,7 +245,7 @@ def _invoke_worker(
 
 
 def _run_worker(event: dict[str, Any]) -> dict[str, Any]:
-    """Run the long-lived sideband controller for one accepted SIP call."""
+    """Accept and run the long-lived sideband controller for one SIP call."""
 
     call_id = str(event.get("call_id", ""))
     caller_phone = str(event.get("caller_phone", ""))
@@ -267,6 +269,13 @@ def _run_worker(event: dict[str, Any]) -> dict[str, Any]:
     _telemetry("worker.started", call_id=call_id)
 
     try:
+        asyncio.run(
+            _get_gateway().accept_call(
+                call_id,
+                caller_phone,
+            )
+        )
+        _telemetry("sip.accept.completed", call_id=call_id, owner="worker")
         asyncio.run(
             _get_gateway().control_call(
                 call_id,
@@ -338,7 +347,7 @@ def lambda_handler(
     event: dict[str, Any],
     context: Any,
 ) -> dict[str, Any]:
-    """Verify the webhook, accept the SIP call, and launch its sideband worker."""
+    """Verify the webhook and launch the call-owning worker without blocking."""
 
     started = time.monotonic()
 
@@ -486,76 +495,9 @@ def lambda_handler(
         duration_ms=round((time.monotonic() - started) * 1000, 2),
     )
 
-    # ------------------------------------------------------------------
-    # 4. Accept the call synchronously.
-    #
-    # OpenAI makes the first accept/reject decision authoritative.
-    # Therefore a redelivered webhook normally gets a 404/other failure
-    # when trying to accept an already-decided call. We intentionally do
-    # NOT start another worker in that case.
-    # ------------------------------------------------------------------
-
-    _telemetry(
-        "sip.accept.started",
-        call_id=call_id,
-        event_id=event_id,
-        duration_from_handler_start_ms=round((time.monotonic() - started) * 1000, 2),
-    )
-
-    accept_started = time.monotonic()
-
-    try:
-        asyncio.run(
-            gateway.accept_call(
-                call_id,
-                caller_phone,
-            )
-        )
-
-    except Exception as error:
-        _telemetry(
-            "sip.accept.failed",
-            call_id=call_id,
-            event_id=event_id,
-            duration_ms=round((time.monotonic() - accept_started) * 1000, 2),
-            error_type=type(error).__name__,
-            error=str(error),
-        )
-        LOGGER.exception(
-            "SIP call could not be accepted; "
-            "it may already have been decided or become unavailable "
-            "event_id=%s call_id=%s",
-            event_id,
-            call_id,
-        )
-
-        # Return 200 so OpenAI does not keep redelivering an event whose
-        # call has already been accepted/rejected or is no longer live.
-        return _response(
-            200,
-            {
-                "status": "already_decided_or_unavailable",
-            },
-        )
-
-    LOGGER.info(
-        "SIP call accepted event_id=%s call_id=%s",
-        event_id,
-        call_id,
-    )
-
-    _telemetry(
-        "sip.accept.completed",
-        call_id=call_id,
-        event_id=event_id,
-        duration_ms=round((time.monotonic() - accept_started) * 1000, 2),
-        duration_from_handler_start_ms=round((time.monotonic() - started) * 1000, 2),
-    )
-
-    # ------------------------------------------------------------------
-    # 5. Start a separate asynchronous Lambda invocation for the
-    # long-running sideband WebSocket.
-    # ------------------------------------------------------------------
+    # Start a separate asynchronous invocation immediately. This keeps the
+    # webhook response below OpenAI's retry window. If the event is redelivered,
+    # OpenAI's authoritative accept endpoint rejects the duplicate worker.
 
     try:
         _invoke_worker(
@@ -576,14 +518,12 @@ def lambda_handler(
             call_id,
         )
 
-        # The SIP call is already accepted at this point. Returning a 5xx
-        # would encourage webhook redelivery, but a redelivery cannot safely
-        # accept the same call again. Log the infrastructure failure and
-        # acknowledge the webhook instead.
+        # A 5xx encourages webhook redelivery and gives the platform another
+        # chance to start the worker when Lambda invocation itself failed.
         return _response(
-            200,
+            503,
             {
-                "status": "accepted_worker_start_failed",
+                "status": "worker_start_failed",
             },
         )
 
@@ -591,13 +531,13 @@ def lambda_handler(
         "webhook.handler.completed",
         call_id=call_id,
         event_id=event_id,
-        status="accepted",
+        status="worker_started",
         duration_ms=round((time.monotonic() - started) * 1000, 2),
     )
 
     return _response(
         202,
         {
-            "status": "accepted",
+            "status": "worker_started",
         },
     )

@@ -153,6 +153,7 @@ Resources:
           REPOSITORY_BACKEND: mock
           SEED_DEMO_CUSTOMERS: "true"
           SESSION_COOKIE_SECURE: "true"
+          SESSION_DURATION_HOURS: "24"
           DEMO_SELECTOR_SECRET: "factored-hackathon-demo-selector-v1"
       LoggingConfig:
         LogFormat: JSON
