@@ -640,7 +640,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Factored Bank", instructions)
         self.assertEqual(opening["response"]["tool_choice"], "none")
 
-    async def test_opening_clears_noise_then_enables_interactive_vad(self):
+    async def test_opening_clears_noise_then_enables_non_interruptible_vad(self):
         events = [
             session_updated_event(),
             json.dumps(
@@ -669,7 +669,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         restored_turn_detection = session_updates[-1]["session"]["audio"]["input"]["turn_detection"]
         self.assertEqual(restored_turn_detection["type"], "server_vad")
         self.assertTrue(restored_turn_detection["create_response"])
-        self.assertTrue(restored_turn_detection["interrupt_response"])
+        self.assertFalse(restored_turn_detection["interrupt_response"])
 
     async def test_confirm_language_then_phone_authentication_succeeds(self):
         events = [
@@ -1304,7 +1304,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         turn_detection = gateway._input_audio_configuration(completed)["input"]["turn_detection"]
         self.assertEqual(turn_detection["type"], "server_vad")
         self.assertFalse(turn_detection["create_response"])
-        self.assertTrue(turn_detection["interrupt_response"])
+        self.assertFalse(turn_detection["interrupt_response"])
 
     def test_required_turns_allow_phase_tool_or_explicit_human_handoff(self):
         transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
