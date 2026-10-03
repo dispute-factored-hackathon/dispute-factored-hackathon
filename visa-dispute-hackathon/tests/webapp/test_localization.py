@@ -2,16 +2,16 @@ import json
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
-
-from webapp.backend.main import app
-from webapp.backend.repositories.mock import (
+from fakes import (
     complaint_repository,
     customer_repository,
     product_repository,
     session_repository,
     transaction_repository,
 )
+from fastapi.testclient import TestClient
+
+from webapp.backend.main import app
 from webapp.backend.services.localization import locale_for_country
 
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "webapp" / "frontend"

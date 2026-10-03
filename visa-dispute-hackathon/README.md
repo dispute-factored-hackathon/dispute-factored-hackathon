@@ -4,17 +4,38 @@ Issuer-side Visa dispute resolution for the call-center channel.
 
 Project documentation is maintained in the repository's [`docs`](../docs/README.md) directory. Open that directory as an Obsidian vault and start with `Home`.
 
+## Run the web app (PostgreSQL + lakehouse seed)
+
+The web app stores customers, cards (bank products), transactions, complaints and sessions only in a local PostgreSQL started with Docker. It does not start without that database, and it no longer creates customers or history in code. All customer data is copied from the synthetic hackathon lakehouse (`lakehouse.silver` on MotherDuck, read-only). Copy `.env.example` to `.env` and fill in the passwords and `MOTHERDUCK_TOKEN`. Then run, from this directory:
+
+```powershell
+docker compose up -d db
+uv sync
+uv run dispute-db-migrate
+uv run dispute-db-seed-lakehouse --dry-run      # read and validate only
+uv run dispute-db-seed-lakehouse                # 100 active customers, about 2,000 transactions
+uv run uvicorn webapp.backend.main:app --port 8000
+```
+
+The seed picks active customers with an active credit card and at least one transaction, in a stable order. Re-running it is safe because existing rows are kept. It refuses non-local databases unless `--allow-remote` is passed, and it warns when fewer than 1,000 transactions are available. Use `--customers N` for a different sample. Card numbers are masked to the last four digits before they leave the lakehouse query.
+
+New sign-ups get one demo credit card and no history. Their transactions come from purchases in `/shop`, and those purchases are what they can later dispute.
+
+Tests: `uv run pytest -q`. Route tests use in-memory test doubles from `tests/webapp/fakes.py`. The PostgreSQL integration tests run only when `TEST_POSTGRES_URL` points at a disposable server (`postgresql://postgres:<password>@127.0.0.1:<port>/postgres`). Otherwise they are skipped.
+
+Limitations: the data is synthetic, and the parody shop catalog is static copy. Purchases and complaints written by the app exist only in PostgreSQL; they are not synchronized back to the lakehouse yet.
+
 ## Demo web login
 
 The web interface offers two paths: a searchable synthetic-customer selector for judges and the original six-digit Factored ID login. Search is case- and accent-insensitive, duplicate names have a safe profile label, and the browser receives no document numbers in search results. The selected opaque value is signed, resolved to the customer document number server-side, and passed through the same Factored ID authentication method before the normal isolated customer session is created.
 
-This shortcut is controlled impersonation for the hackathon demo, not production authentication. The in-memory repository and seeded profiles are replaceable through the `CustomerRepository` contract. The selected profile exposes a regional locale (`pt-BR`, `es-CO`, `es-MX`, `es-AR`, or `en-US`) for the interface-localization layer.
+This shortcut is controlled impersonation for the hackathon demo, not production authentication. The selector searches the customers loaded by `dispute-db-seed-lakehouse` into PostgreSQL. The selected profile exposes a regional locale (`pt-BR`, `es-CO`, `es-MX`, `es-AR`, or `en-US`) for the interface-localization layer.
 
 ## Shady Business purchase simulator
 
-Authenticated demo customers can open `/shop`, browse a humorous synthetic catalog, manage a browser-session cart, and pay with one of their active mock credit cards. The server resolves authoritative catalog prices, validates card ownership and status, and writes the approved purchase to the same in-memory transaction repository used by Factored Bank.
+Authenticated demo customers can open `/shop`, browse a humorous synthetic catalog, manage a browser-session cart, and pay with one of their active mock credit cards. The server resolves authoritative catalog prices, validates card ownership and status, and writes the approved purchase to the same PostgreSQL transactions table used by Factored Bank.
 
-Every checkout also injects exactly one randomly selected training scenario: either a duplicate Shady Business charge or an unrelated high-value electronics transaction in a configured South Asian location. The receipt does not reveal the selected scenario; the judge discovers it in `/transactions` and can continue into the dispute journey. No real card network, merchant processor, money movement, inventory service, or production database is used.
+Every checkout also injects exactly one randomly selected training scenario: either a duplicate Shady Business charge or an unrelated high-value electronics transaction in a configured South Asian location. The receipt does not reveal the selected scenario; the judge discovers it in `/transactions` and can continue into the dispute journey. No real card network, merchant processor, money movement, inventory service, or production database is used; the PostgreSQL database is a local Docker container with synthetic data.
 
 ## Mock customer identification
 

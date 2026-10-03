@@ -1,3 +1,5 @@
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from webapp.backend.models.complaint import Complaint
@@ -129,3 +131,19 @@ class StoreCatalogRepository(Protocol):
     def list_all(self) -> list[StoreProduct]: ...
 
     def get_by_id(self, product_id: str) -> StoreProduct | None: ...
+
+
+def _no_resources() -> None:
+    return None
+
+
+@dataclass(frozen=True)
+class Repositories:
+    """The customer data repositories, built once at startup and injected into the routes."""
+
+    customers: CustomerRepository
+    products: ProductRepository
+    transactions: TransactionRepository
+    complaints: ComplaintRepository
+    sessions: SessionRepository
+    close: Callable[[], None] = field(default=_no_resources, repr=False, compare=False)

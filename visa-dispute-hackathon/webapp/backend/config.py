@@ -1,6 +1,5 @@
 import secrets
 from functools import lru_cache
-from typing import Literal
 
 from pydantic import Field, SecretStr
 from pydantic_settings import (
@@ -18,11 +17,7 @@ class Settings(BaseSettings):
     session_duration_hours: int = 12
     demo_selector_secret: str = Field(default_factory=lambda: secrets.token_urlsafe(32))
 
-    # Where customers, products, transactions, complaints and sessions live. "mock" keeps
-    # everything in process memory; "postgres" uses the database from docker-compose.yml.
-    repository_backend: Literal["mock", "postgres"] = "mock"
-    seed_demo_customers: bool = True
-
+    # PostgreSQL (docker-compose.yml) is the only data store; it is filled from the lakehouse.
     # Application role (DML only). Never printed: SecretStr hides the password in repr/logs.
     database_url: SecretStr | None = None
     # Owner role used only by migrations and the data loaders; the web app never uses it.
