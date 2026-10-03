@@ -1833,7 +1833,14 @@ class SipRealtimeGateway:
         if opening_guard and interactive:
             raise ValueError("opening_guard and interactive are mutually exclusive")
         transcription = self._transcription_configuration(state)
-        input_configuration: dict[str, Any] = {"transcription": transcription}
+        input_configuration: dict[str, Any] = {
+            "transcription": transcription,
+            # SIP callers normally speak into a handset close to their mouth.
+            # Filter ambient sound before both VAD and transcription so short
+            # replies such as "sim" and a 1-to-5 rating are less likely to be
+            # replaced by background speech or noise.
+            "noise_reduction": {"type": "near_field"},
+        }
         if opening_guard:
             input_configuration["turn_detection"] = None
         elif interactive or (state is not None and state.stage is VoiceCallStage.COMPLETED):

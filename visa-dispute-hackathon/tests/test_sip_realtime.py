@@ -653,10 +653,20 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             "keywords": ["Factored Bank", "Izzy", "Visa"],
         }
         self.assertEqual(configuration["audio"]["input"]["transcription"], expected)
+        self.assertEqual(
+            configuration["audio"]["input"]["noise_reduction"],
+            {"type": "near_field"},
+        )
         self.assertIsNone(configuration["audio"]["input"]["turn_detection"])
         self.assertEqual(
             self._session_updates(websocket)[0]["session"]["audio"]["input"]["transcription"],
             expected,
+        )
+        self.assertEqual(
+            self._session_updates(websocket)[0]["session"]["audio"]["input"][
+                "noise_reduction"
+            ],
+            {"type": "near_field"},
         )
         self.assertIsNone(
             self._session_updates(websocket)[0]["session"]["audio"]["input"]["turn_detection"]
