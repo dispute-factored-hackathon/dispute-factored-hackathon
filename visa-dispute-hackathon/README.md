@@ -1,8 +1,27 @@
-# Dispute Factored Hackathon
+# Dispute Factored Hackathon application
 
-Issuer-side Visa dispute resolution for the call-center channel.
+Issuer-side Visa dispute intake through a multilingual telephone agent and a synthetic banking web application.
 
 Project documentation is maintained in the [GitHub Wiki](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki).
+
+## Implementation map
+
+| Layer | Technologies | Responsibility |
+|---|---|---|
+| Browser | HTML, custom CSS, vanilla JavaScript modules, Fetch API, JSON i18n and `Intl` | Factored Bank, Shady Business, responsive onboarding and customer interactions |
+| HTTP API | FastAPI, Pydantic, Mangum and Uvicorn | REST routes, static pages, validation, sessions, health and Lambda adaptation |
+| Voice channel | Twilio SIP, OpenAI Realtime, WebSockets and the OpenAI Python SDK | Telephone audio, signed incoming-call webhook and private sideband control |
+| Agent decisions | OpenAI Realtime, TypeSafe Jev, LangGraph and LangChain OpenAI | Natural-language interpretation, bounded decisions, structured extraction and state graphs |
+| Domain | Python services, deterministic policies and Pydantic tool schemas | Customer scope, transaction ranking, Visa mapping, card block, complaint creation and handoff preconditions |
+| Persistence | Repository contracts, PostgreSQL 16, psycopg/pool and Alembic | Shared web/voice operational data, schema evolution and replaceable test adapters |
+| Data ingestion | MotherDuck, Python seed pipeline and Pydantic mapping | Read-only synthetic source, validation, masking and idempotent PostgreSQL loads |
+| Cloud | Lambda, Function URLs, ECR, Secrets Manager, CloudWatch, IAM and CloudFormation | Cost-conscious runtime, secret retrieval, logs and repeatable infrastructure in `sa-east-1` |
+| Observability | Structured CloudWatch events, LangSmith, PostgreSQL telemetry, Twilio/OpenAI consoles and GitHub Actions | Call reconstruction, model/tool traces, interaction state, provider diagnosis and delivery evidence |
+| Engineering | `uv`, Docker, Pytest, Ruff, Coverage.py, Radon, Semgrep and optional SonarQube/Gitleaks | Reproducible environments, tests, code quality, security checks and deployment |
+
+The AI layer never receives authority to choose customer scope, execute arbitrary SQL, block cards, create complaints or select the transfer destination. It returns typed interpretations; server-owned services validate evidence and perform permitted actions.
+
+For diagrams, deployment status, design boundaries and the full technology inventory, read [Solution architecture and technology stack](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki/Solution-Architecture-and-Technology-Stack). For diagnostics, read the root [`APPLICATION_LOGS.md`](../APPLICATION_LOGS.md).
 
 ## Synthetic GUI login contract
 
@@ -16,7 +35,7 @@ Run the local GUI login with the full synthetic customer table:
 CUSTOMERS_CSV=../data/raw/customers.csv uv run python -m dispute_agent.gui_app
 ```
 
-Then open `http://127.0.0.1:8000`. The current page ends after creating the demo session; the transaction page and dispute chat belong to the transaction-search workstream.
+Then open `http://127.0.0.1:8000`. The authenticated experience includes cards, transactions, complaints, profile, guided onboarding and the Shady Business simulator. The `/agent` browser chat remains a placeholder; the complete agentic dispute journey currently runs through the telephone channel.
 
 ## Synthetic voice identity contract
 
