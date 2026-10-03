@@ -56,7 +56,7 @@ The retrieval boundary guarantees that:
 - no more than ten rows are returned;
 - denied candidates are excluded from later proposals.
 
-Izzy speaks one ranked candidate at a time with merchant, date, amount/currency, city, and country. Only an explicit confirmation selects it. After each denial, Izzy asks for exactly one useful detail that has not already been requested before running retrieval and reranking again. If the caller cannot provide that detail, Izzy moves to a different question instead of repeating the same search. Refining the current candidate does not consume an additional guess; only an explicit denial does. After three denied candidates, Izzy explains that a specialist would normally help, but human operators are unavailable and handoff is outside this demonstration. Real transaction systems and real human transfer remain out of scope.
+Izzy speaks one ranked candidate at a time with merchant, date, amount/currency, city, and country. Only an explicit confirmation selects it. After each denial, Izzy asks for exactly one useful detail that has not already been requested before running retrieval and reranking again. If the caller cannot provide that detail, Izzy moves to a different question instead of repeating the same search. Refining the current candidate does not consume an additional guess; only an explicit denial does. After three denied candidates, Izzy preserves the search context and starts the same human-handoff path available through an explicit caller request. The backend, not the model, resolves the fixed destination and asks OpenAI to relay a SIP REFER only after Izzy finishes the transfer notice.
 
 Every search response states the active filters in the caller's selected language. The caller can correct a filter value, remove one named filter, or clear all filters and begin again. A correction reruns retrieval and reranking without consuming another candidate guess. Three rejected candidates or three searches with no matching transaction lead to the same simulated-human-handoff boundary.
 
@@ -107,6 +107,7 @@ Copy `.env.example` to `.env`, then set `OPENAI_API_KEY`, `OPENAI_WEBHOOK_SECRET
 CUSTOMERS_CSV=tests/fixtures/customers.csv
 OPENAI_REALTIME_MODEL=gpt-realtime-2.1
 OPENAI_REALTIME_VOICE=cedar
+HUMAN_HANDOFF_NUMBER=+5511981020050
 PORT=8001
 ```
 
@@ -215,6 +216,27 @@ sip:YOUR_OPENAI_PROJECT_ID@sip.api.openai.com;transport=tls
 ```
 
 The provider must send TLS signaling and SRTP media. Then call the number associated with the trunk. A trial provider account may require the calling number to be verified first.
+
+### Transfer to human support
+
+Izzy exposes a global `request_human` intent during every active language, authentication,
+transaction-search, confirmation, classification, and satisfaction phase. An explicit request for
+a person takes priority over the phase-specific tool. Frustration or a generic request for help does
+not trigger a transfer. Exhausted document-authentication or transaction-search attempts enter the
+same path automatically.
+
+The transfer destination comes only from the server-owned `HUMAN_HANDOFF_NUMBER` setting and is
+never accepted from caller speech or model arguments. The demo rejects a transfer when the fixed
+destination is the same as the calling phone, permits only the backend to execute the OpenAI
+Realtime `refer` operation, stores the interaction and transcript before transfer, and logs the
+result without the destination number. The current configuration targets `+5511981020050`; place
+the test call from a different telephone.
+
+In the Twilio Elastic SIP Trunk console, enable **Call Transfer (SIP REFER)** and **Call transfers
+to the PSTN**. A successful REFER is a blind transfer: the human receives the live call, while the
+structured context remains in the demo repositories and logs. There is no contact-center desktop or
+agent whisper in this prototype. If the destination is missing, matches the caller, or the provider
+rejects the REFER, Izzy explains the limitation instead of claiming a successful transfer.
 
 With the local `tests/fixtures/customers.csv`, a real caller number normally will not match the fake phone values. The AWS image instead contains the complete supplied synthetic `customers.csv`; it still normally will not contain the caller's real number. The expected fallback test is therefore:
 

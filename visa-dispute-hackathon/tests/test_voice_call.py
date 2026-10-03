@@ -306,6 +306,20 @@ class VoiceCallServiceTests(unittest.TestCase):
             state.stage,
             VoiceCallStage.HANDOFF,
         )
+        self.assertEqual(state.handoff_reason, "authentication_attempts_exhausted")
+
+    def test_explicit_human_request_preserves_authenticated_context(self):
+        state = self.authenticate_known_phone("call_explicit_human")
+
+        handed_off = self.calls.request_human(state.call_id)
+
+        self.assertEqual(handed_off.stage, VoiceCallStage.HANDOFF)
+        self.assertEqual(handed_off.handoff_reason, "customer_requested")
+        self.assertEqual(handed_off.identity, state.identity)
+        interaction = self.calls.call_interactions.interactions.get_by_id(
+            self.calls.call_interactions.interaction_id(state.call_id)
+        )
+        self.assertTrue(interaction.was_escalated)
 
     def test_dtmf_is_ignored_before_document_stage(self):
         state = self.calls.start(

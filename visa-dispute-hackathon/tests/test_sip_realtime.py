@@ -257,8 +257,10 @@ class FakeConnector:
 
 
 class FakeAcceptCalls:
-    def __init__(self):
+    def __init__(self, *, refer_error=None):
         self.accepted = []
+        self.referrals = []
+        self.refer_error = refer_error
 
     def accept(self, call_id, **configuration):
         self.accepted.append(
@@ -267,6 +269,11 @@ class FakeAcceptCalls:
                 configuration,
             )
         )
+
+    def refer(self, call_id, *, target_uri):
+        if self.refer_error is not None:
+            raise self.refer_error
+        self.referrals.append((call_id, target_uri))
 
 
 class FailingComplaintRepository(MockComplaintRepository):
@@ -277,9 +284,16 @@ class FailingComplaintRepository(MockComplaintRepository):
 
 class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
     @staticmethod
-    def _gateway(events, *, transaction_repository=None, complaint_repository=None):
+    def _gateway(
+        events,
+        *,
+        transaction_repository=None,
+        complaint_repository=None,
+        human_handoff_number=None,
+        refer_error=None,
+    ):
         websocket = FakeWebsocket(events)
-        calls = FakeAcceptCalls()
+        calls = FakeAcceptCalls(refer_error=refer_error)
         client = SimpleNamespace(realtime=SimpleNamespace(calls=calls))
         gateway = SipRealtimeGateway(
             FIXTURE,
@@ -288,8 +302,109 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             websocket_connect=FakeConnector(websocket),
             transaction_repository=transaction_repository,
             complaint_repository=complaint_repository,
+            human_handoff_number=human_handoff_number,
         )
         return gateway, websocket, calls
+
+    async def test_explicit_human_request_transfers_after_spoken_notice(self):
+        events = [
+            session_updated_event(),
+            completed_transcript_event(
+                speaker="customer",
+                transcript="Quero falar com uma pessoa.",
+            ),
+            tool_call_event("request_human", "tool_human", {}),
+            json.dumps({"type": "response.done", "response": {"output": []}}),
+        ]
+        gateway, websocket, calls = self._gateway(
+            events,
+            human_handoff_number="+5511981020050",
+        )
+
+        await gateway.accept_and_control("call_human", "+5511999990001")
+
+        self.assertEqual(calls.referrals, [("call_human", "tel:+5511981020050")])
+        self.assertEqual(gateway.calls.get("call_human").stage, "handoff")
+        spoken = [
+            event["response"]["instructions"]
+            for event in websocket.sent
+            if event.get("type") == "response.create"
+        ]
+        self.assertTrue(any("transferir você agora" in message for message in spoken))
+
+    async def test_handoff_does_not_transfer_back_to_calling_phone(self):
+        events = [
+            session_updated_event(),
+            completed_transcript_event(
+                speaker="customer",
+                transcript="Quero um atendente humano.",
+            ),
+            tool_call_event("request_human", "tool_human", {}),
+        ]
+        gateway, websocket, calls = self._gateway(
+            events,
+            human_handoff_number="+5511981020050",
+        )
+
+        await gateway.accept_and_control("call_self", "+5511981020050")
+
+        self.assertEqual(calls.referrals, [])
+        tool_output = self._tool_outputs(websocket)[-1]["item"]["output"]
+        self.assertIn("mesmo número", tool_output)
+
+    async def test_handoff_failure_preserves_progress_and_explains_failure(self):
+        events = [
+            session_updated_event(),
+            completed_transcript_event(
+                speaker="customer",
+                transcript="Preciso falar com uma pessoa.",
+            ),
+            tool_call_event("request_human", "tool_human", {}),
+            json.dumps({"type": "response.done", "response": {"output": []}}),
+            json.dumps({"type": "response.done", "response": {"output": []}}),
+        ]
+        gateway, websocket, calls = self._gateway(
+            events,
+            human_handoff_number="+5511981020050",
+            refer_error=RuntimeError("synthetic transfer failure"),
+        )
+
+        await gateway.accept_and_control("call_failed_handoff", "+5511999990001")
+
+        self.assertEqual(calls.referrals, [])
+        self.assertEqual(gateway.calls.get("call_failed_handoff").stage, "handoff")
+        spoken = [
+            event["response"]["instructions"]
+            for event in websocket.sent
+            if event.get("type") == "response.create"
+        ]
+        self.assertTrue(any("Não consegui completar a transferência" in item for item in spoken))
+
+    async def test_exhausted_document_authentication_uses_same_real_handoff(self):
+        events = [
+            session_updated_event(),
+            tool_call_event("confirm_language", "tool_language", {}),
+            tool_call_event(
+                "set_authentication_method",
+                "tool_auth",
+                {"method": "document"},
+            ),
+            *[dtmf_event(key) for key in "000#000#000#"],
+            json.dumps({"type": "response.done", "response": {"output": []}}),
+        ]
+        gateway, _, calls = self._gateway(
+            events,
+            human_handoff_number="+5511981020050",
+        )
+
+        await gateway.accept_and_control("call_auth_exhausted", "+5511999990001")
+
+        self.assertEqual(
+            calls.referrals,
+            [("call_auth_exhausted", "tel:+5511981020050")],
+        )
+        state = gateway.calls.get("call_auth_exhausted")
+        self.assertEqual(state.handoff_reason, "authentication_attempts_exhausted")
 
     @staticmethod
     def _session_updates(websocket):
@@ -1106,38 +1221,42 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(turn_detection["create_response"])
         self.assertTrue(turn_detection["interrupt_response"])
 
-    def test_server_requires_tool_only_turns_for_confirmation_and_classification(self):
+    def test_required_turns_allow_phase_tool_or_explicit_human_handoff(self):
         transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
         self.addCleanup(transactions.close)
         gateway, _, _ = self._gateway([], transaction_repository=transactions)
         state = gateway.calls.start("+5511999990001", call_id="call_tool_choice")
+        self.assertEqual(gateway._tool_choice_for(state), "required")
         self.assertEqual(
-            gateway._tool_choice_for(state),
-            {"type": "function", "name": "set_language"},
+            {tool["name"] for tool in gateway._tools_for(state)},
+            {"set_language", "confirm_language", "request_human"},
         )
 
         state = gateway.calls.confirm_language(state.call_id)
+        self.assertEqual(gateway._tool_choice_for(state), "required")
         self.assertEqual(
-            gateway._tool_choice_for(state),
-            {"type": "function", "name": "set_authentication_method"},
+            {tool["name"] for tool in gateway._tools_for(state)},
+            {"set_authentication_method", "request_human"},
         )
         state = gateway.calls.choose_authentication_method(state.call_id, method="phone")
         selection = gateway.calls.search_transactions(
             state.call_id,
             TransactionSearchCriteria(merchant_query="lemon"),
         )
+        self.assertEqual(gateway._tool_choice_for(selection.state), "required")
         self.assertEqual(
-            gateway._tool_choice_for(selection.state),
-            {"type": "function", "name": "confirm_transaction"},
+            {tool["name"] for tool in gateway._tools_for(selection.state)},
+            {"confirm_transaction", "request_human"},
         )
 
         confirmed = gateway.calls.resolve_transaction_candidate(
             state.call_id,
             confirmed=True,
         )
+        self.assertEqual(gateway._tool_choice_for(confirmed.state), "required")
         self.assertEqual(
-            gateway._tool_choice_for(confirmed.state),
-            {"type": "function", "name": "classify_dispute"},
+            {tool["name"] for tool in gateway._tools_for(confirmed.state)},
+            {"classify_dispute", "request_human"},
         )
 
     async def test_asr_distorted_sim_reaches_problem_classification_question(self):
@@ -1484,7 +1603,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("data", next_question)
         self.assertNotIn("nome do estabelecimento", next_question)
 
-    def test_three_denials_explain_that_human_handoff_is_unavailable(self):
+    def test_three_denials_use_configured_handoff_availability(self):
         transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
         self.addCleanup(transactions.close)
         gateway, _, _ = self._gateway([], transaction_repository=transactions)
@@ -1510,10 +1629,25 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                     TransactionSearchCriteria(merchant_query=refinement),
                 )
 
-        message = gateway._message_for(selection.state, "transaction_handoff")
-        self.assertIn("Filtros usados na última busca", message)
-        self.assertIn("atendentes humanos não estão disponíveis", message)
-        self.assertIn("fora do escopo desta demonstração", message)
+        unavailable = gateway._handoff_plan(selection.state)
+        message = gateway._message_for(
+            selection.state,
+            gateway._handoff_message_reason(unavailable),
+        )
+        self.assertIn("não está configurado", message)
+
+        configured, _, _ = self._gateway(
+            [],
+            transaction_repository=transactions,
+            human_handoff_number="+5511981020050",
+        )
+        transferable = configured._handoff_plan(selection.state)
+        message = configured._message_for(
+            selection.state,
+            configured._handoff_message_reason(transferable),
+        )
+        self.assertTrue(transferable.can_transfer)
+        self.assertIn("transferir você agora", message)
 
 
 if __name__ == "__main__":
