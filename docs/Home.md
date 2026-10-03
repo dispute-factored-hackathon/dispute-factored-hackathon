@@ -17,7 +17,7 @@ This wiki is the shared knowledge base for the Factored AI and Data Hackathon pr
 | Understand the ecosystem | [[Stakeholders-and-Responsibilities|Stakeholders]] · [[Visa-Classification-and-Codes|Visa classification]] · [[Visa-Issuer-Dispute-Lifecycle|Visa lifecycle]] |
 | Understand the evidence | [[Dataset-Overview-and-Data-Dictionary|Dataset overview]] · [[Problem-and-Baseline|Problem and baseline]] · [[Complaint-Categories-and-Classifier-Taxonomy|Complaint taxonomy]] |
 | Design the experience | [[Customer-Personas|Personas]] · [[Value-Proposition-Canvases|Value Proposition Canvases]] · [[Current-Call-Center-Journey|Current journey]] · [[Future-Journey-with-Agentic-AI|Future journey]] |
-| Build and evaluate | [[System-Data-and-Controls|System and data]] · [[Functional-and-Nonfunctional-Requirements|Requirements]] · [[Metrics-and-Prototype|Metrics]] · [[User-Stories|User stories]] · [[PostgreSQL-and-DuckDB-Partner-Deployment|Database deployment handoff]] |
+| Build and evaluate | [[System-Data-and-Controls|System and data]] · [[Functional-and-Nonfunctional-Requirements|Requirements]] · [[Metrics-and-Prototype|Metrics]] · [[User-Stories|User stories]] · [[Database-Deployment-Colleague-Handoff|Colleague database handoff]] · [[PostgreSQL-and-DuckDB-Partner-Deployment|Owner database access guide]] |
 | Check assumptions | [[Glossary-and-Limitations|Glossary]] · [[Research-Sources|Research sources]] · [[Project-Document-Index|Document index]] |
 
 ## Evidence labels
