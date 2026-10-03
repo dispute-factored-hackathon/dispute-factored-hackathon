@@ -432,7 +432,7 @@ class SipRealtimeGateway:
 
         self.input_transcription_model = os.getenv(
             "OPENAI_INPUT_TRANSCRIPTION_MODEL",
-            "gpt-4o-mini-transcribe",
+            "gpt-transcribe",
         )
         self.log_full_transcripts = (
             log_full_transcripts
@@ -883,6 +883,19 @@ class SipRealtimeGateway:
                                 response_id=str(event.get("response_id", "")),
                             )
 
+                        elif event_type in {
+                            "input_audio_buffer.speech_started",
+                            "input_audio_buffer.speech_stopped",
+                        }:
+                            _telemetry(
+                                "realtime.input_audio.speech",
+                                call_id=call_id,
+                                status=event_type.rsplit(".", 1)[-1],
+                                item_id=str(event.get("item_id", "")),
+                                audio_start_ms=event.get("audio_start_ms"),
+                                audio_end_ms=event.get("audio_end_ms"),
+                            )
+
                         elif event_type == "output_audio_buffer.stopped":
                             response_id = str(event.get("response_id", ""))
                             await websocket.send(json.dumps({"type": "input_audio_buffer.clear"}))
@@ -985,6 +998,18 @@ class SipRealtimeGateway:
                                 direct_answer = self._response_text(event)
                                 if direct_answer:
                                     await self._speak(websocket, direct_answer)
+                                else:
+                                    current_state = self.calls.get(call_id)
+                                    _telemetry(
+                                        "voice.turn.recovered",
+                                        call_id=call_id,
+                                        stage=current_state.stage.value,
+                                        reason="empty_model_response",
+                                    )
+                                    await self._speak(
+                                        websocket,
+                                        self._message_for(current_state, "turn_recovery"),
+                                    )
                             last_customer_transcript = ""
                             if handoff is not None:
                                 pending_handoff = handoff
@@ -1806,9 +1831,7 @@ class SipRealtimeGateway:
         """Configure transcription and suppress noise-driven terminal responses."""
         if opening_guard and interactive:
             raise ValueError("opening_guard and interactive are mutually exclusive")
-        transcription = (
-            {"model": self.input_transcription_model} if self.log_full_transcripts else None
-        )
+        transcription = self._transcription_configuration(state)
         input_configuration: dict[str, Any] = {"transcription": transcription}
         if opening_guard:
             input_configuration["turn_detection"] = None
@@ -1821,6 +1844,50 @@ class SipRealtimeGateway:
         return {
             "input": input_configuration,
         }
+
+    def _transcription_configuration(
+        self,
+        state: VoiceCallState | None,
+    ) -> dict[str, Any] | None:
+        """Bias transcription toward the active LATAM locale without blocking language changes."""
+        if not self.log_full_transcripts:
+            return None
+
+        active_language = state.locale.language if state is not None else "pt"
+        languages = [
+            active_language,
+            *(item for item in ("pt", "es", "en") if item != active_language),
+        ]
+        prompts = {
+            "pt": (
+                "Ligação de atendimento bancário na América Latina, principalmente em português "
+                "brasileiro. O cliente pode pedir para mudar para espanhol ou inglês."
+            ),
+            "es": (
+                "Llamada de atención bancaria en América Latina, principalmente en español "
+                "latinoamericano. El cliente puede pedir cambiar a portugués o inglés."
+            ),
+            "en": (
+                "A Latin American bank-support call, mainly in US English. The customer may ask "
+                "to switch to Portuguese or Spanish."
+            ),
+        }
+        configuration: dict[str, Any] = {
+            "model": self.input_transcription_model,
+            "prompt": prompts[active_language],
+        }
+        if self.input_transcription_model == "gpt-transcribe":
+            configuration.update(
+                {
+                    "languages": languages,
+                    "keywords": ["Factored Bank", "Izzy", "Visa"],
+                }
+            )
+        else:
+            # Legacy transcription models accept one language hint. Keep this
+            # compatibility path for deployments that override the model.
+            configuration["language"] = active_language
+        return configuration
 
     def _log_full_transcript(
         self,
@@ -2347,6 +2414,35 @@ General behavior:
         return "auto"
 
     @staticmethod
+    def _unclear_speech_message(
+        state: VoiceCallState,
+        messages: Mapping[str, str],
+    ) -> str:
+        """Explain what was not understood and repeat the next useful answer format."""
+        language = state.locale.language
+        audio_problem = {
+            "pt": "O áudio chegou incompleto ou com muito ruído. ",
+            "es": "El audio llegó incompleto o con mucho ruido. ",
+            "en": "The audio arrived incomplete or with too much noise. ",
+        }[language]
+        if state.stage is VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION:
+            return audio_problem + messages["invalid_language"]
+        if state.stage is VoiceCallStage.NEEDS_AUTH_METHOD:
+            return audio_problem + messages["invalid_auth_method"]
+        if state.stage is VoiceCallStage.NEEDS_DOCUMENT:
+            return audio_problem + messages["document"]
+        if state.stage in {
+            VoiceCallStage.AUTHENTICATED,
+            VoiceCallStage.NEEDS_TRANSACTION_DETAILS,
+        }:
+            return audio_problem + SipRealtimeGateway._transaction_clarification_message(state)
+        if state.stage is VoiceCallStage.CONFIRM_TRANSACTION:
+            return audio_problem + messages["transaction_confirmation_unclear"]
+        if state.stage is VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION:
+            return audio_problem + SipRealtimeGateway._classification_clarification_message(state)
+        return audio_problem + messages["unclear_speech"]
+
+    @staticmethod
     def _message_for(
         state: VoiceCallState,
         reason: str,
@@ -2411,6 +2507,10 @@ General behavior:
                 ),
                 "unclear_speech": (
                     "Não consegui entender o que foi dito. Pode repetir com uma frase curta?"
+                ),
+                "turn_recovery": (
+                    "Tive uma falha temporária ao processar sua resposta. "
+                    "Por favor, repita sua última resposta."
                 ),
                 "empty": (
                     "Nenhum número foi digitado. Digite o documento e depois "
@@ -2527,6 +2627,10 @@ General behavior:
                 "unclear_speech": (
                     "No pude entender lo que dijiste. ¿Puedes repetirlo con una frase corta?"
                 ),
+                "turn_recovery": (
+                    "Tuve una falla temporal al procesar tu respuesta. "
+                    "Por favor, repite tu última respuesta."
+                ),
                 "empty": (
                     "No ingresaste ningún número. Ingresa el documento y después presiona numeral."
                 ),
@@ -2637,6 +2741,10 @@ General behavior:
                 ),
                 "unclear_speech": (
                     "I couldn't understand what was said. Please repeat it in a short sentence."
+                ),
+                "turn_recovery": (
+                    "I had a temporary problem processing your answer. "
+                    "Please repeat your last answer."
                 ),
                 "empty": ("No digits were entered. Enter your document and then press pound."),
                 "cleared": ("The digits were cleared. Enter your document again and press pound."),
@@ -2842,7 +2950,10 @@ General behavior:
             return messages["prompt_abuse"]
 
         if reason == "unclear_speech":
-            return messages["unclear_speech"]
+            return SipRealtimeGateway._unclear_speech_message(state, messages)
+
+        if reason == "turn_recovery":
+            return messages["turn_recovery"]
 
         if reason == "invalid_dtmf":
             return messages["retry"]

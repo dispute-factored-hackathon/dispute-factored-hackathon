@@ -195,7 +195,7 @@ class VoiceCallService:
         interaction_repository: CallCenterInteractionRepository | None = None,
         transcript_repository: CallTranscriptRepository | None = None,
         satisfaction_survey_repository: SatisfactionSurveyRepository | None = None,
-        transcription_model: str = "gpt-4o-mini-transcribe",
+        transcription_model: str = "gpt-transcribe",
         max_transaction_guesses: int = 3,
     ) -> None:
         started = time.monotonic()
