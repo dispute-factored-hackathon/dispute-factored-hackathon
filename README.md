@@ -36,7 +36,7 @@ Read the detailed [solution architecture and technology stack](https://github.co
 
 | Area | Technologies and purpose |
 |---|---|
-| Cloud infrastructure | AWS Lambda, Lambda Function URLs, ECR, Secrets Manager, CloudWatch Logs, IAM and CloudFormation in `sa-east-1`; GitHub Actions uses OIDC for short-lived deployment access |
+| Cloud infrastructure | AWS Lambda with SnapStart for the voice path, Lambda Function URLs, ECR, Secrets Manager, CloudWatch Logs, IAM and CloudFormation in `sa-east-1`; GitHub Actions uses OIDC for short-lived deployment access |
 | Backend | Python 3.11+, FastAPI, Mangum, Uvicorn, Pydantic, PostgreSQL 16, psycopg 3/pool, Alembic, HTTPX and WebSockets |
 | Frontend | Semantic HTML, custom CSS, vanilla JavaScript modules, Fetch API, cookie sessions, JSON i18n catalogs and browser `Intl` formatting; no frontend framework or build step |
 | AI engineering | OpenAI Realtime, OpenAI structured output, TypeSafe Jev, LangGraph, LangChain OpenAI, Pydantic tool schemas, LangSmith, deterministic policy gates and evaluation datasets |
@@ -46,7 +46,7 @@ Read the detailed [solution architecture and technology stack](https://github.co
 
 ### Current deployment boundary
 
-The web and voice Lambdas, Function URLs, ECR image, server-side secrets and CloudWatch groups are deployed. The current `dev` architecture uses PostgreSQL as its operational store and MotherDuck as its synthetic source, but the PostgreSQL and DuckDB CloudFormation stacks were not deployed when this documentation was last verified on 3 October 2026. The next application release must connect the Lambda runtime to PostgreSQL and remove obsolete mock-backend environment settings.
+The web and voice Lambdas, Function URLs, ECR image, server-side secrets and CloudWatch groups are deployed. The voice Function URL targets a stable published-version alias so Lambda SnapStart can reduce initialization latency without paying for continuously provisioned instances. The current `dev` architecture uses PostgreSQL as its operational store and MotherDuck as its synthetic source, but the PostgreSQL and DuckDB CloudFormation stacks were not deployed when this documentation was last verified on 3 October 2026. The next application release must connect the Lambda runtime to PostgreSQL and remove obsolete mock-backend environment settings.
 
 ## What the prototype demonstrates
 
