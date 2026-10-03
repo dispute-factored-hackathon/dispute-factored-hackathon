@@ -201,7 +201,7 @@ class VoiceCallService:
         interaction_repository: CallCenterInteractionRepository,
         transcript_repository: CallTranscriptRepository,
         satisfaction_survey_repository: SatisfactionSurveyRepository,
-        transcription_model: str = "gpt-4o-mini-transcribe",
+        transcription_model: str = "gpt-transcribe",
         max_transaction_guesses: int = 3,
     ) -> None:
         started = time.monotonic()
@@ -238,13 +238,20 @@ class VoiceCallService:
     ) -> VoiceCallState:
         """Initialize a call without authenticating the caller.
 
-        The calling code is used only as a locale hint. Phone authentication is
-        attempted later and only if the caller explicitly chooses that method.
+        A matching phone may supply locale context, but identity is only attached
+        after the caller deliberately chooses phone authentication.
         """
         started = time.monotonic()
         resolved_call_id = call_id or secrets.token_urlsafe(24)
-        calling_code = calling_code_from_phone(mobile_phone)
-        locale = ConversationLocaleContext.from_calling_code(calling_code)
+        phone_result = self.identity.identify_phone(mobile_phone)
+        if phone_result.status is CallerIdentityStatus.AUTHENTICATED:
+            assert phone_result.identity is not None
+            locale = ConversationLocaleContext.from_customer_record(
+                country=phone_result.identity.country,
+                detected_accent=phone_result.identity.detected_accent,
+            )
+        else:
+            locale = ConversationLocaleContext.from_calling_code(phone_result.country_code)
 
         state = VoiceCallState(
             call_id=resolved_call_id,
@@ -264,7 +271,8 @@ class VoiceCallService:
             locale=state.locale.locale,
             accent=state.locale.accent,
             locale_source=state.locale.source,
-            has_calling_code=calling_code is not None,
+            phone_identity_status=phone_result.status.value,
+            authenticated=False,
         )
         return state
 
@@ -406,8 +414,6 @@ class VoiceCallService:
         """Preserve the current context and move an active call to human handoff."""
 
         state = self.get(call_id)
-        if state.stage is VoiceCallStage.COMPLETED:
-            raise ValueError("a completed call cannot be transferred")
         if state.stage is VoiceCallStage.HANDOFF:
             return state
 

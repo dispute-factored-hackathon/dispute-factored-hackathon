@@ -418,6 +418,22 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             "needs_language_confirmation",
         )
 
+    async def test_jev_corrupted_transcription_asks_to_repeat_without_handoff(self):
+        events = [
+            *opened_session_events(),
+            completed_transcript_event(speaker="customer", transcript="Sullepring"),
+        ]
+        router = FakeJevRouter(JevVoiceDecision(JevAction.CLARIFY, 0.97, model="jev-test"))
+        gateway, websocket, calls = self._gateway(events, jev_router=router)
+
+        await gateway.accept_and_control("call_jev_unclear", "+5511999990001")
+
+        self.assertEqual(gateway.calls.get("call_jev_unclear").stage, "needs_language_confirmation")
+        self.assertEqual(calls.referrals, [])
+        spoken = json.dumps(websocket.sent, ensure_ascii=False)
+        self.assertIn("O áudio chegou incompleto ou com muito ruído", spoken)
+        self.assertIn("Diga português, inglês ou espanhol", spoken)
+
     async def test_explicit_human_request_transfers_after_spoken_notice(self):
         events = [
             *opened_session_events(),
@@ -627,16 +643,42 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         )
 
         _, configuration = calls.accepted[0]
-        expected = {"model": "gpt-4o-mini-transcribe"}
+        expected = {
+            "model": "gpt-transcribe",
+            "prompt": (
+                "Ligação de atendimento bancário na América Latina, principalmente em português "
+                "brasileiro. O cliente pode pedir para mudar para espanhol ou inglês."
+            ),
+            "languages": ["pt", "es", "en"],
+            "keywords": ["Factored Bank", "Izzy", "Visa"],
+        }
         self.assertEqual(configuration["audio"]["input"]["transcription"], expected)
+        self.assertEqual(
+            configuration["audio"]["input"]["noise_reduction"],
+            {"type": "near_field"},
+        )
         self.assertIsNone(configuration["audio"]["input"]["turn_detection"])
         self.assertEqual(
             self._session_updates(websocket)[0]["session"]["audio"]["input"]["transcription"],
             expected,
         )
+        self.assertEqual(
+            self._session_updates(websocket)[0]["session"]["audio"]["input"]["noise_reduction"],
+            {"type": "near_field"},
+        )
         self.assertIsNone(
             self._session_updates(websocket)[0]["session"]["audio"]["input"]["turn_detection"]
         )
+
+    async def test_transcription_context_follows_active_latam_language(self):
+        gateway, _, _ = self._gateway([])
+        state = gateway.calls.start("+5215551234567", call_id="call_spanish_transcription")
+
+        transcription = gateway._input_audio_configuration(state)["input"]["transcription"]
+
+        self.assertEqual(transcription["model"], "gpt-transcribe")
+        self.assertEqual(transcription["languages"], ["es", "pt", "en"])
+        self.assertIn("español latinoamericano", transcription["prompt"])
 
     async def test_logs_complete_customer_and_agent_transcripts_without_redaction(self):
         customer_transcript = "Meu nome mock é João; falei R$ 13,47 & nada deve sumir."
@@ -925,6 +967,38 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             [["audio"], ["text"], ["audio"]],
         )
         self.assertIn("Sou Izzy", responses[-1]["response"]["instructions"])
+
+    async def test_empty_silent_model_turn_recovers_with_spoken_stage_prompt(self):
+        events = [
+            *opened_session_events(),
+            completed_transcript_event(
+                speaker="customer",
+                transcript="trecho incompleto",
+            ),
+            json.dumps(
+                {
+                    "type": "response.created",
+                    "response": {"id": "resp_empty_silent_turn"},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "response.done",
+                    "response": {"id": "resp_empty_silent_turn", "output": []},
+                }
+            ),
+        ]
+        gateway, websocket, _ = self._gateway(events)
+
+        await gateway.accept_and_control("call_empty_silent_turn", "+5511999990001")
+
+        responses = [event for event in websocket.sent if event.get("type") == "response.create"]
+        self.assertEqual(
+            [item["response"]["output_modalities"] for item in responses],
+            [["audio"], ["text"], ["audio"]],
+        )
+        self.assertIn("falha temporária", responses[-1]["response"]["instructions"])
+        self.assertIn("repita sua última resposta", responses[-1]["response"]["instructions"])
 
     async def test_confirm_language_then_phone_authentication_succeeds(self):
         events = [
@@ -1597,6 +1671,18 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             {tool["name"] for tool in gateway._tools_for(confirmed.state)},
             {"classify_dispute", "request_human"},
+        )
+
+        classified = gateway.calls.classify_dispute(
+            state.call_id,
+            allegation="DUPLICATE_PROCESSING",
+            customer_reports_duplicate=True,
+        )
+        completed = gateway.calls.record_csat(classified.state.call_id, rating=1)
+        self.assertEqual(gateway._tool_choice_for(completed), "auto")
+        self.assertEqual(
+            {tool["name"] for tool in gateway._tools_for(completed)},
+            {"request_human"},
         )
 
     async def test_asr_distorted_sim_reaches_problem_classification_question(self):

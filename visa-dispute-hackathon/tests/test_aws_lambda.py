@@ -116,7 +116,7 @@ class AwsLambdaTests(unittest.TestCase):
         # Regression: a hardcoded demo customer used to be seeded on every cold start.
         self.assertEqual(repositories.customers.search_by_full_name("", limit=10), [])
 
-    def test_valid_webhook_accepts_then_invokes_worker(self):
+    def test_valid_webhook_returns_before_worker_accepts_call(self):
         gateway = FakeGateway(incoming_event())
         request = {"body": "{}", "headers": {"webhook-signature": "test"}}
 
@@ -127,7 +127,7 @@ class AwsLambdaTests(unittest.TestCase):
             response = aws_lambda.lambda_handler(request, self.context)
 
         self.assertEqual(response["statusCode"], 202)
-        self.assertEqual(gateway.accepted, [("call_aws", "+5511999990001")])
+        self.assertEqual(gateway.accepted, [])
         invoke_worker.assert_called_once_with(
             self.context,
             call_id="call_aws",
@@ -165,6 +165,7 @@ class AwsLambdaTests(unittest.TestCase):
             response = aws_lambda.lambda_handler(event, self.context)
 
         self.assertEqual(response, {"status": "call_finished"})
+        self.assertEqual(gateway.accepted, [("call_aws", "+5511999990001")])
         self.assertEqual(
             gateway.controlled,
             [("call_aws", "+5511999990001", aws_lambda.MAX_CALL_SECONDS)],

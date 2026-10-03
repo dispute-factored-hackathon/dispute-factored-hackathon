@@ -59,10 +59,15 @@ class ConversationLocaleContext:
     def from_customer_record(
         cls, *, country: str | None, detected_accent: str | None
     ) -> ConversationLocaleContext:
-        language, locale = COUNTRY_DEFAULTS.get(_normalize_country(country), ("en", "en-US"))
+        normalized_country = _normalize_country(country)
+        country_default = COUNTRY_DEFAULTS.get(normalized_country)
+        language, locale = country_default or ("en", "en-US")
         normalized_accent = (detected_accent or "").strip().casefold().replace("-", "_")
         accent_locale = ACCENT_LOCALES.get(normalized_accent)
-        if accent_locale in SUPPORTED_LOCALES[language]:
+        # Country is the authoritative regional signal. A generic or conflicting
+        # accent label must not turn a Brazilian profile into Portuguese from
+        # Portugal (or move a Colombian profile to another Spanish locale).
+        if country_default is None and accent_locale in SUPPORTED_LOCALES[language]:
             locale = accent_locale
         return cls(country, language, locale, LOCALE_ACCENTS[locale], "customer_record")
 

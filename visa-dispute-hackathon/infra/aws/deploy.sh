@@ -93,6 +93,7 @@ elif [[ "${ACTION}" == "application" ]]; then
   echo "Image: ${IMAGE_URI}"
   echo "LangSmith project: ${LANGSMITH_PROJECT}"
   echo "Human handoff: configured"
+  echo "Application: $(stack_output "${APPLICATION_STACK}" ApplicationUrl)"
   echo "Webhook: $(stack_output "${APPLICATION_STACK}" OpenAIWebhookUrl)"
 else
   echo "Usage: $0 bootstrap|application" >&2

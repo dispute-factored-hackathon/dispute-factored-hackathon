@@ -174,6 +174,27 @@ def test_me_returns_authenticated_customer() -> None:
     assert body["onboarding_eligible"] is True
 
 
+def test_session_is_rejected_when_missing_from_server_side_repository() -> None:
+    client = TestClient(app)
+    create_customer(client)
+    response = login(client)
+    assert response.status_code == 200
+
+    session_repository._sessions.clear()
+
+    assert client.get("/api/auth/me").status_code == 401
+
+
+def test_tampered_signed_demo_session_is_rejected() -> None:
+    client = TestClient(app)
+    create_customer(client)
+    response = login(client)
+    session_id = response.cookies["factored_session"]
+    client.cookies.set("factored_session", f"{session_id[:-1]}x")
+
+    assert client.get("/api/auth/me").status_code == 401
+
+
 def test_logout_invalidates_session() -> None:
     client = TestClient(app)
 
