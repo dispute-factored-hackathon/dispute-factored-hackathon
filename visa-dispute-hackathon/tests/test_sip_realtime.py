@@ -1664,6 +1664,18 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             {"classify_dispute", "request_human"},
         )
 
+        classified = gateway.calls.classify_dispute(
+            state.call_id,
+            allegation="DUPLICATE_PROCESSING",
+            customer_reports_duplicate=True,
+        )
+        completed = gateway.calls.record_csat(classified.state.call_id, rating=1)
+        self.assertEqual(gateway._tool_choice_for(completed), "auto")
+        self.assertEqual(
+            {tool["name"] for tool in gateway._tools_for(completed)},
+            {"request_human"},
+        )
+
     async def test_asr_distorted_sim_reaches_problem_classification_question(self):
         events = [
             *opened_session_events(),

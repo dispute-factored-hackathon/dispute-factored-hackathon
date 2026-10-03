@@ -407,8 +407,6 @@ class VoiceCallService:
         """Preserve the current context and move an active call to human handoff."""
 
         state = self.get(call_id)
-        if state.stage is VoiceCallStage.COMPLETED:
-            raise ValueError("a completed call cannot be transferred")
         if state.stage is VoiceCallStage.HANDOFF:
             return state
 

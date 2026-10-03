@@ -321,6 +321,26 @@ class VoiceCallServiceTests(unittest.TestCase):
         )
         self.assertTrue(interaction.was_escalated)
 
+    def test_explicit_human_request_after_csat_can_still_be_transferred(self):
+        state = self.authenticate_known_phone("call_human_after_csat")
+        self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(merchant_query="lemon"),
+        )
+        self.calls.resolve_transaction_candidate(state.call_id, confirmed=True)
+        classified = self.calls.classify_dispute(
+            state.call_id,
+            allegation="DUPLICATE_PROCESSING",
+            customer_reports_duplicate=True,
+        )
+        completed = self.calls.record_csat(classified.state.call_id, rating=1)
+
+        handed_off = self.calls.request_human(completed.call_id)
+
+        self.assertEqual(handed_off.stage, VoiceCallStage.HANDOFF)
+        self.assertEqual(handed_off.handoff_reason, "customer_requested")
+        self.assertEqual(handed_off.identity, completed.identity)
+
     def test_dtmf_is_ignored_before_document_stage(self):
         state = self.calls.start(
             "+55 11 99999-0001",

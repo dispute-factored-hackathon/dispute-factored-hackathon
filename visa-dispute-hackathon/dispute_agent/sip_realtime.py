@@ -2392,7 +2392,7 @@ General behavior:
         }
         factories = stage_tools[state.stage]
         tools = [factory() for factory in factories]
-        if state.stage not in {VoiceCallStage.COMPLETED, VoiceCallStage.HANDOFF}:
+        if state.stage is not VoiceCallStage.HANDOFF:
             tools.append(cls._human_handoff_tool())
         return tools
 
@@ -2409,7 +2409,7 @@ General behavior:
         }
         if state.stage in required_stages:
             return "required"
-        if state.stage in {VoiceCallStage.COMPLETED, VoiceCallStage.HANDOFF}:
+        if state.stage is VoiceCallStage.HANDOFF:
             return "none"
         return "auto"
 

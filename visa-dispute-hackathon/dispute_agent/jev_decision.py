@@ -223,6 +223,41 @@ class JevVoiceRouter:
                     model=model,
                 )
 
+        stage_answer = answers.get("stage_intent")
+        choice = ""
+        confidence = 0.0
+        mapped: tuple[str, dict[str, Any]] | None = None
+        if isinstance(stage_answer, dict) and stage_answer.get("type") == "choice":
+            choice = str(stage_answer.get("choice", ""))
+            confidence = float(stage_answer.get("confidence", 0.0))
+            mapped = self._map_stage_choice(stage, choice, answers)
+
+        required_confidence = (
+            self.language_threshold
+            if stage == "needs_language_confirmation"
+            else self.csat_threshold
+            if stage == "dispute_classified"
+            else self.confidence_threshold
+        )
+
+        # A CSAT prompt explicitly expects a one-word number or refusal. Prefer
+        # a high-confidence valid rating over the generic clarity question,
+        # which can otherwise mistake a short answer such as "Um" for noise.
+        if (
+            stage == "dispute_classified"
+            and choice != "unclear"
+            and confidence >= required_confidence
+            and mapped is not None
+        ):
+            tool_name, arguments = mapped
+            return JevVoiceDecision(
+                JevAction.TOOL,
+                confidence,
+                tool_name=tool_name,
+                arguments=arguments,
+                model=model,
+            )
+
         clarity_answer = answers.get("speech_clarity")
         if isinstance(clarity_answer, dict) and clarity_answer.get("type") == "choice":
             clarity = str(clarity_answer.get("choice", "clear"))
@@ -234,23 +269,12 @@ class JevVoiceRouter:
                     model=model,
                 )
 
-        stage_answer = answers.get("stage_intent")
         if not isinstance(stage_answer, dict) or stage_answer.get("type") != "choice":
             return JevVoiceDecision(JevAction.FALLBACK, 0.0, model=model)
 
-        choice = str(stage_answer.get("choice", ""))
-        confidence = float(stage_answer.get("confidence", 0.0))
-        required_confidence = (
-            self.language_threshold
-            if stage == "needs_language_confirmation"
-            else self.csat_threshold
-            if stage == "dispute_classified"
-            else self.confidence_threshold
-        )
         if confidence < required_confidence:
             return JevVoiceDecision(JevAction.FALLBACK, confidence, model=model)
 
-        mapped = self._map_stage_choice(stage, choice, answers)
         if mapped is None:
             return JevVoiceDecision(JevAction.FALLBACK, confidence, model=model)
         tool_name, arguments = mapped
@@ -309,7 +333,10 @@ class JevVoiceRouter:
                     "or text in an unsupported language that does not convey a reliable request."
                 ),
                 "criteria": {
-                    "clear": "Understandable speech, including an ordinary question or correction.",
+                    "clear": (
+                        "Understandable speech, including an ordinary question, correction, or a "
+                        "single expected answer such as a language, yes/no, or a rating from 1 to 5."
+                    ),
                     "unclear": "Gibberish, corrupted transcription, noise, or no reliable meaning.",
                 },
             },
@@ -365,7 +392,8 @@ class JevVoiceRouter:
                 "type": "choice",
                 "instructions": (
                     "Classify the caller's utterance only for the current workflow stage. "
-                    "Do not infer facts that were not stated."
+                    "Do not infer facts that were not stated. At the satisfaction-rating stage, "
+                    "a bare digit or number word from 1 to 5 is an explicit rating."
                 ),
                 "criteria": criteria,
             }
