@@ -2,7 +2,7 @@
 
 Issuer-side Visa dispute resolution for the call-center channel.
 
-Project documentation is maintained in the repository's [`docs`](../docs/README.md) directory. Open that directory as an Obsidian vault and start with `Home`.
+Project documentation is maintained in the [GitHub Wiki](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki).
 
 ## Synthetic GUI login contract
 
