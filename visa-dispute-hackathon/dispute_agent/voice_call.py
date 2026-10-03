@@ -390,6 +390,42 @@ class VoiceCallService:
         )
         return updated
 
+    def request_human(
+        self,
+        call_id: str,
+        *,
+        reason: str = "customer_requested",
+    ) -> VoiceCallState:
+        """Preserve the current context and move an active call to human handoff."""
+
+        state = self.get(call_id)
+        if state.stage is VoiceCallStage.COMPLETED:
+            raise ValueError("a completed call cannot be transferred")
+        if state.stage is VoiceCallStage.HANDOFF:
+            return state
+
+        updated = replace(
+            state,
+            stage=VoiceCallStage.HANDOFF,
+            handoff_reason=reason,
+        )
+        self._calls[call_id] = updated
+        self.call_interactions.sync(updated)
+        self._log_stage_transition(
+            call_id,
+            state.stage,
+            updated.stage,
+            reason=reason,
+        )
+        _telemetry(
+            "voice.handoff.requested",
+            call_id=call_id,
+            reason=reason,
+            authenticated=state.identity is not None,
+            from_stage=state.stage.value,
+        )
+        return updated
+
     def _authenticate_phone(self, state: VoiceCallState) -> VoiceCallState:
         """Authenticate using the number presented by the SIP call."""
         started = time.monotonic()
@@ -551,6 +587,11 @@ class VoiceCallService:
                 authentication_method=VoiceAuthenticationMethod.DOCUMENT,
                 failed_document_attempts=attempts,
                 document_digits="",
+                handoff_reason=(
+                    "authentication_attempts_exhausted"
+                    if attempts >= self.max_document_attempts
+                    else state.handoff_reason
+                ),
             )
             _telemetry(
                 "voice.authentication.failed",
@@ -995,7 +1036,7 @@ class VoiceCallService:
             guess_count=state.transaction_guess_attempts,
             no_match_count=state.transaction_no_match_attempts,
             active_filters=dict(state.transaction_criteria.active_filters()),
-            handoff_available=False,
+            handoff_requested=True,
         )
         return TransactionSelectionResult(
             updated,

@@ -29,6 +29,12 @@ Parameters:
     Default: dispute-factored
     Description: LangSmith project used for runtime agent traces.
 
+  HumanHandoffNumber:
+    Type: String
+    Default: "+5511981020050"
+    AllowedPattern: '^\+[1-9][0-9]{7,14}$'
+    Description: Fixed E.164 PSTN destination used for server-approved human handoff.
+
   LogRetentionDays:
     Type: Number
     Default: 7
@@ -93,6 +99,7 @@ Resources:
           OPENAI_REALTIME_MODEL: gpt-realtime-2.1
           OPENAI_REALTIME_VOICE: cedar
           OPENAI_INPUT_TRANSCRIPTION_MODEL: gpt-4o-mini-transcribe
+          HUMAN_HANDOFF_NUMBER: !Ref HumanHandoffNumber
           DEMO_LOG_FULL_TRANSCRIPTS: "true"
 
           LANGSMITH_TRACING: "true"

@@ -10,6 +10,7 @@ GIT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo local)"
 IMAGE_TAG="${IMAGE_TAG:-${GIT_SHA}-$(date +%Y%m%d%H%M%S)}"
 LANGSMITH_SECRET_ID="${LANGSMITH_SECRET_ID:-${PROJECT_NAME}/langsmith}"
 LANGSMITH_PROJECT="${LANGSMITH_PROJECT:-${PROJECT_NAME}}"
+HUMAN_HANDOFF_NUMBER="${HUMAN_HANDOFF_NUMBER:-+5511981020050}"
 
 stack_output() {
   aws cloudformation describe-stacks \
@@ -86,10 +87,12 @@ elif [[ "${ACTION}" == "application" ]]; then
       ContainerImageUri="${IMAGE_URI}" \
       OpenAISecretArn="${OPENAI_SECRET_ARN}" \
       LangSmithSecretArn="${LANGSMITH_SECRET_ARN}" \
-      LangSmithProject="${LANGSMITH_PROJECT}"
+      LangSmithProject="${LANGSMITH_PROJECT}" \
+      HumanHandoffNumber="${HUMAN_HANDOFF_NUMBER}"
 
   echo "Image: ${IMAGE_URI}"
   echo "LangSmith project: ${LANGSMITH_PROJECT}"
+  echo "Human handoff: configured"
   echo "Webhook: $(stack_output "${APPLICATION_STACK}" OpenAIWebhookUrl)"
 else
   echo "Usage: $0 bootstrap|application" >&2

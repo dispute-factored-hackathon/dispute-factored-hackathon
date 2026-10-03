@@ -39,6 +39,11 @@ from webapp.backend.repositories.registry import (
 )
 
 from .dispute_classification import DisputeAllegation
+from .human_handoff import (
+    HandoffAvailability,
+    HumanHandoffPlan,
+    HumanHandoffPolicy,
+)
 from .transaction_search import TransactionSearchCriteria, TransactionSearchRepository
 from .voice_call import (
     CardSecurityActionStatus,
@@ -413,6 +418,7 @@ class SipRealtimeGateway:
         transcript_repository: CallTranscriptRepository | None = None,
         satisfaction_survey_repository: SatisfactionSurveyRepository | None = None,
         log_full_transcripts: bool | None = None,
+        human_handoff_number: str | None = None,
     ) -> None:
 
         self.api_key = api_key or os.getenv("OPENAI_API_KEY", "")
@@ -430,6 +436,12 @@ class SipRealtimeGateway:
             if log_full_transcripts is not None
             else _enabled(os.getenv("DEMO_LOG_FULL_TRANSCRIPTS"), default=True)
         )
+        configured_handoff_number = (
+            human_handoff_number
+            if human_handoff_number is not None
+            else os.getenv("HUMAN_HANDOFF_NUMBER")
+        )
+        self.handoff_policy = HumanHandoffPolicy(configured_handoff_number)
 
         self.client = openai_client or OpenAI(
             api_key=self.api_key,
@@ -519,8 +531,10 @@ class SipRealtimeGateway:
                     self._transaction_confirmation_tool(),
                     self._dispute_classification_tool(),
                     self._csat_tool(),
+                    self._human_handoff_tool(),
                 ],
                 tool_choice="auto",
+                parallel_tool_calls=False,
                 tracing={
                     "workflow_name": "telephone-dispute",
                     "group_id": call_id,
@@ -682,7 +696,9 @@ class SipRealtimeGateway:
                                     "type": "realtime",
                                     "instructions": self._system_instructions(state),
                                     "audio": self._input_audio_configuration(state),
+                                    "tools": self._tools_for(state),
                                     "tool_choice": self._tool_choice_for(state),
+                                    "parallel_tool_calls": False,
                                 },
                             }
                         )
@@ -702,6 +718,7 @@ class SipRealtimeGateway:
                     active_response = False
                     opening_sent = False
                     last_customer_transcript = ""
+                    pending_handoff: HumanHandoffPlan | None = None
 
                     async for raw_event in websocket:
                         try:
@@ -789,13 +806,26 @@ class SipRealtimeGateway:
                                 ),
                             )
 
-                            await self._handle_tool_calls(
+                            handoff = await self._handle_tool_calls(
                                 websocket,
                                 call_id,
                                 event,
                                 last_customer_transcript=last_customer_transcript,
                             )
                             last_customer_transcript = ""
+                            if handoff is not None:
+                                pending_handoff = handoff
+                            elif pending_handoff is not None:
+                                if await self._refer_call(call_id, pending_handoff):
+                                    return
+                                pending_handoff = None
+                                await self._speak(
+                                    websocket,
+                                    self._message_for(
+                                        self.calls.get(call_id),
+                                        "handoff_failed",
+                                    ),
+                                )
 
                         elif event_type in {
                             "input_audio_buffer.dtmf_event_received",
@@ -810,11 +840,13 @@ class SipRealtimeGateway:
                                 has_key=bool(key),
                             )
 
-                            await self._handle_dtmf(
+                            handoff = await self._handle_dtmf(
                                 websocket,
                                 call_id,
                                 key,
                             )
+                            if handoff is not None:
+                                pending_handoff = handoff
 
                         elif event_type == "error":
                             error_data = event.get("error", {})
@@ -949,7 +981,12 @@ class SipRealtimeGateway:
         if last_error is not None:
             raise last_error
 
-    async def _handle_dtmf(self, websocket: Any, call_id: str, key: str) -> None:
+    async def _handle_dtmf(
+        self,
+        websocket: Any,
+        call_id: str,
+        key: str,
+    ) -> HumanHandoffPlan | None:
 
         before = self.calls.get(call_id)
 
@@ -959,7 +996,7 @@ class SipRealtimeGateway:
         except ValueError:
             await self._speak(websocket, self._message_for(self.calls.get(call_id), "invalid_dtmf"))
 
-            return
+            return None
 
         if should_respond:
             if key == "*":
@@ -971,7 +1008,16 @@ class SipRealtimeGateway:
             else:
                 reason = "dtmf_result"
 
-            await self._speak(websocket, self._message_for(state, reason))
+            handoff = self._handoff_plan(state)
+            await self._speak(
+                websocket,
+                self._message_for(state, self._handoff_message_reason(handoff))
+                if state.stage is VoiceCallStage.HANDOFF
+                else self._message_for(state, reason),
+            )
+            return handoff if handoff.can_transfer else None
+
+        return None
 
     async def _handle_tool_calls(
         self,
@@ -980,8 +1026,9 @@ class SipRealtimeGateway:
         event: dict[str, Any],
         *,
         last_customer_transcript: str = "",
-    ) -> None:
+    ) -> HumanHandoffPlan | None:
         outputs = event.get("response", {}).get("output", [])
+        pending_handoff: HumanHandoffPlan | None = None
 
         for output in outputs:
             if output.get("type") != "function_call":
@@ -1280,6 +1327,22 @@ class SipRealtimeGateway:
                         result = self._message_for(state, "csat_unclear")
                         tool_metadata = {"outcome": "unclear"}
 
+                elif tool_name == "request_human":
+                    if not last_customer_transcript.strip():
+                        raise ValueError("human handoff must be grounded in caller speech")
+                    state = self.calls.request_human(call_id)
+                    handoff = self._handoff_plan(state)
+                    result = self._message_for(
+                        state,
+                        self._handoff_message_reason(handoff),
+                    )
+                    if handoff.can_transfer:
+                        pending_handoff = handoff
+                    tool_metadata = {
+                        "outcome": handoff.availability.value,
+                        "reason": state.handoff_reason,
+                    }
+
                 else:
                     continue
 
@@ -1308,12 +1371,15 @@ class SipRealtimeGateway:
                     "confirm_transaction",
                     "classify_dispute",
                     "record_csat",
+                    "request_human",
                 }:
                     result = self._message_for(
                         state,
                         (
                             "csat_unclear"
                             if tool_name == "record_csat"
+                            else "handoff_unavailable"
+                            if tool_name == "request_human"
                             else "classification_clarification"
                             if tool_name == "classify_dispute"
                             else "transaction_invalid"
@@ -1323,6 +1389,14 @@ class SipRealtimeGateway:
                     continue
 
             else:
+                if state.stage is VoiceCallStage.HANDOFF:
+                    handoff = self._handoff_plan(state)
+                    result = self._message_for(
+                        state,
+                        self._handoff_message_reason(handoff),
+                    )
+                    if handoff.can_transfer:
+                        pending_handoff = handoff
                 self.calls.sync_interaction(call_id)
                 _telemetry(
                     "voice.tool.completed",
@@ -1339,7 +1413,9 @@ class SipRealtimeGateway:
                                 "type": "realtime",
                                 "instructions": self._system_instructions(state),
                                 "audio": self._input_audio_configuration(state),
+                                "tools": self._tools_for(state),
                                 "tool_choice": self._tool_choice_for(state),
+                                "parallel_tool_calls": False,
                             },
                         }
                     )
@@ -1375,6 +1451,55 @@ class SipRealtimeGateway:
                 websocket,
                 result,
             )
+
+            if state.stage is VoiceCallStage.HANDOFF and pending_handoff is None:
+                handoff = self._handoff_plan(state)
+                if handoff.can_transfer:
+                    pending_handoff = handoff
+
+        return pending_handoff
+
+    def _handoff_plan(self, state: VoiceCallState) -> HumanHandoffPlan:
+        return self.handoff_policy.plan(state.caller_phone)
+
+    @staticmethod
+    def _handoff_message_reason(plan: HumanHandoffPlan) -> str:
+        if plan.availability is HandoffAvailability.AVAILABLE:
+            return "handoff_transfer"
+        if plan.availability is HandoffAvailability.SAME_AS_CALLER:
+            return "handoff_same_number"
+        return "handoff_unavailable"
+
+    async def _refer_call(self, call_id: str, plan: HumanHandoffPlan) -> bool:
+        """Relay one approved blind transfer after Izzy finishes the handoff message."""
+
+        if not plan.can_transfer or plan.target_uri is None:
+            return False
+
+        started = time.monotonic()
+        try:
+            await asyncio.to_thread(
+                self.client.realtime.calls.refer,
+                call_id,
+                target_uri=plan.target_uri,
+            )
+        except Exception as error:
+            _telemetry(
+                "voice.handoff.failed",
+                call_id=call_id,
+                duration_ms=round((time.monotonic() - started) * 1000, 2),
+                error_type=type(error).__name__,
+            )
+            LOGGER.exception("OpenAI SIP REFER failed call_id=%s", call_id)
+            return False
+
+        _telemetry(
+            "voice.handoff.completed",
+            call_id=call_id,
+            duration_ms=round((time.monotonic() - started) * 1000, 2),
+            handoff_reason=self.calls.get(call_id).handoff_reason,
+        )
+        return True
 
     @staticmethod
     def _transaction_search_arguments(
@@ -1716,6 +1841,24 @@ class SipRealtimeGateway:
         }
 
     @staticmethod
+    def _human_handoff_tool() -> dict[str, Any]:
+        return {
+            "type": "function",
+            "name": "request_human",
+            "description": (
+                "Use only when the caller explicitly asks to speak with a human, person, "
+                "operator, attendant, or specialist. This is a global control and takes "
+                "priority over the current workflow. Do not infer it from frustration, a "
+                "complaint, uncertainty, or a request for help alone."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        }
+
+    @staticmethod
     def _system_instructions(state: VoiceCallState) -> str:
         language_name = {
             "pt": "Portuguese",
@@ -1803,7 +1946,7 @@ Transaction-search workflow:
 - After a denied candidate, do not present another candidate immediately. Ask exactly one focused question for a useful detail that has not been collected yet, then call search_transactions with the new answer.
 - If the caller cannot answer the focused question, call search_transactions with no invented values; the server will select a different missing detail to ask about. Never rerun an unchanged search.
 - Never disclose internal transaction IDs, SQL, hidden candidates, or another customer's transactions.
-- After three denied candidates the server ends in handoff. Explain honestly that human operators are unavailable and handoff is outside this demo.
+- After three denied candidates the server ends in handoff. Speak only the server-provided transfer or availability message.
 
 Dispute-classification workflow:
 - Classification starts only at needs_dispute_classification, after the caller confirms the transaction.
@@ -1827,23 +1970,52 @@ General behavior:
 - Explain that you help with card disputes.
 - Keep prompts concise and natural for a telephone call.
 - Stay within authentication and card-dispute support.
+- If the caller explicitly asks for a human, person, operator, attendant, or specialist at any active stage, call request_human immediately. This global control takes priority over language, authentication, transaction, classification, and satisfaction tools.
+- Do not call request_human merely because the caller is frustrated, reports a dispute, asks a question, or says they need help. The request for human assistance must be explicit.
 - Do not claim a bank action occurred unless a server/tool result confirms it.
 - Whenever you call a tool, your response must contain only the tool call. Never speak an acknowledgement, plan, or assumed result before a tool result.
 """
 
-    @staticmethod
-    def _tool_choice_for(state: VoiceCallState) -> str | dict[str, str]:
-        """Force only the state-valid tool when the backend needs a decision."""
-        forced_tools = {
-            VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION: "set_language",
-            VoiceCallStage.NEEDS_AUTH_METHOD: "set_authentication_method",
-            VoiceCallStage.CONFIRM_TRANSACTION: "confirm_transaction",
-            VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION: "classify_dispute",
-            VoiceCallStage.DISPUTE_CLASSIFIED: "record_csat",
+    @classmethod
+    def _tools_for(cls, state: VoiceCallState) -> list[dict[str, Any]]:
+        """Expose only the current workflow tool plus the global human control."""
+
+        stage_tools: dict[VoiceCallStage, tuple[Callable[[], dict[str, Any]], ...]] = {
+            VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION: (
+                cls._language_tool,
+                cls._confirm_language_tool,
+            ),
+            VoiceCallStage.NEEDS_AUTH_METHOD: (cls._authentication_method_tool,),
+            VoiceCallStage.NEEDS_DOCUMENT: (),
+            VoiceCallStage.AUTHENTICATED: (cls._transaction_search_tool,),
+            VoiceCallStage.NEEDS_TRANSACTION_DETAILS: (cls._transaction_search_tool,),
+            VoiceCallStage.CONFIRM_TRANSACTION: (cls._transaction_confirmation_tool,),
+            VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION: (cls._dispute_classification_tool,),
+            VoiceCallStage.DISPUTE_CLASSIFIED: (cls._csat_tool,),
+            VoiceCallStage.COMPLETED: (),
+            VoiceCallStage.HANDOFF: (),
         }
-        tool_name = forced_tools.get(state.stage)
-        if tool_name is not None:
-            return {"type": "function", "name": tool_name}
+        factories = stage_tools[state.stage]
+        tools = [factory() for factory in factories]
+        if state.stage not in {VoiceCallStage.COMPLETED, VoiceCallStage.HANDOFF}:
+            tools.append(cls._human_handoff_tool())
+        return tools
+
+    @staticmethod
+    def _tool_choice_for(state: VoiceCallState) -> str:
+        """Require an intent tool only in phases that need an immediate decision."""
+
+        required_stages = {
+            VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION,
+            VoiceCallStage.NEEDS_AUTH_METHOD,
+            VoiceCallStage.CONFIRM_TRANSACTION,
+            VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION,
+            VoiceCallStage.DISPUTE_CLASSIFIED,
+        }
+        if state.stage in required_stages:
+            return "required"
+        if state.stage in {VoiceCallStage.COMPLETED, VoiceCallStage.HANDOFF}:
+            return "none"
         return "auto"
 
     @staticmethod
@@ -1940,6 +2112,22 @@ General behavior:
                     "humanos não estão disponíveis e essa transferência está fora do escopo "
                     "desta demonstração."
                 ),
+                "handoff_transfer": (
+                    "Vou transferir você agora para um atendente humano. "
+                    "Permaneça na linha enquanto completo a transferência."
+                ),
+                "handoff_unavailable": (
+                    "O atendimento humano não está configurado nesta demonstração. "
+                    "Não consigo continuar esta etapa sem um atendente."
+                ),
+                "handoff_same_number": (
+                    "Não consigo transferir esta ligação para o mesmo número que está ligando. "
+                    "Para testar o atendimento humano, ligue de outro telefone."
+                ),
+                "handoff_failed": (
+                    "Não consegui completar a transferência para o atendimento humano. "
+                    "O seu progresso foi preservado, mas esta demonstração não pode continuar."
+                ),
             },
             "es": {
                 "opening": (
@@ -2024,6 +2212,22 @@ General behavior:
                     "te transferiría a un especialista, pero los agentes humanos no están "
                     "disponibles y esa transferencia está fuera del alcance de esta demostración."
                 ),
+                "handoff_transfer": (
+                    "Voy a transferirte ahora con un agente humano. "
+                    "Permanece en la línea mientras completo la transferencia."
+                ),
+                "handoff_unavailable": (
+                    "La atención humana no está configurada en esta demostración. "
+                    "No puedo continuar esta etapa sin un agente."
+                ),
+                "handoff_same_number": (
+                    "No puedo transferir esta llamada al mismo número desde el que estás llamando. "
+                    "Para probar la atención humana, llama desde otro teléfono."
+                ),
+                "handoff_failed": (
+                    "No pude completar la transferencia a la atención humana. "
+                    "Tu progreso quedó guardado, pero esta demostración no puede continuar."
+                ),
             },
             "en": {
                 "opening": (
@@ -2102,8 +2306,32 @@ General behavior:
                     "transfer you to a specialist, but human operators are unavailable and that "
                     "handoff is outside this demonstration."
                 ),
+                "handoff_transfer": (
+                    "I'll transfer you to a human agent now. "
+                    "Please stay on the line while I complete the transfer."
+                ),
+                "handoff_unavailable": (
+                    "Human support is not configured for this demonstration. "
+                    "I can't continue this step without an agent."
+                ),
+                "handoff_same_number": (
+                    "I can't transfer this call to the same number that is calling. "
+                    "To test human support, please call from another phone."
+                ),
+                "handoff_failed": (
+                    "I couldn't complete the transfer to human support. "
+                    "Your progress was preserved, but this demonstration cannot continue."
+                ),
             },
         }[language]
+
+        if reason in {
+            "handoff_transfer",
+            "handoff_unavailable",
+            "handoff_same_number",
+            "handoff_failed",
+        }:
+            return messages[reason]
 
         if reason in {"csat_thanks", "csat_declined", "csat_unclear"}:
             return {
