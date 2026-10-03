@@ -518,7 +518,7 @@ class SipRealtimeGateway:
                     "and explicitly requests a response."
                 ),
                 audio={
-                    **self._input_audio_configuration(),
+                    **self._input_audio_configuration(opening_guard=True),
                     "output": {
                         "voice": self.voice,
                     },
@@ -695,7 +695,10 @@ class SipRealtimeGateway:
                                 "session": {
                                     "type": "realtime",
                                     "instructions": self._system_instructions(state),
-                                    "audio": self._input_audio_configuration(state),
+                                    "audio": self._input_audio_configuration(
+                                        state,
+                                        opening_guard=True,
+                                    ),
                                     "tools": self._tools_for(state),
                                     "tool_choice": self._tool_choice_for(state),
                                     "parallel_tool_calls": False,
@@ -717,6 +720,8 @@ class SipRealtimeGateway:
                     session_ready = False
                     active_response = False
                     opening_sent = False
+                    opening_completed = False
+                    opening_response_id = ""
                     last_customer_transcript = ""
                     pending_handoff: HumanHandoffPlan | None = None
                     deferred_handoff_event: dict[str, Any] | None = None
@@ -805,29 +810,67 @@ class SipRealtimeGateway:
 
                         elif event_type == "response.created":
                             active_response = True
+                            response_id = str(
+                                _value(
+                                    event.get("response", {}),
+                                    "id",
+                                    "",
+                                )
+                            )
+                            if opening_sent and not opening_completed and not opening_response_id:
+                                opening_response_id = response_id
 
                             _telemetry(
                                 "realtime.response.created",
                                 call_id=call_id,
-                                response_id=_value(
-                                    event.get("response", {}),
-                                    "id",
-                                    "",
-                                ),
+                                response_id=response_id,
                             )
 
                         elif event_type == "response.done":
                             active_response = False
+                            response_id = str(
+                                _value(
+                                    event.get("response", {}),
+                                    "id",
+                                    "",
+                                )
+                            )
 
                             _telemetry(
                                 "realtime.response.done",
                                 call_id=call_id,
-                                response_id=_value(
-                                    event.get("response", {}),
-                                    "id",
-                                    "",
-                                ),
+                                response_id=response_id,
                             )
+
+                            if (
+                                opening_response_id
+                                and response_id == opening_response_id
+                                and not opening_completed
+                            ):
+                                opening_completed = True
+                                last_customer_transcript = ""
+                                await websocket.send(
+                                    json.dumps({"type": "input_audio_buffer.clear"})
+                                )
+                                await websocket.send(
+                                    json.dumps(
+                                        {
+                                            "type": "session.update",
+                                            "session": {
+                                                "type": "realtime",
+                                                "audio": self._input_audio_configuration(
+                                                    state,
+                                                    interactive=True,
+                                                ),
+                                            },
+                                        }
+                                    )
+                                )
+                                _telemetry(
+                                    "realtime.opening.completed",
+                                    call_id=call_id,
+                                )
+                                continue
 
                             # Realtime may finish the model's tool call a few
                             # milliseconds before asynchronous input transcription.
@@ -1570,13 +1613,26 @@ class SipRealtimeGateway:
     def _input_audio_configuration(
         self,
         state: VoiceCallState | None = None,
+        *,
+        opening_guard: bool = False,
+        interactive: bool = False,
     ) -> dict[str, Any]:
         """Configure transcription and suppress noise-driven terminal responses."""
+        if opening_guard and interactive:
+            raise ValueError("opening_guard and interactive are mutually exclusive")
         transcription = (
             {"model": self.input_transcription_model} if self.log_full_transcripts else None
         )
         input_configuration: dict[str, Any] = {"transcription": transcription}
-        if state is not None and state.stage is VoiceCallStage.COMPLETED:
+        if opening_guard:
+            input_configuration["turn_detection"] = None
+        elif interactive:
+            input_configuration["turn_detection"] = {
+                "type": "server_vad",
+                "create_response": True,
+                "interrupt_response": True,
+            }
+        elif state is not None and state.stage is VoiceCallStage.COMPLETED:
             input_configuration["turn_detection"] = {
                 "type": "server_vad",
                 "create_response": False,
