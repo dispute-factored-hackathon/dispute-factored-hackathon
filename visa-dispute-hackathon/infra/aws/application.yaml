@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: On-demand Lambda webhook and Realtime SIP sideband worker.
+Description: On-demand Lambdas for the web demo and Realtime SIP sideband worker.
 
 Parameters:
   ProjectName:
@@ -75,6 +75,19 @@ Resources:
                 Resource: !Sub >-
                   arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-${EnvironmentName}-sip
 
+  WebLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
   SipFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -120,6 +133,55 @@ Resources:
       AuthType: NONE
       InvokeMode: BUFFERED
 
+  WebFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${EnvironmentName}-web"
+      Description: Serves the Factored Bank frontend and FastAPI demo backend on demand.
+      PackageType: Image
+      Code:
+        ImageUri: !Ref ContainerImageUri
+      ImageConfig:
+        Command: ["webapp.backend.aws_lambda.lambda_handler"]
+      Role: !GetAtt WebLambdaExecutionRole.Arn
+      Architectures: [x86_64]
+      MemorySize: 512
+      Timeout: 30
+      Environment:
+        Variables:
+          APP_ENV: !Ref EnvironmentName
+          REPOSITORY_BACKEND: mock
+          SEED_DEMO_CUSTOMERS: "true"
+          SESSION_COOKIE_SECURE: "true"
+          DEMO_SELECTOR_SECRET: "factored-hackathon-demo-selector-v1"
+      LoggingConfig:
+        LogFormat: JSON
+        ApplicationLogLevel: INFO
+        SystemLogLevel: WARN
+
+  WebFunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt WebFunction.Arn
+      AuthType: NONE
+      InvokeMode: BUFFERED
+
+  PublicWebFunctionUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref WebFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+
+  PublicWebFunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref WebFunction
+      Action: lambda:InvokeFunction
+      Principal: "*"
+      InvokedViaFunctionUrl: true
+
   PublicFunctionUrlPermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -150,9 +212,21 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/${ProjectName}-${EnvironmentName}-sip"
       RetentionInDays: !Ref LogRetentionDays
 
+  WebLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ProjectName}-${EnvironmentName}-web"
+      RetentionInDays: !Ref LogRetentionDays
+
 Outputs:
   FunctionUrl:
     Value: !GetAtt SipFunctionUrl.FunctionUrl
+
+  ApplicationUrl:
+    Value: !GetAtt WebFunctionUrl.FunctionUrl
+
+  WebFunctionName:
+    Value: !Ref WebFunction
 
   OpenAIWebhookUrl:
     Value: !Sub "${SipFunctionUrl.FunctionUrl}webhooks/openai"
