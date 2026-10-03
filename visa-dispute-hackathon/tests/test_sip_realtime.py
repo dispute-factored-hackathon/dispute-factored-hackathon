@@ -63,6 +63,33 @@ def session_updated_event() -> str:
     )
 
 
+def output_audio_stopped_event(response_id: str) -> str:
+    return json.dumps(
+        {
+            "type": "output_audio_buffer.stopped",
+            "response_id": response_id,
+        }
+    )
+
+
+def played_audio_response_events(response_id: str) -> list[str]:
+    return [
+        json.dumps(
+            {
+                "type": "response.created",
+                "response": {"id": response_id},
+            }
+        ),
+        json.dumps(
+            {
+                "type": "response.done",
+                "response": {"id": response_id, "output": []},
+            }
+        ),
+        output_audio_stopped_event(response_id),
+    ]
+
+
 def opened_session_events() -> list[str]:
     """Acknowledge the configured session and finish Izzy's protected opening."""
 
@@ -80,6 +107,7 @@ def opened_session_events() -> list[str]:
                 "response": {"id": "resp_opening", "output": []},
             }
         ),
+        output_audio_stopped_event("resp_opening"),
     ]
 
 
@@ -334,7 +362,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                 transcript="Quero falar com uma pessoa.",
             ),
             tool_call_event("request_human", "tool_human", {}),
-            json.dumps({"type": "response.done", "response": {"output": []}}),
+            *played_audio_response_events("resp_handoff_notice"),
         ]
         gateway, websocket, calls = self._gateway(
             events,
@@ -360,7 +388,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                 speaker="customer",
                 transcript="Eu quero falar com um ser humano.",
             ),
-            json.dumps({"type": "response.done", "response": {"output": []}}),
+            *played_audio_response_events("resp_handoff_notice"),
         ]
         gateway, websocket, calls = self._gateway(
             events,
@@ -430,8 +458,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                 transcript="Preciso falar com uma pessoa.",
             ),
             tool_call_event("request_human", "tool_human", {}),
-            json.dumps({"type": "response.done", "response": {"output": []}}),
-            json.dumps({"type": "response.done", "response": {"output": []}}),
+            *played_audio_response_events("resp_handoff_notice"),
         ]
         gateway, websocket, calls = self._gateway(
             events,
@@ -460,7 +487,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                 {"method": "document"},
             ),
             *[dtmf_event(key) for key in "000#000#000#"],
-            json.dumps({"type": "response.done", "response": {"output": []}}),
+            *played_audio_response_events("resp_handoff_notice"),
         ]
         gateway, _, calls = self._gateway(
             events,
@@ -479,6 +506,12 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     def _session_updates(websocket):
         return [event for event in websocket.sent if event.get("type") == "session.update"]
+
+    @classmethod
+    def _instruction_session_updates(cls, websocket):
+        return [
+            event for event in cls._session_updates(websocket) if "instructions" in event["session"]
+        ]
 
     @staticmethod
     def _tool_outputs(websocket):
@@ -676,6 +709,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                     "response": {"id": "resp_opening", "output": []},
                 }
             ),
+            output_audio_stopped_event("resp_opening"),
         ]
         gateway, websocket, _ = self._gateway(events)
 
@@ -691,7 +725,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(restored_turn_detection["create_response"])
         self.assertFalse(restored_turn_detection["interrupt_response"])
 
-    async def test_empty_transcript_after_opening_does_not_create_a_model_turn(self):
+    async def test_response_done_does_not_reopen_input_before_playback_stops(self):
         events = [
             session_updated_event(),
             json.dumps(
@@ -706,6 +740,25 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                     "response": {"id": "resp_opening", "output": []},
                 }
             ),
+        ]
+        gateway, websocket, _ = self._gateway(events)
+
+        await gateway.accept_and_control("call_generation_done", "+5511999990001")
+
+        self.assertNotIn(
+            "input_audio_buffer.clear",
+            [event.get("type") for event in websocket.sent],
+        )
+        turn_detection_values = [
+            update["session"]["audio"]["input"].get("turn_detection")
+            for update in self._session_updates(websocket)
+            if "audio" in update["session"]
+        ]
+        self.assertEqual(turn_detection_values, [None, None])
+
+    async def test_empty_transcript_after_opening_does_not_create_a_model_turn(self):
+        events = [
+            *opened_session_events(),
             completed_transcript_event(speaker="customer", transcript=""),
         ]
         gateway, websocket, _ = self._gateway(events)
@@ -718,19 +771,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_nonempty_transcript_requests_a_silent_model_turn(self):
         events = [
-            session_updated_event(),
-            json.dumps(
-                {
-                    "type": "response.created",
-                    "response": {"id": "resp_opening"},
-                }
-            ),
-            json.dumps(
-                {
-                    "type": "response.done",
-                    "response": {"id": "resp_opening", "output": []},
-                }
-            ),
+            *opened_session_events(),
             completed_transcript_event(speaker="customer", transcript="Português."),
         ]
         gateway, websocket, _ = self._gateway(events)
@@ -860,7 +901,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             "call_phone",
         )
 
-        session_updates = self._session_updates(websocket)
+        session_updates = self._instruction_session_updates(websocket)
         tool_outputs = self._tool_outputs(websocket)
 
         # Initial server instructions + language confirmation + auth method.
@@ -1053,7 +1094,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             "Idioma alterado para português brasileiro",
             json.dumps(websocket.sent, ensure_ascii=False),
         )
-        instructions = self._session_updates(websocket)[-1]["session"]["instructions"]
+        instructions = self._instruction_session_updates(websocket)[-1]["session"]["instructions"]
         self.assertIn("Speak in pt-BR", instructions)
 
     async def test_phone_failure_falls_back_to_document_and_dtmf_authenticates(self):
@@ -1093,7 +1134,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             "document",
         )
 
-        session_updates = self._session_updates(websocket)
+        session_updates = self._instruction_session_updates(websocket)
 
         self.assertEqual(
             len(session_updates),
@@ -1165,7 +1206,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             "es-CO",
         )
 
-        session_updates = self._session_updates(websocket)
+        session_updates = self._instruction_session_updates(websocket)
         tool_outputs = self._tool_outputs(websocket)
 
         self.assertEqual(

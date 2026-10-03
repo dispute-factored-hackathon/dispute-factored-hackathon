@@ -721,6 +721,7 @@ class SipRealtimeGateway:
                     active_response = False
                     opening_sent = False
                     opening_completed = False
+                    opening_generation_done = False
                     opening_response_id = ""
                     model_turn_requested = False
                     silent_model_response_ids: set[str] = set()
@@ -859,6 +860,60 @@ class SipRealtimeGateway:
                                 response_id=response_id,
                             )
 
+                        elif event_type == "output_audio_buffer.started":
+                            _telemetry(
+                                "realtime.output_audio.started",
+                                call_id=call_id,
+                                response_id=str(event.get("response_id", "")),
+                            )
+
+                        elif event_type == "output_audio_buffer.stopped":
+                            response_id = str(event.get("response_id", ""))
+                            await websocket.send(json.dumps({"type": "input_audio_buffer.clear"}))
+                            await websocket.send(
+                                json.dumps(
+                                    {
+                                        "type": "session.update",
+                                        "session": {
+                                            "type": "realtime",
+                                            "audio": self._input_audio_configuration(
+                                                self.calls.get(call_id),
+                                                interactive=True,
+                                            ),
+                                        },
+                                    }
+                                )
+                            )
+                            _telemetry(
+                                "realtime.output_audio.stopped",
+                                call_id=call_id,
+                                response_id=response_id,
+                            )
+
+                            if (
+                                opening_generation_done
+                                and response_id == opening_response_id
+                                and not opening_completed
+                            ):
+                                opening_completed = True
+                                last_customer_transcript = ""
+                                _telemetry(
+                                    "realtime.opening.completed",
+                                    call_id=call_id,
+                                )
+
+                            if pending_handoff is not None:
+                                if await self._refer_call(call_id, pending_handoff):
+                                    return
+                                pending_handoff = None
+                                await self._speak(
+                                    websocket,
+                                    self._message_for(
+                                        self.calls.get(call_id),
+                                        "handoff_failed",
+                                    ),
+                                )
+
                         elif event_type == "response.done":
                             active_response = False
                             response_id = str(
@@ -886,29 +941,7 @@ class SipRealtimeGateway:
                                 and response_id == opening_response_id
                                 and not opening_completed
                             ):
-                                opening_completed = True
-                                last_customer_transcript = ""
-                                await websocket.send(
-                                    json.dumps({"type": "input_audio_buffer.clear"})
-                                )
-                                await websocket.send(
-                                    json.dumps(
-                                        {
-                                            "type": "session.update",
-                                            "session": {
-                                                "type": "realtime",
-                                                "audio": self._input_audio_configuration(
-                                                    state,
-                                                    interactive=True,
-                                                ),
-                                            },
-                                        }
-                                    )
-                                )
-                                _telemetry(
-                                    "realtime.opening.completed",
-                                    call_id=call_id,
-                                )
+                                opening_generation_done = True
                                 continue
 
                             # Realtime may finish the model's tool call a few
@@ -939,17 +972,6 @@ class SipRealtimeGateway:
                             last_customer_transcript = ""
                             if handoff is not None:
                                 pending_handoff = handoff
-                            elif pending_handoff is not None:
-                                if await self._refer_call(call_id, pending_handoff):
-                                    return
-                                pending_handoff = None
-                                await self._speak(
-                                    websocket,
-                                    self._message_for(
-                                        self.calls.get(call_id),
-                                        "handoff_failed",
-                                    ),
-                                )
 
                         elif event_type in {
                             "input_audio_buffer.dtmf_event_received",
@@ -1728,6 +1750,17 @@ class SipRealtimeGateway:
     async def _speak(self, websocket: Any, message: str) -> None:
         """Create one server-directed audio response."""
 
+        await websocket.send(
+            json.dumps(
+                {
+                    "type": "session.update",
+                    "session": {
+                        "type": "realtime",
+                        "audio": self._input_audio_configuration(opening_guard=True),
+                    },
+                }
+            )
+        )
         await websocket.send(
             json.dumps(
                 {
