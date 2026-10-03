@@ -35,6 +35,18 @@ Parameters:
     AllowedPattern: '^\+[1-9][0-9]{7,14}$'
     Description: Fixed E.164 PSTN destination used for server-approved human handoff.
 
+  SipAliasName:
+    Type: String
+    Default: live
+    AllowedPattern: "[a-zA-Z0-9-_]+"
+    Description: Stable alias used by the SIP Function URL and asynchronous call workers.
+
+  VoiceSnapStartApplyOn:
+    Type: String
+    Default: PublishedVersions
+    AllowedValues: [PublishedVersions, "None"]
+    Description: Enables low-cost SnapStart for published SIP Lambda versions.
+
   LogRetentionDays:
     Type: Number
     Default: 7
@@ -72,8 +84,11 @@ Resources:
             Statement:
               - Effect: Allow
                 Action: lambda:InvokeFunction
-                Resource: !Sub >-
-                  arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-${EnvironmentName}-sip
+                Resource:
+                  - !Sub >-
+                    arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-${EnvironmentName}-sip
+                  - !Sub >-
+                    arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-${EnvironmentName}-sip:${SipAliasName}
 
   WebLambdaExecutionRole:
     Type: AWS::IAM::Role
@@ -102,6 +117,8 @@ Resources:
       Architectures: [x86_64]
       MemorySize: 512
       Timeout: 900
+      SnapStart:
+        ApplyOn: !Ref VoiceSnapStartApplyOn
 
       Environment:
         Variables:
@@ -126,10 +143,26 @@ Resources:
         ApplicationLogLevel: INFO
         SystemLogLevel: WARN
 
+  SipFunctionVersion:
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName: !Ref SipFunction
+      Description: !Sub "SnapStart image ${ContainerImageUri}"
+
+  SipAlias:
+    Type: AWS::Lambda::Alias
+    Properties:
+      Name: !Ref SipAliasName
+      Description: Stable SnapStart-enabled voice endpoint.
+      FunctionName: !Ref SipFunction
+      FunctionVersion: !GetAtt SipFunctionVersion.Version
+
   SipFunctionUrl:
     Type: AWS::Lambda::Url
+    DependsOn: SipAlias
     Properties:
       TargetFunctionArn: !GetAtt SipFunction.Arn
+      Qualifier: !Ref SipAliasName
       AuthType: NONE
       InvokeMode: BUFFERED
 
@@ -186,7 +219,7 @@ Resources:
   PublicFunctionUrlPermission:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !Ref SipFunction
+      FunctionName: !Ref SipAlias
       Action: lambda:InvokeFunctionUrl
       Principal: "*"
       FunctionUrlAuthType: NONE
@@ -194,16 +227,17 @@ Resources:
   PublicFunctionInvokePermission:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !Ref SipFunction
+      FunctionName: !Ref SipAlias
       Action: lambda:InvokeFunction
       Principal: "*"
       InvokedViaFunctionUrl: true
 
   WorkerRetryPolicy:
     Type: AWS::Lambda::EventInvokeConfig
+    DependsOn: SipAlias
     Properties:
       FunctionName: !Ref SipFunction
-      Qualifier: $LATEST
+      Qualifier: !Ref SipAliasName
       MaximumEventAgeInSeconds: 60
       MaximumRetryAttempts: 0
 
@@ -234,6 +268,16 @@ Outputs:
 
   FunctionName:
     Value: !Ref SipFunction
+
+  SipAliasArn:
+    Value: !Ref SipAlias
+
+  SipPublishedVersion:
+    Value: !GetAtt SipFunctionVersion.Version
+
+  VoiceSnapStart:
+    Value: !Ref VoiceSnapStartApplyOn
+    Description: SnapStart setting applied to published SIP Lambda versions.
 
   MaximumCallDurationMinutes:
     Value: "14"

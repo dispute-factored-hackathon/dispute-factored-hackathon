@@ -98,24 +98,34 @@ Resources:
                 Effect: Allow
                 Action:
                   - lambda:AddPermission
+                  - lambda:CreateAlias
                   - lambda:CreateFunction
                   - lambda:CreateFunctionUrlConfig
+                  - lambda:DeleteAlias
                   - lambda:DeleteFunction
                   - lambda:DeleteFunctionUrlConfig
+                  - lambda:GetAlias
                   - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
                   - lambda:GetFunctionUrlConfig
                   - lambda:GetPolicy
+                  - lambda:ListVersionsByFunction
                   - lambda:ListTags
+                  - lambda:PublishVersion
                   - lambda:PutFunctionEventInvokeConfig
                   - lambda:RemovePermission
                   - lambda:TagResource
                   - lambda:UntagResource
+                  - lambda:UpdateAlias
                   - lambda:UpdateFunctionCode
                   - lambda:UpdateFunctionConfiguration
                   - lambda:UpdateFunctionEventInvokeConfig
                   - lambda:UpdateFunctionUrlConfig
-                Resource: !Sub >-
-                  arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-demo-sip
+                Resource:
+                  - !Sub >-
+                    arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-demo-sip
+                  - !Sub >-
+                    arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-demo-sip:*
               - Sid: ManageDemoExecutionRole
                 Effect: Allow
                 Action:

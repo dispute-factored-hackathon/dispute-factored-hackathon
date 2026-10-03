@@ -179,6 +179,17 @@ fields @timestamp, @logStream, @message
 | limit 200
 ```
 
+Example query for voice cold starts and SnapStart restores:
+
+```text
+fields @timestamp, @type, @duration, @initDuration, @restoreDuration, @billedDuration, @memorySize
+| filter @type = "REPORT"
+| sort @timestamp desc
+| limit 100
+```
+
+For the SIP Lambda, compare the platform `@initDuration` or `@restoreDuration` with the application's `webhook.handler.started`, `worker.started`, `sip.accept.completed`, `realtime.sideband.connected`, and first-response events. SnapStart only addresses Lambda initialization; these timestamps distinguish it from OpenAI, SIP, database and model-response latency.
+
 Logs Insights charges for data scanned. Select one log group, keep the time range small, and avoid repeatedly querying all retained data. The restricted credential can query only the two application groups.
 
 AWS references: [CloudWatch Logs permissions](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/permissions-reference-cwl.html), [`aws logs tail`](https://docs.aws.amazon.com/cli/latest/reference/logs/tail.html), and [`aws logs start-query`](https://docs.aws.amazon.com/cli/latest/reference/logs/start-query.html).

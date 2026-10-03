@@ -154,12 +154,21 @@ The components are:
 
 - **Web Lambda Function URL:** serves the FastAPI backend and both browser interfaces from the same immutable image. The public GitHub Pages address redirects here.
 - **Voice Lambda Function URL:** receives the signed OpenAI webhook; standard Lambda invocation and duration charges still apply.
+- **Voice SnapStart alias:** the Function URL and asynchronous worker invoke a published `live` alias restored from a Python 3.12 snapshot. This reduces cold initialization without keeping paid capacity continuously provisioned.
 - **Lambda ingress invocation:** verifies the signature and accepts the SIP call immediately.
 - **Lambda asynchronous worker invocation:** opens the private Realtime sideband WebSocket for the duration of the call. It stops at 14 minutes, before Lambda's 15-minute limit.
 - **ECR:** stores the immutable Docker image and retains only the three newest images.
 - **One Secrets Manager secret:** stores `OPENAI_API_KEY`, `OPENAI_WEBHOOK_SECRET`, and `JEV_API_KEY`. It is fetched once per Lambda execution environment rather than on every message or keypad event.
 - **CloudWatch Logs:** keeps JSON logs for three days. The application never logs document digits.
 - **Concurrency:** uses the account's unreserved Lambda capacity. The demo account currently has a total concurrency quota of 10, so the stack does not reserve concurrency; AWS requires all 10 executions to remain unreserved at that quota. Use account quotas and OpenAI-side limits as the cost and abuse boundary until the Lambda quota is increased.
+
+#### Low-cost voice cold-start control
+
+`application.yaml` enables Lambda SnapStart only for the SIP function. Every application deploy publishes a new immutable version, updates the stable `live` alias, and points both the public Function URL and internal asynchronous worker invocation at that alias. CloudFormation deletes the replaced version so unused cached snapshots do not accumulate charges. The deploy script verifies that the published version reports `SnapStart.OptimizationStatus=On` before declaring success.
+
+The web Lambda stays fully on demand. The stack does not enable Provisioned Concurrency, scheduled warmers, Fargate, an Application Load Balancer or API Gateway. At the 512 MB configuration, the São Paulo SnapStart cache is approximately USD 2.57 for a continuously active 30-day version, plus a very small charge for each restored environment and normal Lambda execution. This estimate uses the São Paulo entries in the [AWS Lambda public price list](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSLambda/current/index.json); verify current prices before budgeting. Delete obsolete versions and set `VOICE_SNAPSTART_APPLY_ON=None` when running `deploy.sh` if the optimization is no longer required.
+
+SnapStart improves Lambda initialization, but it cannot remove Twilio routing, OpenAI call acceptance, model response or downstream database latency. AWS documents the supported runtimes and version/alias lifecycle in [Improving startup performance with Lambda SnapStart](https://docs.aws.amazon.com/lambda/latest/dg/snapstart.html). Diagnose the intervals independently with the structured events documented in the root `APPLICATION_LOGS.md`.
 
 The call media does not pass through AWS. Browser traffic uses a separate Lambda so a website request cannot interfere with the long-running call worker:
 
