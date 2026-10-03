@@ -719,6 +719,7 @@ class SipRealtimeGateway:
                     opening_sent = False
                     last_customer_transcript = ""
                     pending_handoff: HumanHandoffPlan | None = None
+                    deferred_handoff_event: dict[str, Any] | None = None
 
                     async for raw_event in websocket:
                         try:
@@ -756,6 +757,28 @@ class SipRealtimeGateway:
                                 transcript=last_customer_transcript,
                                 item_id=str(event.get("item_id", "")),
                             )
+                            if deferred_handoff_event is not None:
+                                handoff = await self._handle_tool_calls(
+                                    websocket,
+                                    call_id,
+                                    deferred_handoff_event,
+                                    last_customer_transcript=last_customer_transcript,
+                                )
+                                deferred_handoff_event = None
+                                last_customer_transcript = ""
+                                if handoff is not None:
+                                    pending_handoff = handoff
+                        elif (
+                            event_type == "conversation.item.input_audio_transcription.failed"
+                            and deferred_handoff_event is not None
+                        ):
+                            await self._handle_tool_calls(
+                                websocket,
+                                call_id,
+                                deferred_handoff_event,
+                                last_customer_transcript="",
+                            )
+                            deferred_handoff_event = None
                         elif event_type in {
                             "response.output_audio_transcript.done",
                             "response.audio_transcript.done",
@@ -805,6 +828,21 @@ class SipRealtimeGateway:
                                     "",
                                 ),
                             )
+
+                            # Realtime may finish the model's tool call a few
+                            # milliseconds before asynchronous input transcription.
+                            # Preserve the security gate and wait for the caller's
+                            # actual words instead of rejecting a valid request.
+                            if (
+                                self._has_tool_call(event, "request_human")
+                                and not last_customer_transcript.strip()
+                            ):
+                                deferred_handoff_event = event
+                                _telemetry(
+                                    "voice.handoff.deferred_for_transcript",
+                                    call_id=call_id,
+                                )
+                                continue
 
                             handoff = await self._handle_tool_calls(
                                 websocket,
@@ -1378,7 +1416,7 @@ class SipRealtimeGateway:
                         (
                             "csat_unclear"
                             if tool_name == "record_csat"
-                            else "handoff_unavailable"
+                            else "handoff_clarification"
                             if tool_name == "request_human"
                             else "classification_clarification"
                             if tool_name == "classify_dispute"
@@ -1461,6 +1499,15 @@ class SipRealtimeGateway:
 
     def _handoff_plan(self, state: VoiceCallState) -> HumanHandoffPlan:
         return self.handoff_policy.plan(state.caller_phone)
+
+    @staticmethod
+    def _has_tool_call(event: dict[str, Any], tool_name: str) -> bool:
+        """Return whether a completed response contains the named function call."""
+
+        return any(
+            output.get("type") == "function_call" and output.get("name") == tool_name
+            for output in event.get("response", {}).get("output", [])
+        )
 
     @staticmethod
     def _handoff_message_reason(plan: HumanHandoffPlan) -> str:
@@ -2069,7 +2116,8 @@ General behavior:
                     "Vou encaminhar para o atendimento humano simulado."
                 ),
                 "invalid_language": (
-                    "Você pode continuar neste idioma ou mudar para inglês ou espanhol."
+                    "Não consegui identificar o idioma na sua resposta. "
+                    "Diga português, inglês ou espanhol."
                 ),
                 "invalid_auth_method": (
                     "Para continuar, escolha autenticação pelo número de telefone "
@@ -2124,6 +2172,10 @@ General behavior:
                     "Não consigo transferir esta ligação para o mesmo número que está ligando. "
                     "Para testar o atendimento humano, ligue de outro telefone."
                 ),
+                "handoff_clarification": (
+                    "Não consegui confirmar seu pedido de atendimento humano. "
+                    "Diga novamente: quero falar com um atendente."
+                ),
                 "handoff_failed": (
                     "Não consegui completar a transferência para o atendimento humano. "
                     "O seu progresso foi preservado, mas esta demonstração não pode continuar."
@@ -2172,7 +2224,7 @@ General behavior:
                     "Te transferiré a la atención humana simulada."
                 ),
                 "invalid_language": (
-                    "Puedes continuar en este idioma o cambiar a inglés o portugués."
+                    "No pude identificar el idioma en tu respuesta. Di español, inglés o portugués."
                 ),
                 "invalid_auth_method": (
                     "Para continuar, elige autenticación con el número de teléfono "
@@ -2224,6 +2276,10 @@ General behavior:
                     "No puedo transferir esta llamada al mismo número desde el que estás llamando. "
                     "Para probar la atención humana, llama desde otro teléfono."
                 ),
+                "handoff_clarification": (
+                    "No pude confirmar tu solicitud de atención humana. "
+                    "Dime nuevamente: quiero hablar con un agente."
+                ),
                 "handoff_failed": (
                     "No pude completar la transferencia a la atención humana. "
                     "Tu progreso quedó guardado, pero esta demostración no puede continuar."
@@ -2270,7 +2326,8 @@ General behavior:
                     "I'll transfer you to simulated human support."
                 ),
                 "invalid_language": (
-                    "You can continue in this language or switch to Portuguese or Spanish."
+                    "I couldn't identify the language in your answer. "
+                    "Say English, Spanish, or Portuguese."
                 ),
                 "invalid_auth_method": (
                     "To continue, choose authentication using the phone number for this call "
@@ -2318,6 +2375,10 @@ General behavior:
                     "I can't transfer this call to the same number that is calling. "
                     "To test human support, please call from another phone."
                 ),
+                "handoff_clarification": (
+                    "I couldn't confirm your request for human support. "
+                    "Please say again: I want to speak with an agent."
+                ),
                 "handoff_failed": (
                     "I couldn't complete the transfer to human support. "
                     "Your progress was preserved, but this demonstration cannot continue."
@@ -2329,6 +2390,7 @@ General behavior:
             "handoff_transfer",
             "handoff_unavailable",
             "handoff_same_number",
+            "handoff_clarification",
             "handoff_failed",
         }:
             return messages[reason]

@@ -332,14 +332,64 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertTrue(any("transferir você agora" in message for message in spoken))
 
+    async def test_handoff_waits_when_tool_call_arrives_before_transcript(self):
+        events = [
+            session_updated_event(),
+            tool_call_event("request_human", "tool_human", {}),
+            completed_transcript_event(
+                speaker="customer",
+                transcript="Eu quero falar com um ser humano.",
+            ),
+            json.dumps({"type": "response.done", "response": {"output": []}}),
+        ]
+        gateway, websocket, calls = self._gateway(
+            events,
+            human_handoff_number="+5511981020050",
+        )
+
+        await gateway.accept_and_control("call_late_transcript", "+5511999990001")
+
+        self.assertEqual(
+            calls.referrals,
+            [("call_late_transcript", "tel:+5511981020050")],
+        )
+        tool_output = self._tool_outputs(websocket)[-1]["item"]["output"]
+        self.assertIn("transferir você agora", tool_output)
+
+    async def test_failed_late_transcription_asks_to_repeat_human_request(self):
+        events = [
+            session_updated_event(),
+            tool_call_event("request_human", "tool_human", {}),
+            json.dumps(
+                {
+                    "type": "conversation.item.input_audio_transcription.failed",
+                    "item_id": "item_customer_1",
+                }
+            ),
+        ]
+        gateway, websocket, calls = self._gateway(
+            events,
+            human_handoff_number="+5511981020050",
+        )
+
+        await gateway.accept_and_control("call_failed_transcript", "+5511999990001")
+
+        self.assertEqual(calls.referrals, [])
+        self.assertEqual(
+            gateway.calls.get("call_failed_transcript").stage,
+            "needs_language_confirmation",
+        )
+        tool_output = self._tool_outputs(websocket)[-1]["item"]["output"]
+        self.assertIn("Não consegui confirmar", tool_output)
+
     async def test_handoff_does_not_transfer_back_to_calling_phone(self):
         events = [
             session_updated_event(),
+            tool_call_event("request_human", "tool_human", {}),
             completed_transcript_event(
                 speaker="customer",
                 transcript="Quero um atendente humano.",
             ),
-            tool_call_event("request_human", "tool_human", {}),
         ]
         gateway, websocket, calls = self._gateway(
             events,
@@ -684,7 +734,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state.locale.language, "pt")
         outbound = json.dumps(websocket.sent, ensure_ascii=False)
         self.assertIn(
-            "Você pode continuar neste idioma ou mudar para inglês ou espanhol.",
+            "Não consegui identificar o idioma na sua resposta.",
             outbound,
         )
 
