@@ -179,16 +179,16 @@ fields @timestamp, @logStream, @message
 | limit 200
 ```
 
-Example query for voice cold starts and SnapStart restores:
+Example query for the application-controlled portion of voice cold starts:
 
 ```text
-fields @timestamp, @type, @duration, @initDuration, @restoreDuration, @billedDuration, @memorySize
-| filter @type = "REPORT"
+fields @timestamp, @message
+| filter @message like /sip.gateway.initialized|webhook.gateway.ready|aws.secret.loaded/
 | sort @timestamp desc
 | limit 100
 ```
 
-For the SIP Lambda, compare the platform `@initDuration` or `@restoreDuration` with the application's `webhook.handler.started`, `worker.started`, `sip.accept.completed`, `realtime.sideband.connected`, and first-response events. SnapStart only addresses Lambda initialization; these timestamps distinguish it from OpenAI, SIP, database and model-response latency.
+For the SIP Lambda, compare `webhook.gateway.ready` with `webhook.handler.started`, `worker.started`, `sip.accept.completed`, `realtime.sideband.connected`, and first-response events. SnapStart only addresses Lambda initialization; these timestamps distinguish application setup from OpenAI, SIP, database and model-response latency. The deployed function keeps Lambda system logging at `WARN` to limit log volume, so platform `REPORT` records and `@restoreDuration` are not normally emitted. Temporarily use `INFO` only when a platform-level benchmark is required.
 
 Logs Insights charges for data scanned. Select one log group, keep the time range small, and avoid repeatedly querying all retained data. The restricted credential can query only the two application groups.
 
