@@ -44,6 +44,7 @@ class JevVoiceRouterTests(unittest.TestCase):
             {
                 "prompt_abuse": noul(0.01),
                 "explicit_human_request": noul(0.02),
+                "speech_clarity": choice("clear"),
                 "stage_intent": stage_answer,
                 **extra_answers,
             }
@@ -100,7 +101,10 @@ class JevVoiceRouterTests(unittest.TestCase):
         self.assertEqual(decision.arguments["customer_reported_card_environment"], "CARD_ABSENT")
 
     def test_csat_rating_maps_to_integer(self):
-        decision, _ = self._route("dispute_classified", choice("rating_4"))
+        decision, _ = self._route(
+            "dispute_classified",
+            choice("rating_4", confidence=0.68),
+        )
 
         self.assertEqual(decision.tool_name, "record_csat")
         self.assertEqual(decision.arguments, {"response_intent": "RATING", "rating": 4})
@@ -160,6 +164,25 @@ class JevVoiceRouterTests(unittest.TestCase):
         decision, _ = self._route("needs_auth_method", choice("phone", confidence=0.51))
 
         self.assertEqual(decision.action, JevAction.FALLBACK)
+
+    def test_corrupted_transcription_requests_clarification(self):
+        client = FakeClient(
+            {
+                "prompt_abuse": noul(0.01),
+                "explicit_human_request": noul(0.01),
+                "explicit_language_change": choice("none"),
+                "speech_clarity": choice("unclear", confidence=0.97),
+            }
+        )
+
+        decision = JevVoiceRouter(client=client).route(
+            stage="authenticated",
+            transcript="Sullepring",
+            language="pt",
+        )
+
+        self.assertEqual(decision.action, JevAction.CLARIFY)
+        self.assertIsNone(decision.tool_name)
 
     def test_open_ended_transaction_search_falls_back_after_global_checks(self):
         client = FakeClient(

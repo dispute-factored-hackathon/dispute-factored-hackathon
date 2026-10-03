@@ -366,7 +366,6 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             complaint_repository=complaint_repository,
             human_handoff_number=human_handoff_number,
             jev_router=jev_router,
-            auto_authenticate_known_phone=False,
         )
         return gateway, websocket, calls
 
@@ -419,6 +418,21 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             gateway.calls.get("call_jev_abuse").stage,
             "needs_language_confirmation",
         )
+
+    async def test_jev_corrupted_transcription_asks_to_repeat_without_handoff(self):
+        events = [
+            *opened_session_events(),
+            completed_transcript_event(speaker="customer", transcript="Sullepring"),
+        ]
+        router = FakeJevRouter(JevVoiceDecision(JevAction.CLARIFY, 0.97, model="jev-test"))
+        gateway, websocket, calls = self._gateway(events, jev_router=router)
+
+        await gateway.accept_and_control("call_jev_unclear", "+5511999990001")
+
+        self.assertEqual(gateway.calls.get("call_jev_unclear").stage, "needs_language_confirmation")
+        self.assertEqual(calls.referrals, [])
+        spoken = json.dumps(websocket.sent, ensure_ascii=False)
+        self.assertIn("Pode repetir com uma frase curta", spoken)
 
     async def test_explicit_human_request_transfers_after_spoken_notice(self):
         events = [
@@ -604,9 +618,8 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(gateway._calls)
         self.assertEqual(
             state.stage,
-            "authenticated",
+            "needs_language_confirmation",
         )
-        self.assertEqual(state.identity.customer_id, "CLI-002")
 
     async def test_uses_cedar_as_default_voice(self):
         gateway, _, calls = self._gateway([])

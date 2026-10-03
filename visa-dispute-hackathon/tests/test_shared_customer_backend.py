@@ -18,6 +18,8 @@ def gabriel_repository() -> MockCustomerRepository:
 def authenticate_by_phone() -> tuple[VoiceCallService, VoiceCallState]:
     calls = VoiceCallService(gabriel_repository())
     state = calls.start("5511981020050", call_id="gabriel-phone")
+    state = calls.confirm_language(state.call_id)
+    state = calls.choose_authentication_method(state.call_id, method="phone")
     return calls, state
 
 
@@ -36,10 +38,27 @@ def test_phone_authentication_uses_shared_backend_profile() -> None:
     assert state.identity.detected_accent == "portuguese"
 
 
+def test_known_phone_supplies_brazilian_locale_without_authenticating() -> None:
+    calls = VoiceCallService(gabriel_repository())
+    state = calls.start("5511981020050", call_id="gabriel-locale-only")
+
+    assert state.stage is VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION
+    assert state.identity is None
+    assert state.authentication_method is None
+    assert (state.locale.language, state.locale.locale, state.locale.accent) == (
+        "pt",
+        "pt-BR",
+        "brazilian",
+    )
+    opening = SipRealtimeGateway._message_for(state, "opening")
+    assert "português brasileiro" in opening
+
+
 def test_document_authentication_uses_same_shared_backend_profile() -> None:
     calls = VoiceCallService(gabriel_repository())
     state = calls.start("+551100000000", call_id="gabriel-document")
     state = calls.confirm_language(state.call_id)
+    state = calls.choose_authentication_method(state.call_id, method="document")
 
     for key in "123456#":
         state, _ = calls.receive_dtmf(state.call_id, key)
@@ -70,7 +89,7 @@ def test_language_confirmation_only_offers_other_languages() -> None:
     calls = VoiceCallService(gabriel_repository())
     scenarios = (
         (
-            "+5511981020051",
+            "+5511981020050",
             "continuar neste idioma ou prefere mudar para inglês ou espanhol",
             "switch to English or Spanish",
         ),

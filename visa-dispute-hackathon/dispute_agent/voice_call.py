@@ -197,13 +197,11 @@ class VoiceCallService:
         satisfaction_survey_repository: SatisfactionSurveyRepository | None = None,
         transcription_model: str = "gpt-4o-mini-transcribe",
         max_transaction_guesses: int = 3,
-        auto_authenticate_known_phone: bool = True,
     ) -> None:
         started = time.monotonic()
         self.identity = VoiceCallerIdentityService(customer_source)
         self.max_document_attempts = max_document_attempts
         self.max_transaction_guesses = max_transaction_guesses
-        self.auto_authenticate_known_phone = auto_authenticate_known_phone
         self.transactions = transaction_repository or SQLiteTransactionSearchRepository()
         self.products = product_repository or MockProductRepository()
         self.product_service = ProductService(self.products)
@@ -231,47 +229,31 @@ class VoiceCallService:
         *,
         call_id: str | None = None,
     ) -> VoiceCallState:
-        """Initialize a call and authenticate a uniquely recognized phone number.
+        """Initialize a call without authenticating the caller.
 
-        A recognized synthetic customer can proceed without answering an
-        unnecessary authentication-method question.  Unknown numbers use only
-        their calling code as a language hint and fall back to keypad document
-        authentication after language confirmation.
+        A matching phone may supply locale context, but identity is only attached
+        after the caller deliberately chooses phone authentication.
         """
         started = time.monotonic()
         resolved_call_id = call_id or secrets.token_urlsafe(24)
         phone_result = self.identity.identify_phone(mobile_phone)
-        identity = phone_result.identity
-
-        if (
-            self.auto_authenticate_known_phone
-            and phone_result.status is CallerIdentityStatus.AUTHENTICATED
-        ):
-            assert identity is not None
+        if phone_result.status is CallerIdentityStatus.AUTHENTICATED:
+            assert phone_result.identity is not None
             locale = ConversationLocaleContext.from_customer_record(
-                country=identity.country,
-                detected_accent=identity.detected_accent,
+                country=phone_result.identity.country,
+                detected_accent=phone_result.identity.detected_accent,
             )
-            stage = VoiceCallStage.AUTHENTICATED
-            authentication_method = VoiceAuthenticationMethod.PHONE
-            seed_demo_card(self.products, identity.customer_id)
         else:
-            identity = None
             locale = ConversationLocaleContext.from_calling_code(phone_result.country_code)
-            stage = VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION
-            authentication_method = None
 
         state = VoiceCallState(
             call_id=resolved_call_id,
             caller_phone=mobile_phone,
-            stage=stage,
+            stage=VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION,
             locale=locale,
-            identity=identity,
-            authentication_method=authentication_method,
         )
         self._calls[resolved_call_id] = state
         self.call_interactions.start(resolved_call_id)
-        self.call_interactions.sync(state)
 
         _telemetry(
             "voice.call.started",
@@ -283,7 +265,7 @@ class VoiceCallService:
             accent=state.locale.accent,
             locale_source=state.locale.source,
             phone_identity_status=phone_result.status.value,
-            auto_authenticated=state.identity is not None,
+            authenticated=False,
         )
         return state
 
@@ -295,20 +277,7 @@ class VoiceCallService:
         if state.stage is not VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION:
             return state
 
-        updated = replace(
-            state,
-            stage=(
-                VoiceCallStage.NEEDS_DOCUMENT
-                if self.auto_authenticate_known_phone
-                else VoiceCallStage.NEEDS_AUTH_METHOD
-            ),
-            authentication_method=(
-                VoiceAuthenticationMethod.DOCUMENT
-                if self.auto_authenticate_known_phone
-                else None
-            ),
-            document_digits="",
-        )
+        updated = replace(state, stage=VoiceCallStage.NEEDS_AUTH_METHOD)
         self._calls[call_id] = updated
 
         _telemetry(
@@ -357,29 +326,15 @@ class VoiceCallService:
         locale = ConversationLocaleContext.explicit_choice(language, resolved_accent)
 
         next_stage = (
-            (
-                VoiceCallStage.NEEDS_DOCUMENT
-                if self.auto_authenticate_known_phone
-                else VoiceCallStage.NEEDS_AUTH_METHOD
-            )
+            VoiceCallStage.NEEDS_AUTH_METHOD
             if state.stage is VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION
             else state.stage
-        )
-        authentication_method = (
-            (
-                VoiceAuthenticationMethod.DOCUMENT
-                if self.auto_authenticate_known_phone
-                else None
-            )
-            if state.stage is VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION
-            else state.authentication_method
         )
 
         updated = replace(
             state,
             stage=next_stage,
             locale=locale,
-            authentication_method=authentication_method,
         )
         self._calls[call_id] = updated
 

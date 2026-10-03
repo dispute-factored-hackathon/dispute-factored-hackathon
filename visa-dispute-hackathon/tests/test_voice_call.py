@@ -26,7 +26,6 @@ class VoiceCallServiceTests(unittest.TestCase):
         self.calls = VoiceCallService(
             FIXTURE,
             transaction_repository=self.transactions,
-            auto_authenticate_known_phone=False,
         )
 
     def tearDown(self):

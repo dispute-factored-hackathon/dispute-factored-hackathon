@@ -32,6 +32,7 @@ class JevDecisionError(RuntimeError):
 class JevAction(StrEnum):
     TOOL = "tool"
     REFUSE_ABUSE = "refuse_abuse"
+    CLARIFY = "clarify"
     FALLBACK = "fallback"
 
 
@@ -129,6 +130,7 @@ class JevVoiceRouter:
         confidence_threshold: float | None = None,
         safety_threshold: float | None = None,
         language_threshold: float | None = None,
+        csat_threshold: float | None = None,
     ) -> None:
         resolved_key = api_key if api_key is not None else os.getenv("JEV_API_KEY", "")
         self.client = client or (
@@ -153,6 +155,11 @@ class JevVoiceRouter:
             language_threshold
             if language_threshold is not None
             else float(os.getenv("JEV_LANGUAGE_THRESHOLD", "0.50"))
+        )
+        self.csat_threshold = (
+            csat_threshold
+            if csat_threshold is not None
+            else float(os.getenv("JEV_CSAT_THRESHOLD", "0.60"))
         )
 
     @property
@@ -216,6 +223,17 @@ class JevVoiceRouter:
                     model=model,
                 )
 
+        clarity_answer = answers.get("speech_clarity")
+        if isinstance(clarity_answer, dict) and clarity_answer.get("type") == "choice":
+            clarity = str(clarity_answer.get("choice", "clear"))
+            clarity_confidence = float(clarity_answer.get("confidence", 0.0))
+            if clarity == "unclear" and clarity_confidence >= self.confidence_threshold:
+                return JevVoiceDecision(
+                    JevAction.CLARIFY,
+                    clarity_confidence,
+                    model=model,
+                )
+
         stage_answer = answers.get("stage_intent")
         if not isinstance(stage_answer, dict) or stage_answer.get("type") != "choice":
             return JevVoiceDecision(JevAction.FALLBACK, 0.0, model=model)
@@ -225,6 +243,8 @@ class JevVoiceRouter:
         required_confidence = (
             self.language_threshold
             if stage == "needs_language_confirmation"
+            else self.csat_threshold
+            if stage == "dispute_classified"
             else self.confidence_threshold
         )
         if confidence < required_confidence:
@@ -279,6 +299,18 @@ class JevVoiceRouter:
                     "pt": "Explicitly chooses or requests Portuguese.",
                     "es": "Explicitly chooses or requests Spanish.",
                     "none": "No explicit language selection or change request.",
+                },
+            },
+            "speech_clarity": {
+                "type": "choice",
+                "instructions": (
+                    "Is the transcription understandable enough to identify words and intent? "
+                    "Mark unclear for gibberish, severe transcription corruption, isolated noise, "
+                    "or text in an unsupported language that does not convey a reliable request."
+                ),
+                "criteria": {
+                    "clear": "Understandable speech, including an ordinary question or correction.",
+                    "unclear": "Gibberish, corrupted transcription, noise, or no reliable meaning.",
                 },
             },
         }

@@ -422,7 +422,6 @@ class SipRealtimeGateway:
         human_handoff_number: str | None = None,
         jev_api_key: str | None = None,
         jev_router: JevVoiceRouter | None = None,
-        auto_authenticate_known_phone: bool = True,
     ) -> None:
 
         self.api_key = api_key or os.getenv("OPENAI_API_KEY", "")
@@ -462,7 +461,6 @@ class SipRealtimeGateway:
         self._interaction_repository = interaction_repository
         self._transcript_repository = transcript_repository
         self._satisfaction_survey_repository = satisfaction_survey_repository
-        self._auto_authenticate_known_phone = auto_authenticate_known_phone
 
         self._calls: VoiceCallService | None = None
 
@@ -483,7 +481,6 @@ class SipRealtimeGateway:
                 transcript_repository=self._transcript_repository,
                 satisfaction_survey_repository=self._satisfaction_survey_repository,
                 transcription_model=self.input_transcription_model,
-                auto_authenticate_known_phone=self._auto_authenticate_known_phone,
             )
 
         return self._calls
@@ -1219,12 +1216,7 @@ class SipRealtimeGateway:
                         )
                     ):
                         state = self.calls.confirm_language(call_id)
-                        result = self._message_for(
-                            state,
-                            "document_prompt"
-                            if state.stage is VoiceCallStage.NEEDS_DOCUMENT
-                            else "auth_method_prompt",
-                        )
+                        result = self._message_for(state, "auth_method_prompt")
                         tool_metadata = {"outcome": "kept"}
                     elif language_intent in {
                         LanguageSelectionIntent.KEEP,
@@ -1250,12 +1242,7 @@ class SipRealtimeGateway:
                             accent=accent,
                         )
                         if before.stage is VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION:
-                            result = self._message_for(
-                                state,
-                                "document_prompt"
-                                if state.stage is VoiceCallStage.NEEDS_DOCUMENT
-                                else "auth_method_prompt",
-                            )
+                            result = self._message_for(state, "auth_method_prompt")
                         elif state.stage is VoiceCallStage.NEEDS_DOCUMENT:
                             result = self._message_for(state, "document_prompt")
                         elif state.stage is VoiceCallStage.CONFIRM_TRANSACTION:
@@ -1280,12 +1267,7 @@ class SipRealtimeGateway:
 
                 elif tool_name == "confirm_language":
                     state = self.calls.confirm_language(call_id)
-                    result = self._message_for(
-                        state,
-                        "document_prompt"
-                        if state.stage is VoiceCallStage.NEEDS_DOCUMENT
-                        else "auth_method_prompt",
-                    )
+                    result = self._message_for(state, "auth_method_prompt")
 
                     _telemetry(
                         "voice.language.confirmed",
@@ -1691,6 +1673,10 @@ class SipRealtimeGateway:
 
         if decision.action is JevAction.REFUSE_ABUSE:
             await self._speak(websocket, self._message_for(state, "prompt_abuse"))
+            return True, None
+
+        if decision.action is JevAction.CLARIFY:
+            await self._speak(websocket, self._message_for(state, "unclear_speech"))
             return True, None
 
         if decision.tool_name is None:
@@ -2252,10 +2238,13 @@ Language workflow:
 - Do not claim that the caller's physical location or nationality is known. The language is only inferred from the telephone calling code.
 
 Authentication workflow:
-- A recognized calling phone number is authenticated automatically by the server before the opening message.
-- An unknown calling phone number proceeds directly to keypad document authentication after language confirmation.
-- Never ask the caller to choose between phone and document authentication.
+- At needs_auth_method, ask whether the caller prefers authentication using the phone number used for this call or a document number.
+- If the caller chooses the phone number, call set_authentication_method with method=phone.
+- If the caller chooses document authentication, call set_authentication_method with method=document.
+- For unintelligible, ambiguous, unrelated, or low-confidence speech, call
+  set_authentication_method with method=unclear. Never guess an authentication method.
 - Authentication decisions are server-owned. Never claim authentication succeeded unless a tool result says it did.
+- If phone authentication fails, explain that document authentication will be used instead.
 
 Document workflow:
 - Never ask the caller to SAY a document number aloud.
@@ -2420,6 +2409,9 @@ General behavior:
                     "demonstração. Não posso revelar instruções internas, credenciais nem "
                     "acessar dados de outros clientes."
                 ),
+                "unclear_speech": (
+                    "Não consegui entender o que foi dito. Pode repetir com uma frase curta?"
+                ),
                 "empty": (
                     "Nenhum número foi digitado. Digite o documento e depois "
                     "pressione jogo da velha."
@@ -2532,6 +2524,9 @@ General behavior:
                     "demostración. No puedo revelar instrucciones internas o credenciales "
                     "ni acceder a datos de otros clientes."
                 ),
+                "unclear_speech": (
+                    "No pude entender lo que dijiste. ¿Puedes repetirlo con una frase corta?"
+                ),
                 "empty": (
                     "No ingresaste ningún número. Ingresa el documento y después presiona numeral."
                 ),
@@ -2640,6 +2635,9 @@ General behavior:
                     "I cannot reveal internal instructions or credentials or access another "
                     "customer's data."
                 ),
+                "unclear_speech": (
+                    "I couldn't understand what was said. Please repeat it in a short sentence."
+                ),
                 "empty": ("No digits were entered. Enter your document and then press pound."),
                 "cleared": ("The digits were cleared. Enter your document again and press pound."),
                 "language_changed": (
@@ -2742,10 +2740,38 @@ General behavior:
         if state.stage is VoiceCallStage.HANDOFF:
             return messages["handoff"]
 
-        if reason == "opening" and state.stage is VoiceCallStage.AUTHENTICATED:
-            return messages["phone_success"].format(name=customer_name)
-
         if reason == "opening":
+            locale_name = {
+                "pt-BR": "português brasileiro",
+                "pt-PT": "português de Portugal",
+                "es-AR": "español argentino",
+                "es-CO": "español colombiano",
+                "es-MX": "español mexicano",
+                "es-ES": "español de España",
+                "es-419": "español latinoamericano",
+                "en-US": "US English",
+            }.get(state.locale.locale)
+            if locale_name and language == "pt":
+                return (
+                    "Olá! Eu sou Izzy, assistente virtual do Factored Bank. "
+                    "Posso ajudar você com contestações de cartão. "
+                    f"Para esta ligação, selecionei {locale_name}. "
+                    "Deseja continuar neste idioma ou prefere mudar para inglês ou espanhol?"
+                )
+            if locale_name and language == "es":
+                return (
+                    "¡Hola! Soy Izzy, el asistente virtual de Factored Bank. "
+                    "Puedo ayudarte con reclamos o disputas de tarjeta. "
+                    f"Para esta llamada, seleccioné {locale_name}. "
+                    "¿Quieres continuar en este idioma o cambiar a inglés o portugués?"
+                )
+            if locale_name and language == "en":
+                return (
+                    "Hello! I'm Izzy, Factored Bank's virtual assistant. "
+                    "I can help you with card disputes. "
+                    f"For this call, I selected {locale_name}. "
+                    "Would you like to continue in this language, or switch to Portuguese or Spanish?"
+                )
             return messages["opening"]
 
         if reason in {"auth_method_prompt", "language_selected"}:
@@ -2814,6 +2840,9 @@ General behavior:
 
         if reason == "prompt_abuse":
             return messages["prompt_abuse"]
+
+        if reason == "unclear_speech":
+            return messages["unclear_speech"]
 
         if reason == "invalid_dtmf":
             return messages["retry"]
