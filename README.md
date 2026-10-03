@@ -30,6 +30,7 @@ The implementation focuses on identifying a synthetic customer, understanding na
 | [`agents/AGENTIC_UX_REVIEWER.md`](agents/AGENTIC_UX_REVIEWER.md) | Tool-agnostic agent definition for iterative UX reviews |
 | [`AGENTS.md`](AGENTS.md) | Instructions for coding agents working in this repository |
 | [`CONTRIBUTE.md`](CONTRIBUTE.md) | Contribution workflow and quality requirements |
+| [`APPLICATION_LOGS.md`](APPLICATION_LOGS.md) | How to inspect application, call, deployment, and trace logs |
 
 ## Requirements
 

@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Restricted IAM access for the Factored PostgreSQL and DuckDB deployment stacks.
+Description: Restricted IAM access for the Factored database stacks and read-only application logs.
 
 Parameters:
   ProjectName:
@@ -13,6 +13,10 @@ Parameters:
   DuckDBStackName:
     Type: String
     Default: dispute-factored-duckdb
+    AllowedPattern: "[a-z0-9-]+"
+  ApplicationEnvironment:
+    Type: String
+    Default: demo
     AllowedPattern: "[a-z0-9-]+"
 
 Resources:
@@ -204,6 +208,42 @@ Resources:
                 Resource: !Sub >-
                   arn:${AWS::Partition}:s3:::${ProjectName}-duckdb-${AWS::AccountId}-sa-east-1/duckdb/*
 
+  ApplicationLogsReadPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${ProjectName}-application-logs-read"
+      Description: Read-only access to the demo web and SIP CloudWatch log groups.
+      Users:
+        - !Ref PostgresDeployer
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ListRegionalApplicationLogGroups
+            Effect: Allow
+            Action:
+              - logs:DescribeLogGroups
+              - logs:DescribeQueries
+            Resource: "*"
+            Condition:
+              StringEquals:
+                aws:RequestedRegion: sa-east-1
+          - Sid: ReadOnlyApplicationLogs
+            Effect: Allow
+            Action:
+              - logs:DescribeLogStreams
+              - logs:FilterLogEvents
+              - logs:GetLogEvents
+              - logs:GetLogGroupFields
+              - logs:GetLogRecord
+              - logs:GetQueryResults
+              - logs:StartQuery
+              - logs:StopQuery
+            Resource:
+              - !Sub >-
+                arn:${AWS::Partition}:logs:sa-east-1:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-${ApplicationEnvironment}-sip:*
+              - !Sub >-
+                arn:${AWS::Partition}:logs:sa-east-1:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-${ApplicationEnvironment}-web:*
+
 Outputs:
   DeployerUserName:
     Value: !Ref PostgresDeployer
@@ -217,3 +257,7 @@ Outputs:
     Value: !Sub "${ProjectName}-duckdb-${AWS::AccountId}-sa-east-1"
   AllowedRegion:
     Value: sa-east-1
+  AllowedSipLogGroup:
+    Value: !Sub "/aws/lambda/${ProjectName}-${ApplicationEnvironment}-sip"
+  AllowedWebLogGroup:
+    Value: !Sub "/aws/lambda/${ProjectName}-${ApplicationEnvironment}-web"
