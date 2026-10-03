@@ -1,29 +1,34 @@
-"""Safe, customer-scoped SQLite search for the synthetic voice demo."""
+"""Safe, customer-scoped transaction search shared by the dispute agents.
+
+`RepositoryTransactionSearch` reads the authenticated customer's transactions from the web app's
+repository (PostgreSQL, seeded from the lakehouse). `SQLiteTransactionSearchRepository` is an
+isolated adapter over transactions supplied by the caller. Both rank candidates the same way.
+"""
 
 from __future__ import annotations
 
 import json
 import logging
 import math
-import random
 import sqlite3
 import time
 import unicodedata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, fields, replace
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime
 from difflib import SequenceMatcher
 from pathlib import Path
 from threading import RLock
 from typing import Any, Protocol
 
-from webapp.backend.demo_card import demo_card_product_id
 from webapp.backend.models.transaction import Transaction
+from webapp.backend.repositories.interfaces import TransactionRepository
 
 LOGGER = logging.getLogger(__name__)
 
-DEFAULT_DEMO_CUSTOMER_ID = "DEMO-BR-GABRIEL-123456"
 MAX_RESULTS = 10
+# Most recent transactions considered per search; dataset customers have tens, not thousands.
+MAX_CANDIDATES = 500
 AMOUNT_TOLERANCE_RATE = 0.10
 MIN_AMOUNT_TOLERANCE = 5.0
 MIN_RELEVANCE_SCORE = 0.35
@@ -216,16 +221,118 @@ class TransactionSearchRepository(Protocol):
     ) -> TransactionSearchResult: ...
 
 
+def _validate_search(customer_id: str, criteria: TransactionSearchCriteria, limit: int) -> int:
+    if not customer_id.strip():
+        raise ValueError("customer_id is required")
+    if not criteria.is_discriminative:
+        raise InsufficientTransactionCriteriaError(
+            "provide merchant, approximate amount, date, or location"
+        )
+    return min(max(int(limit), 1), MAX_RESULTS)
+
+
+def _rank_candidates(
+    retrieved: Iterable[Transaction], criteria: TransactionSearchCriteria, limit: int
+) -> tuple[RankedTransaction, ...]:
+    return tuple(
+        candidate
+        for candidate in sorted(
+            (_rank_transaction(transaction, criteria) for transaction in retrieved),
+            key=lambda candidate: (
+                candidate.score,
+                candidate.transaction.transaction_date,
+            ),
+            reverse=True,
+        )
+        if candidate.score >= MIN_RELEVANCE_SCORE
+    )[:limit]
+
+
+def _log_search(
+    criteria: TransactionSearchCriteria,
+    *,
+    latency_ms: float,
+    retrieved_count: int,
+    ranked: tuple[RankedTransaction, ...],
+    limit: int,
+    excluded_count: int,
+) -> None:
+    LOGGER.info(
+        json.dumps(
+            {
+                "event": "transaction.search.completed",
+                "latency_ms": latency_ms,
+                "retrieved_count": retrieved_count,
+                "result_count": len(ranked),
+                "top_score": ranked[0].score if ranked else None,
+                "limit": limit,
+                "has_merchant": criteria.merchant_query is not None,
+                "has_amount": criteria.approximate_amount is not None,
+                "has_date": criteria.date_from is not None or criteria.date_to is not None,
+                "has_location": criteria.country is not None or criteria.city is not None,
+                "excluded_count": excluded_count,
+            }
+        )
+    )
+
+
+class RepositoryTransactionSearch:
+    """Search the customer's transactions in the web app repository (PostgreSQL)."""
+
+    def __init__(
+        self,
+        transactions: TransactionRepository,
+        *,
+        max_candidates: int = MAX_CANDIDATES,
+    ) -> None:
+        self.transactions = transactions
+        self.max_candidates = max_candidates
+
+    def search(
+        self,
+        customer_id: str,
+        criteria: TransactionSearchCriteria,
+        *,
+        excluded_transaction_ids: tuple[str, ...] = (),
+        limit: int = MAX_RESULTS,
+    ) -> TransactionSearchResult:
+        """Retrieve the customer's recent transactions, rerank them, and return the best."""
+
+        bounded_limit = _validate_search(customer_id, criteria, limit)
+        excluded = set(excluded_transaction_ids)
+        started = time.monotonic()
+        retrieved = [
+            transaction
+            for transaction in self.transactions.list_by_customer(customer_id)
+            if transaction.transaction_id not in excluded
+        ][: self.max_candidates]
+        latency_ms = round((time.monotonic() - started) * 1000, 2)
+        ranked = _rank_candidates(retrieved, criteria, bounded_limit)
+        _log_search(
+            criteria,
+            latency_ms=latency_ms,
+            retrieved_count=len(retrieved),
+            ranked=ranked,
+            limit=bounded_limit,
+            excluded_count=len(excluded_transaction_ids),
+        )
+        return TransactionSearchResult(
+            criteria=criteria,
+            ranked_transactions=ranked,
+            sql="TransactionRepository.list_by_customer",
+            retrieved_count=len(retrieved),
+            latency_ms=latency_ms,
+        )
+
+
 class SQLiteTransactionSearchRepository:
-    """Read-only query adapter backed by a replaceable SQLite connection."""
+    """Read-only query adapter over caller-supplied transactions in an isolated SQLite database."""
 
     def __init__(
         self,
         database: str | Path = ":memory:",
         *,
-        transactions: Iterable[Transaction] | None = None,
-        seed_customer_id: str = DEFAULT_DEMO_CUSTOMER_ID,
-        location_seed: int = 19,
+        transactions: Iterable[Transaction],
     ) -> None:
         self.database = str(database)
         self._connection = sqlite3.connect(self.database, check_same_thread=False)
@@ -238,8 +345,7 @@ class SQLiteTransactionSearchRepository:
         )
         self._lock = RLock()
         self._create_schema()
-        seed = tuple(transactions or demo_fruit_transactions(seed_customer_id, location_seed))
-        self._seed(seed)
+        self._seed(tuple(transactions))
         self._connection.execute("PRAGMA query_only = ON")
 
     def close(self) -> None:
@@ -261,13 +367,7 @@ class SQLiteTransactionSearchRepository:
     ) -> TransactionSearchResult:
         """Retrieve a safe candidate set, rerank it, and return the best matches."""
 
-        if not customer_id.strip():
-            raise ValueError("customer_id is required")
-        if not criteria.is_discriminative:
-            raise InsufficientTransactionCriteriaError(
-                "provide merchant, approximate amount, date, or location"
-            )
-        bounded_limit = min(max(int(limit), 1), MAX_RESULTS)
+        bounded_limit = _validate_search(customer_id, criteria, limit)
         sql, parameters = self._compile_query(
             customer_id,
             criteria,
@@ -279,34 +379,14 @@ class SQLiteTransactionSearchRepository:
             rows = self._connection.execute(sql, parameters).fetchall()
         latency_ms = round((time.monotonic() - started) * 1000, 2)
         retrieved = tuple(self._to_transaction(row) for row in rows)
-        ranked = tuple(
-            candidate
-            for candidate in sorted(
-                (_rank_transaction(transaction, criteria) for transaction in retrieved),
-                key=lambda candidate: (
-                    candidate.score,
-                    candidate.transaction.transaction_date,
-                ),
-                reverse=True,
-            )
-            if candidate.score >= MIN_RELEVANCE_SCORE
-        )[:bounded_limit]
-        LOGGER.info(
-            json.dumps(
-                {
-                    "event": "transaction.search.completed",
-                    "latency_ms": latency_ms,
-                    "retrieved_count": len(retrieved),
-                    "result_count": len(ranked),
-                    "top_score": ranked[0].score if ranked else None,
-                    "limit": bounded_limit,
-                    "has_merchant": criteria.merchant_query is not None,
-                    "has_amount": criteria.approximate_amount is not None,
-                    "has_date": criteria.date_from is not None or criteria.date_to is not None,
-                    "has_location": criteria.country is not None or criteria.city is not None,
-                    "excluded_count": len(excluded_transaction_ids),
-                }
-            )
+        ranked = _rank_candidates(retrieved, criteria, bounded_limit)
+        _log_search(
+            criteria,
+            latency_ms=latency_ms,
+            retrieved_count=len(retrieved),
+            ranked=ranked,
+            limit=bounded_limit,
+            excluded_count=len(excluded_transaction_ids),
         )
         return TransactionSearchResult(
             criteria=criteria,
@@ -391,74 +471,6 @@ class SQLiteTransactionSearchRepository:
         values = dict(row)
         values["is_fraud"] = bool(values["is_fraud"])
         return Transaction.model_validate(values)
-
-
-def demo_fruit_transactions(
-    customer_id: str,
-    location_seed: int = 19,
-) -> tuple[Transaction, ...]:
-    """Create ten deterministic transactions with pseudo-random varied locations."""
-
-    locations = [
-        ("Argentina", "Buenos Aires", -34.6037, -58.3816),
-        ("Brazil", "São Paulo", -23.5505, -46.6333),
-        ("Chile", "Santiago", -33.4489, -70.6693),
-        ("Colombia", "Bogotá", 4.7110, -74.0721),
-        ("Costa Rica", "San José", 9.9281, -84.0907),
-        ("Mexico", "Mexico City", 19.4326, -99.1332),
-        ("Peru", "Lima", -12.0464, -77.0428),
-        ("Portugal", "Lisbon", 38.7223, -9.1393),
-        ("Spain", "Madrid", 40.4168, -3.7038),
-        ("United States", "Miami", 25.7617, -80.1918),
-    ]
-    selected_locations = random.Random(location_seed).sample(locations, k=len(locations))
-    fruits = (
-        ("lemon", "Lemon Drop Market", 12.49),
-        ("strawberry", "Strawberry Fields Shop", 18.95),
-        ("coconut", "Coconut Island Grocer", 27.80),
-        ("passion-fruit", "Passion Fruit Pantry", 34.25),
-        ("banana", "Banana Bunch Market", 41.60),
-        ("apple", "Apple Orchard Store", 56.90),
-        ("papaya", "Papaya Sunrise Market", 63.40),
-        ("peach", "Peach Grove Grocer", 78.15),
-        ("grapes", "Grapes and Vine Market", 92.75),
-        ("mango", "Mango Gold Store", 125.30),
-    )
-    anchor = datetime(2026, 9, 20, 15, 0, tzinfo=UTC)
-    transactions: list[Transaction] = []
-    for index, ((fruit, merchant, amount), location) in enumerate(
-        zip(fruits, selected_locations, strict=True),
-        start=1,
-    ):
-        country, city, latitude, longitude = location
-        transaction_time = anchor + timedelta(days=index - 1, hours=index)
-        transactions.append(
-            Transaction(
-                transaction_id=f"FRUIT-{index:02d}-{fruit.upper()}",
-                transaction_date=transaction_time,
-                process_date=transaction_time.date(),
-                product_id=demo_card_product_id(customer_id),
-                customer_id=customer_id,
-                transaction_type="Card Purchase",
-                transaction_category="Fruit purchase",
-                amount=amount,
-                currency="USD",
-                amount_usd=amount,
-                channel="E-commerce" if index % 2 else "POS",
-                branch_id=None,
-                merchant_name=merchant,
-                merchant_category="Fruit and produce",
-                transaction_country=country,
-                transaction_city=city,
-                transaction_status="Approved",
-                response_code="00",
-                is_fraud=False,
-                fraud_score=round(0.01 * index, 2),
-                latitude=latitude,
-                longitude=longitude,
-            )
-        )
-    return tuple(transactions)
 
 
 def _sqlite_value(value: Any) -> Any:

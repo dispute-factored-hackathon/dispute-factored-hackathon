@@ -1,4 +1,4 @@
-"""The same behavioural contract, asserted against the in-memory mock AND PostgreSQL.
+"""The same behavioural contract, asserted against the in-memory test double AND PostgreSQL.
 
 The PostgreSQL parametrisation runs when TEST_POSTGRES_URL points at a server (for example the
 docker-compose database) and is skipped otherwise, so the suite stays runnable offline.
@@ -17,15 +17,15 @@ from factories import (
     make_session,
     make_transaction,
 )
+from fakes import new_repositories
 
 from webapp.backend.config import Settings
-from webapp.backend.demo_seed import DEMO_CUSTOMERS, seed_demo_customers
 from webapp.backend.models.call_center_interaction import CallCenterInteraction
 from webapp.backend.models.call_transcript import CallTranscript
 from webapp.backend.models.customer import InterfaceLocale, TutorialStatus
 from webapp.backend.models.satisfaction_survey import SatisfactionSurvey
-from webapp.backend.repositories import mock
-from webapp.backend.repositories.registry import Repositories, build_repositories
+from webapp.backend.repositories.interfaces import Repositories
+from webapp.backend.repositories.postgres import open_repositories
 from webapp.backend.services.complaint_filing import (
     ComplaintFilingService,
     UnsupportedVisaConditionError,
@@ -39,28 +39,13 @@ class Backend:
     repos: Repositories
 
 
-@pytest.fixture(params=["mock", "postgres"])
+@pytest.fixture(params=["in_memory", "postgres"])
 def backend(request: pytest.FixtureRequest):
-    if request.param == "mock":
-        yield Backend(
-            "mock",
-            Repositories(
-                customers=mock.MockCustomerRepository(),
-                products=mock.MockProductRepository(),
-                transactions=mock.MockTransactionRepository(),
-                complaints=mock.MockComplaintRepository(),
-                sessions=mock.MockSessionRepository(),
-                service_agents=mock.MockServiceAgentRepository(),
-                call_center_interactions=mock.MockCallCenterInteractionRepository(),
-                call_transcripts=mock.MockCallTranscriptRepository(),
-                satisfaction_surveys=mock.MockSatisfactionSurveyRepository(),
-            ),
-        )
+    if request.param == "in_memory":
+        yield Backend("in_memory", new_repositories())
         return
     database = request.getfixturevalue("clean_postgres")
-    repos = build_repositories(
-        Settings(_env_file=None, repository_backend="postgres", database_url=database.app_url)
-    )
+    repos = open_repositories(Settings(_env_file=None, database_url=database.app_url))
     try:
         yield Backend("postgres", repos)
     finally:
@@ -267,16 +252,6 @@ def test_name_search_treats_wildcards_and_sql_as_plain_text(backend: Backend, ho
 
     assert found == []
     assert customers.get_by_id("C1") is not None
-
-
-def test_demo_seed_is_idempotent_and_creates_one_card_per_demo_customer(backend: Backend):
-    seed_demo_customers(backend.repos.customers, backend.repos.products)
-    seed_demo_customers(backend.repos.customers, backend.repos.products)
-
-    assert len(backend.repos.customers.search_by_full_name("", limit=100)) == len(DEMO_CUSTOMERS)
-    for data in DEMO_CUSTOMERS:
-        cards = backend.repos.products.list_by_customer(data["customer_id"])
-        assert [card.product_type for card in cards] == ["Credit Card"]
 
 
 # ----------------------------------------------------------------------------- products
