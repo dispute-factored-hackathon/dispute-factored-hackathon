@@ -722,6 +722,8 @@ class SipRealtimeGateway:
                     opening_sent = False
                     opening_completed = False
                     opening_response_id = ""
+                    model_turn_requested = False
+                    silent_model_response_ids: set[str] = set()
                     last_customer_transcript = ""
                     pending_handoff: HumanHandoffPlan | None = None
                     deferred_handoff_event: dict[str, Any] | None = None
@@ -773,6 +775,34 @@ class SipRealtimeGateway:
                                 last_customer_transcript = ""
                                 if handoff is not None:
                                     pending_handoff = handoff
+                            elif not last_customer_transcript.strip():
+                                await self._delete_conversation_item(
+                                    websocket,
+                                    str(event.get("item_id", "")),
+                                )
+                                last_customer_transcript = ""
+                                _telemetry(
+                                    "voice.turn.ignored",
+                                    call_id=call_id,
+                                    reason="empty_transcript",
+                                )
+                            elif not opening_completed or active_response or model_turn_requested:
+                                await self._delete_conversation_item(
+                                    websocket,
+                                    str(event.get("item_id", "")),
+                                )
+                                last_customer_transcript = ""
+                                _telemetry(
+                                    "voice.turn.ignored",
+                                    call_id=call_id,
+                                    reason="agent_speaking",
+                                )
+                            else:
+                                model_turn_requested = True
+                                await self._request_model_turn(
+                                    websocket,
+                                    self.calls.get(call_id),
+                                )
                         elif (
                             event_type == "conversation.item.input_audio_transcription.failed"
                             and deferred_handoff_event is not None
@@ -819,6 +849,9 @@ class SipRealtimeGateway:
                             )
                             if opening_sent and not opening_completed and not opening_response_id:
                                 opening_response_id = response_id
+                            elif model_turn_requested:
+                                model_turn_requested = False
+                                silent_model_response_ids.add(response_id)
 
                             _telemetry(
                                 "realtime.response.created",
@@ -841,6 +874,12 @@ class SipRealtimeGateway:
                                 call_id=call_id,
                                 response_id=response_id,
                             )
+
+                            silent_model_response = (
+                                response_id in silent_model_response_ids or model_turn_requested
+                            )
+                            model_turn_requested = False
+                            silent_model_response_ids.discard(response_id)
 
                             if (
                                 opening_response_id
@@ -893,6 +932,10 @@ class SipRealtimeGateway:
                                 event,
                                 last_customer_transcript=last_customer_transcript,
                             )
+                            if silent_model_response and not self._has_any_tool_call(event):
+                                direct_answer = self._response_text(event)
+                                if direct_answer:
+                                    await self._speak(websocket, direct_answer)
                             last_customer_transcript = ""
                             if handoff is not None:
                                 pending_handoff = handoff
@@ -1553,6 +1596,29 @@ class SipRealtimeGateway:
         )
 
     @staticmethod
+    def _has_any_tool_call(event: dict[str, Any]) -> bool:
+        """Return whether a completed response contains any function call."""
+
+        return any(
+            output.get("type") == "function_call"
+            for output in event.get("response", {}).get("output", [])
+        )
+
+    @staticmethod
+    def _response_text(event: dict[str, Any]) -> str:
+        """Extract a direct answer from a silent Realtime model response."""
+
+        fragments: list[str] = []
+        for output in event.get("response", {}).get("output", []):
+            if output.get("type") != "message":
+                continue
+            for content in output.get("content", []):
+                text = content.get("text")
+                if isinstance(text, str) and text.strip():
+                    fragments.append(text.strip())
+        return " ".join(fragments)
+
+    @staticmethod
     def _handoff_message_reason(plan: HumanHandoffPlan) -> str:
         if plan.availability is HandoffAvailability.AVAILABLE:
             return "handoff_transfer"
@@ -1626,13 +1692,7 @@ class SipRealtimeGateway:
         input_configuration: dict[str, Any] = {"transcription": transcription}
         if opening_guard:
             input_configuration["turn_detection"] = None
-        elif interactive:
-            input_configuration["turn_detection"] = {
-                "type": "server_vad",
-                "create_response": True,
-                "interrupt_response": False,
-            }
-        elif state is not None and state.stage is VoiceCallStage.COMPLETED:
+        elif interactive or (state is not None and state.stage is VoiceCallStage.COMPLETED):
             input_configuration["turn_detection"] = {
                 "type": "server_vad",
                 "create_response": False,
@@ -1680,6 +1740,40 @@ class SipRealtimeGateway:
                             f"{message}"
                         ),
                     },
+                }
+            )
+        )
+
+    async def _request_model_turn(
+        self,
+        websocket: Any,
+        state: VoiceCallState,
+    ) -> None:
+        """Run the model silently so only backend-validated speech reaches the caller."""
+
+        await websocket.send(
+            json.dumps(
+                {
+                    "type": "response.create",
+                    "response": {
+                        "output_modalities": ["text"],
+                        "tool_choice": self._tool_choice_for(state),
+                    },
+                }
+            )
+        )
+
+    @staticmethod
+    async def _delete_conversation_item(websocket: Any, item_id: str) -> None:
+        """Remove an ignored caller turn so it cannot influence a later model response."""
+
+        if not item_id:
+            return
+        await websocket.send(
+            json.dumps(
+                {
+                    "type": "conversation.item.delete",
+                    "item_id": item_id,
                 }
             )
         )
