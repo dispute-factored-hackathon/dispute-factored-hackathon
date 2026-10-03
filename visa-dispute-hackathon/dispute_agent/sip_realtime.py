@@ -422,6 +422,7 @@ class SipRealtimeGateway:
         human_handoff_number: str | None = None,
         jev_api_key: str | None = None,
         jev_router: JevVoiceRouter | None = None,
+        auto_authenticate_known_phone: bool = True,
     ) -> None:
 
         self.api_key = api_key or os.getenv("OPENAI_API_KEY", "")
@@ -461,6 +462,7 @@ class SipRealtimeGateway:
         self._interaction_repository = interaction_repository
         self._transcript_repository = transcript_repository
         self._satisfaction_survey_repository = satisfaction_survey_repository
+        self._auto_authenticate_known_phone = auto_authenticate_known_phone
 
         self._calls: VoiceCallService | None = None
 
@@ -481,6 +483,7 @@ class SipRealtimeGateway:
                 transcript_repository=self._transcript_repository,
                 satisfaction_survey_repository=self._satisfaction_survey_repository,
                 transcription_model=self.input_transcription_model,
+                auto_authenticate_known_phone=self._auto_authenticate_known_phone,
             )
 
         return self._calls
@@ -1216,7 +1219,12 @@ class SipRealtimeGateway:
                         )
                     ):
                         state = self.calls.confirm_language(call_id)
-                        result = self._message_for(state, "auth_method_prompt")
+                        result = self._message_for(
+                            state,
+                            "document_prompt"
+                            if state.stage is VoiceCallStage.NEEDS_DOCUMENT
+                            else "auth_method_prompt",
+                        )
                         tool_metadata = {"outcome": "kept"}
                     elif language_intent in {
                         LanguageSelectionIntent.KEEP,
@@ -1242,7 +1250,12 @@ class SipRealtimeGateway:
                             accent=accent,
                         )
                         if before.stage is VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION:
-                            result = self._message_for(state, "auth_method_prompt")
+                            result = self._message_for(
+                                state,
+                                "document_prompt"
+                                if state.stage is VoiceCallStage.NEEDS_DOCUMENT
+                                else "auth_method_prompt",
+                            )
                         elif state.stage is VoiceCallStage.NEEDS_DOCUMENT:
                             result = self._message_for(state, "document_prompt")
                         elif state.stage is VoiceCallStage.CONFIRM_TRANSACTION:
@@ -1267,7 +1280,12 @@ class SipRealtimeGateway:
 
                 elif tool_name == "confirm_language":
                     state = self.calls.confirm_language(call_id)
-                    result = self._message_for(state, "auth_method_prompt")
+                    result = self._message_for(
+                        state,
+                        "document_prompt"
+                        if state.stage is VoiceCallStage.NEEDS_DOCUMENT
+                        else "auth_method_prompt",
+                    )
 
                     _telemetry(
                         "voice.language.confirmed",
@@ -2234,13 +2252,10 @@ Language workflow:
 - Do not claim that the caller's physical location or nationality is known. The language is only inferred from the telephone calling code.
 
 Authentication workflow:
-- At needs_auth_method, ask whether the caller prefers authentication using the phone number used for this call or a document number.
-- If the caller chooses the phone number, call set_authentication_method with method=phone.
-- If the caller chooses document authentication, call set_authentication_method with method=document.
-- For unintelligible, ambiguous, unrelated, or low-confidence speech, call
-  set_authentication_method with method=unclear. Never guess an authentication method.
+- A recognized calling phone number is authenticated automatically by the server before the opening message.
+- An unknown calling phone number proceeds directly to keypad document authentication after language confirmation.
+- Never ask the caller to choose between phone and document authentication.
 - Authentication decisions are server-owned. Never claim authentication succeeded unless a tool result says it did.
-- If phone authentication fails, explain that document authentication will be used instead.
 
 Document workflow:
 - Never ask the caller to SAY a document number aloud.
@@ -2726,6 +2741,9 @@ General behavior:
 
         if state.stage is VoiceCallStage.HANDOFF:
             return messages["handoff"]
+
+        if reason == "opening" and state.stage is VoiceCallStage.AUTHENTICATED:
+            return messages["phone_success"].format(name=customer_name)
 
         if reason == "opening":
             return messages["opening"]

@@ -366,6 +366,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             complaint_repository=complaint_repository,
             human_handoff_number=human_handoff_number,
             jev_router=jev_router,
+            auto_authenticate_known_phone=False,
         )
         return gateway, websocket, calls
 
@@ -603,8 +604,9 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(gateway._calls)
         self.assertEqual(
             state.stage,
-            "needs_language_confirmation",
+            "authenticated",
         )
+        self.assertEqual(state.identity.customer_id, "CLI-002")
 
     async def test_uses_cedar_as_default_voice(self):
         gateway, _, calls = self._gateway([])

@@ -23,8 +23,7 @@ class CallInteractionPersistenceTests(unittest.TestCase):
         state = self.calls.start("+55 11 99999-0001", call_id=call_id)
         self.calls.record_transcript_turn(call_id, speaker="agent", text="Olá, eu sou Izzy.")
         self.calls.record_transcript_turn(call_id, speaker="customer", text="Quero português.")
-        state = self.calls.confirm_language(call_id)
-        return self.calls.choose_authentication_method(state.call_id, method="phone")
+        return state
 
     def classify(self, call_id: str):
         self.calls.search_transactions(
