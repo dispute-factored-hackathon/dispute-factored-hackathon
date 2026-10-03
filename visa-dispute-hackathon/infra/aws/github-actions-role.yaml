@@ -8,9 +8,19 @@ Parameters:
   GitHubOrganization:
     Type: String
     Default: dispute-factored-hackathon
+  GitHubOrganizationId:
+    Type: String
+    Default: "334323685"
+    AllowedPattern: "[0-9]+"
+    Description: Immutable numeric GitHub organization ID used in OIDC subject claims.
   GitHubRepository:
     Type: String
     Default: dispute-factored-hackathon
+  GitHubRepositoryId:
+    Type: String
+    Default: "1389807294"
+    AllowedPattern: "[0-9]+"
+    Description: Immutable numeric GitHub repository ID used in OIDC subject claims.
   ProjectName:
     Type: String
     Default: dispute-factored
@@ -34,9 +44,12 @@ Resources:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               StringLike:
                 token.actions.githubusercontent.com:sub:
-                  - !Sub "repo:${GitHubOrganization}/${GitHubRepository}:pull_request"
-                  - !Sub "repo:${GitHubOrganization}/${GitHubRepository}:ref:refs/heads/main"
-                  - !Sub "repo:${GitHubOrganization}/${GitHubRepository}:ref:refs/tags/*"
+                  - !Sub >-
+                    repo:${GitHubOrganization}@${GitHubOrganizationId}/${GitHubRepository}@${GitHubRepositoryId}:pull_request
+                  - !Sub >-
+                    repo:${GitHubOrganization}@${GitHubOrganizationId}/${GitHubRepository}@${GitHubRepositoryId}:ref:refs/heads/main
+                  - !Sub >-
+                    repo:${GitHubOrganization}@${GitHubOrganizationId}/${GitHubRepository}@${GitHubRepositoryId}:ref:refs/tags/*
       Policies:
         - PolicyName: DeployDemoApplication
           PolicyDocument:
@@ -49,6 +62,7 @@ Resources:
                   - cloudformation:DescribeStackEvents
                   - cloudformation:DescribeChangeSet
                   - cloudformation:GetTemplateSummary
+                  - cloudformation:ValidateTemplate
                 Resource: "*"
               - Sid: ChangeApplicationStack
                 Effect: Allow
@@ -75,6 +89,11 @@ Resources:
                 Effect: Allow
                 Action: ecr:GetAuthorizationToken
                 Resource: "*"
+              - Sid: ResolveDeploymentSecrets
+                Effect: Allow
+                Action: secretsmanager:DescribeSecret
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ProjectName}/langsmith-*
               - Sid: ManageDemoLambda
                 Effect: Allow
                 Action:
