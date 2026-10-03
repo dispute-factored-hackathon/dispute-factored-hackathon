@@ -511,9 +511,13 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         _, configuration = calls.accepted[0]
         expected = {"model": "gpt-4o-mini-transcribe"}
         self.assertEqual(configuration["audio"]["input"]["transcription"], expected)
+        self.assertIsNone(configuration["audio"]["input"]["turn_detection"])
         self.assertEqual(
             self._session_updates(websocket)[0]["session"]["audio"]["input"]["transcription"],
             expected,
+        )
+        self.assertIsNone(
+            self._session_updates(websocket)[0]["session"]["audio"]["input"]["turn_detection"]
         )
 
     async def test_logs_complete_customer_and_agent_transcripts_without_redaction(self):
@@ -635,6 +639,37 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Izzy", instructions)
         self.assertIn("Factored Bank", instructions)
         self.assertEqual(opening["response"]["tool_choice"], "none")
+
+    async def test_opening_clears_noise_then_enables_interactive_vad(self):
+        events = [
+            session_updated_event(),
+            json.dumps(
+                {
+                    "type": "response.created",
+                    "response": {"id": "resp_opening"},
+                }
+            ),
+            completed_transcript_event(speaker="customer", transcript=""),
+            json.dumps(
+                {
+                    "type": "response.done",
+                    "response": {"id": "resp_opening", "output": []},
+                }
+            ),
+        ]
+        gateway, websocket, _ = self._gateway(events)
+
+        await gateway.accept_and_control("call_opening_guard", "+5511999990001")
+
+        sent_types = [event.get("type") for event in websocket.sent]
+        self.assertIn("input_audio_buffer.clear", sent_types)
+        self.assertEqual(self._tool_outputs(websocket), [])
+        session_updates = self._session_updates(websocket)
+        self.assertIsNone(session_updates[0]["session"]["audio"]["input"]["turn_detection"])
+        restored_turn_detection = session_updates[-1]["session"]["audio"]["input"]["turn_detection"]
+        self.assertEqual(restored_turn_detection["type"], "server_vad")
+        self.assertTrue(restored_turn_detection["create_response"])
+        self.assertTrue(restored_turn_detection["interrupt_response"])
 
     async def test_confirm_language_then_phone_authentication_succeeds(self):
         events = [
