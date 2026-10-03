@@ -2,10 +2,9 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-from dispute_agent.transaction_search import (
-    SQLiteTransactionSearchRepository,
-    TransactionSearchCriteria,
-)
+from fakes import demo_card_product_id, fruit_search_repository, voice_repositories
+
+from dispute_agent.transaction_search import TransactionSearchCriteria
 from dispute_agent.voice_call import (
     CardSecurityActionStatus,
     ComplaintFilingStatus,
@@ -15,17 +14,16 @@ from dispute_agent.voice_call import (
     VoiceCallService,
     VoiceCallStage,
 )
-from webapp.backend.demo_card import demo_card_product_id
 
 FIXTURE = Path(__file__).parent / "fixtures" / "customers.csv"
 
 
 class VoiceCallServiceTests(unittest.TestCase):
     def setUp(self):
-        self.transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        self.transactions = fruit_search_repository("CLI-002")
         self.calls = VoiceCallService(
             FIXTURE,
-            transaction_repository=self.transactions,
+            **voice_repositories(transaction_repository=self.transactions),
         )
 
     def tearDown(self):

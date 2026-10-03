@@ -13,7 +13,7 @@ from fastapi import (
 from webapp.backend.api.dependencies import (
     SESSION_COOKIE_NAME,
     AuthenticatedContext,
-    authentication_service,
+    AuthenticationServiceDependency,
     require_authenticated_context,
 )
 from webapp.backend.config import get_settings
@@ -88,6 +88,7 @@ def login_response(customer: Customer, session: CustomerSession) -> LoginRespons
     response_model=DemoLoginOptionsResponse,
 )
 def demo_customers(
+    authentication_service: AuthenticationServiceDependency,
     q: str = Query(default="", max_length=100),
 ) -> DemoLoginOptionsResponse:
     options = authentication_service.list_demo_options(q, limit=10)
@@ -110,6 +111,7 @@ def demo_customers(
 def demo_login(
     request: DemoLoginRequest,
     response: Response,
+    authentication_service: AuthenticationServiceDependency,
 ) -> LoginResponse:
     try:
         customer, session = authentication_service.login_demo_selection(request.selection)
@@ -130,6 +132,7 @@ def demo_login(
 def login(
     request: LoginRequest,
     response: Response,
+    authentication_service: AuthenticationServiceDependency,
 ) -> LoginResponse:
     try:
         customer, session = authentication_service.login(request.factored_id)
@@ -163,6 +166,7 @@ def me(
 )
 def logout(
     response: Response,
+    authentication_service: AuthenticationServiceDependency,
     factored_session: Annotated[
         str | None,
         Cookie(),

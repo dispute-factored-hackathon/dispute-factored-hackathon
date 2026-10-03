@@ -1,14 +1,14 @@
-from fastapi.testclient import TestClient
-
-from webapp.backend.demo_seed import seed_demo_customers
-from webapp.backend.main import app
-from webapp.backend.repositories.mock import (
+from fakes import (
     complaint_repository,
     customer_repository,
     product_repository,
+    seed_demo_customers,
     session_repository,
     transaction_repository,
 )
+from fastapi.testclient import TestClient
+
+from webapp.backend.main import app
 
 
 def clear_repositories() -> None:

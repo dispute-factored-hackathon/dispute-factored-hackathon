@@ -1,3 +1,5 @@
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from webapp.backend.models.call_center_interaction import CallCenterInteraction
@@ -165,3 +167,23 @@ class SatisfactionSurveyRepository(Protocol):
     def create(self, survey: SatisfactionSurvey) -> SatisfactionSurvey: ...
     def get_by_interaction(self, interaction_id: str) -> SatisfactionSurvey | None: ...
     def list_by_agent(self, agent_id: str) -> list[SatisfactionSurvey]: ...
+
+
+def _no_resources() -> None:
+    return None
+
+
+@dataclass(frozen=True)
+class Repositories:
+    """Every repository the app needs, built once at startup and injected where used."""
+
+    customers: CustomerRepository
+    products: ProductRepository
+    transactions: TransactionRepository
+    complaints: ComplaintRepository
+    sessions: SessionRepository
+    service_agents: ServiceAgentRepository
+    call_center_interactions: CallCenterInteractionRepository
+    call_transcripts: CallTranscriptRepository
+    satisfaction_surveys: SatisfactionSurveyRepository
+    close: Callable[[], None] = field(default=_no_resources, repr=False, compare=False)

@@ -18,7 +18,7 @@ from typing import Any
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from openai import OpenAI
 
-from webapp.backend.demo_seed import seed_demo_customers
+from webapp.backend.config import get_settings
 from webapp.backend.repositories.interfaces import (
     CallCenterInteractionRepository,
     CallTranscriptRepository,
@@ -28,15 +28,7 @@ from webapp.backend.repositories.interfaces import (
     SatisfactionSurveyRepository,
     ServiceAgentRepository,
 )
-from webapp.backend.repositories.registry import (
-    call_center_interaction_repository,
-    call_transcript_repository,
-    complaint_repository,
-    customer_repository,
-    product_repository,
-    satisfaction_survey_repository,
-    service_agent_repository,
-)
+from webapp.backend.repositories.postgres import open_repositories
 
 from .dispute_classification import DisputeAllegation
 from .human_handoff import (
@@ -55,6 +47,7 @@ from .voice_call import (
     VoiceCallService,
     VoiceCallStage,
     VoiceCallState,
+    voice_repository_arguments,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -411,13 +404,13 @@ class SipRealtimeGateway:
         webhook_secret: str | None = None,
         openai_client: Any | None = None,
         websocket_connect: Callable[..., Any] | None = None,
-        transaction_repository: TransactionSearchRepository | None = None,
-        product_repository: ProductRepository | None = None,
-        complaint_repository: ComplaintRepository | None = None,
-        service_agent_repository: ServiceAgentRepository | None = None,
-        interaction_repository: CallCenterInteractionRepository | None = None,
-        transcript_repository: CallTranscriptRepository | None = None,
-        satisfaction_survey_repository: SatisfactionSurveyRepository | None = None,
+        transaction_repository: TransactionSearchRepository,
+        product_repository: ProductRepository,
+        complaint_repository: ComplaintRepository,
+        service_agent_repository: ServiceAgentRepository,
+        interaction_repository: CallCenterInteractionRepository,
+        transcript_repository: CallTranscriptRepository,
+        satisfaction_survey_repository: SatisfactionSurveyRepository,
         log_full_transcripts: bool | None = None,
         human_handoff_number: str | None = None,
         jev_api_key: str | None = None,
@@ -3346,18 +3339,12 @@ def create_sip_app(
 
     if gateway is not None:
         resolved_gateway = gateway
-    elif customers_csv is not None:
-        resolved_gateway = SipRealtimeGateway(customers_csv)
     else:
-        seed_demo_customers(customer_repository, product_repository)
+        # Calls share the web app's PostgreSQL (seeded from the lakehouse); nothing is seeded here.
+        repositories = open_repositories(get_settings())
         resolved_gateway = SipRealtimeGateway(
-            customer_repository,
-            product_repository=product_repository,
-            complaint_repository=complaint_repository,
-            service_agent_repository=service_agent_repository,
-            interaction_repository=call_center_interaction_repository,
-            transcript_repository=call_transcript_repository,
-            satisfaction_survey_repository=satisfaction_survey_repository,
+            customers_csv if customers_csv is not None else repositories.customers,
+            **voice_repository_arguments(repositories),
         )
 
     verifier = webhook_client or resolved_gateway.client
