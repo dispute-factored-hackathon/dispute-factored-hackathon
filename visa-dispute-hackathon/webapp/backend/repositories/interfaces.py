@@ -1,7 +1,10 @@
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from webapp.backend.models.call_center_interaction import CallCenterInteraction
 from webapp.backend.models.call_transcript import CallTranscript
+from webapp.backend.models.card_transaction import CardTransaction
 from webapp.backend.models.complaint import Complaint
 from webapp.backend.models.customer import Customer
 from webapp.backend.models.product import Product
@@ -165,3 +168,32 @@ class SatisfactionSurveyRepository(Protocol):
     def create(self, survey: SatisfactionSurvey) -> SatisfactionSurvey: ...
     def get_by_interaction(self, interaction_id: str) -> SatisfactionSurvey | None: ...
     def list_by_agent(self, agent_id: str) -> list[SatisfactionSurvey]: ...
+
+
+class CardPurchaseRepository(Protocol):
+    """Card purchases joined with their card, always scoped to one customer."""
+
+    def list_by_customer(self, customer_id: str, *, limit: int = 500) -> list[CardTransaction]: ...
+
+    def get_for_customer(self, customer_id: str, transaction_id: str) -> CardTransaction | None: ...
+
+
+def _no_resources() -> None:
+    return None
+
+
+@dataclass(frozen=True)
+class Repositories:
+    """Every repository the app needs, built once at startup and injected where used."""
+
+    customers: CustomerRepository
+    products: ProductRepository
+    transactions: TransactionRepository
+    complaints: ComplaintRepository
+    sessions: SessionRepository
+    service_agents: ServiceAgentRepository
+    call_center_interactions: CallCenterInteractionRepository
+    call_transcripts: CallTranscriptRepository
+    satisfaction_surveys: SatisfactionSurveyRepository
+    card_purchases: CardPurchaseRepository
+    close: Callable[[], None] = field(default=_no_resources, repr=False, compare=False)

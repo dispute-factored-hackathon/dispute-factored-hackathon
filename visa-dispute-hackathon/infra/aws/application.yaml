@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: On-demand Lambda webhook and Realtime SIP sideband worker.
+Description: On-demand Lambdas for the web demo and Realtime SIP sideband worker.
 
 Parameters:
   ProjectName:
@@ -24,10 +24,53 @@ Parameters:
     Type: String
     Description: ARN of the JSON secret containing LANGSMITH_API_KEY.
 
+  DatabaseHost:
+    Type: String
+  DatabasePort:
+    Type: Number
+    Default: 5432
+  DatabaseName:
+    Type: String
+  DatabaseOwnerSecretArn:
+    Type: String
+  DatabaseAppSecretArn:
+    Type: String
+  MotherDuckSecretArn:
+    Type: String
+  PrivateSubnetIds:
+    Type: CommaDelimitedList
+  LambdaSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+
   LangSmithProject:
     Type: String
     Default: dispute-factored
     Description: LangSmith project used for runtime agent traces.
+
+  HumanHandoffNumber:
+    Type: String
+    Default: "+5511981020050"
+    AllowedPattern: '^\+[1-9][0-9]{7,14}$'
+    Description: Fixed E.164 PSTN destination used for server-approved human handoff.
+
+  SipAliasName:
+    Type: String
+    Default: live
+    AllowedPattern: "[a-zA-Z0-9-_]+"
+    Description: Stable alias used by the SIP Function URL and asynchronous call workers.
+
+  VoiceSnapStartApplyOn:
+    Type: String
+    Default: PublishedVersions
+    AllowedValues: [PublishedVersions, "None"]
+    Description: Enables low-cost SnapStart for published SIP Lambda versions.
+
+  WebMemorySize:
+    Type: Number
+    Default: 1024
+    MinValue: 512
+    MaxValue: 3008
+    Description: Web Lambda memory; 1024 MB adds CPU to reduce Python cold-start time.
 
   LogRetentionDays:
     Type: Number
@@ -48,6 +91,7 @@ Resources:
 
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
 
       Policies:
         - PolicyName: ReadObservabilitySecrets
@@ -59,6 +103,8 @@ Resources:
                 Resource:
                   - !Ref OpenAISecretArn
                   - !Ref LangSmithSecretArn
+                  - !Ref DatabaseAppSecretArn
+                  - !Ref MotherDuckSecretArn
 
         - PolicyName: InvokeCallWorker
           PolicyDocument:
@@ -66,8 +112,62 @@ Resources:
             Statement:
               - Effect: Allow
                 Action: lambda:InvokeFunction
-                Resource: !Sub >-
-                  arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-${EnvironmentName}-sip
+                Resource:
+                  - !Sub >-
+                    arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-${EnvironmentName}-sip
+                  - !Sub >-
+                    arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-${EnvironmentName}-sip:${SipAliasName}
+
+  WebLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: ReadApplicationSecrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref DatabaseAppSecretArn
+                  - !Ref MotherDuckSecretArn
+                  - !Ref OpenAISecretArn
+                  - !Ref LangSmithSecretArn
+
+  DatabaseBootstrapExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: ReadDatabaseBootstrapSecrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref DatabaseOwnerSecretArn
+                  - !Ref DatabaseAppSecretArn
+                  - !Ref MotherDuckSecretArn
 
   SipFunction:
     Type: AWS::Lambda::Function
@@ -83,16 +183,28 @@ Resources:
       Architectures: [x86_64]
       MemorySize: 512
       Timeout: 900
+      SnapStart:
+        ApplyOn: !Ref VoiceSnapStartApplyOn
+
+      VpcConfig:
+        SecurityGroupIds: [!Ref LambdaSecurityGroupId]
+        SubnetIds: !Ref PrivateSubnetIds
 
       Environment:
         Variables:
           OPENAI_SECRET_ARN: !Ref OpenAISecretArn
           LANGSMITH_SECRET_ARN: !Ref LangSmithSecretArn
+          DATABASE_APP_SECRET_ARN: !Ref DatabaseAppSecretArn
+          MOTHERDUCK_SECRET_ARN: !Ref MotherDuckSecretArn
+          DATABASE_HOST: !Ref DatabaseHost
+          DATABASE_PORT: !Ref DatabasePort
+          DATABASE_NAME: !Ref DatabaseName
 
 
           OPENAI_REALTIME_MODEL: gpt-realtime-2.1
           OPENAI_REALTIME_VOICE: cedar
-          OPENAI_INPUT_TRANSCRIPTION_MODEL: gpt-4o-mini-transcribe
+          OPENAI_INPUT_TRANSCRIPTION_MODEL: gpt-transcribe
+          HUMAN_HANDOFF_NUMBER: !Ref HumanHandoffNumber
           DEMO_LOG_FULL_TRANSCRIPTS: "true"
 
           LANGSMITH_TRACING: "true"
@@ -106,17 +218,145 @@ Resources:
         ApplicationLogLevel: INFO
         SystemLogLevel: WARN
 
+  SipFunctionVersion:
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName: !Ref SipFunction
+      Description: !Sub "SnapStart image ${ContainerImageUri}"
+
+  SipAlias:
+    Type: AWS::Lambda::Alias
+    Properties:
+      Name: !Ref SipAliasName
+      Description: Stable SnapStart-enabled voice endpoint.
+      FunctionName: !Ref SipFunction
+      FunctionVersion: !GetAtt SipFunctionVersion.Version
+
   SipFunctionUrl:
     Type: AWS::Lambda::Url
+    DependsOn: SipAlias
     Properties:
       TargetFunctionArn: !GetAtt SipFunction.Arn
+      Qualifier: !Ref SipAliasName
       AuthType: NONE
       InvokeMode: BUFFERED
+
+  WebFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${EnvironmentName}-web"
+      Description: Serves the Factored Bank frontend and FastAPI demo backend on demand.
+      PackageType: Image
+      Code:
+        ImageUri: !Ref ContainerImageUri
+      ImageConfig:
+        Command: ["webapp.backend.aws_lambda.lambda_handler"]
+      Role: !GetAtt WebLambdaExecutionRole.Arn
+      Architectures: [x86_64]
+      MemorySize: !Ref WebMemorySize
+      Timeout: 30
+      VpcConfig:
+        SecurityGroupIds: [!Ref LambdaSecurityGroupId]
+        SubnetIds: !Ref PrivateSubnetIds
+      Environment:
+        Variables:
+          APP_ENV: !Ref EnvironmentName
+          SESSION_COOKIE_SECURE: "true"
+          SESSION_DURATION_HOURS: "24"
+          DATABASE_APP_SECRET_ARN: !Ref DatabaseAppSecretArn
+          MOTHERDUCK_SECRET_ARN: !Ref MotherDuckSecretArn
+          OPENAI_SECRET_ARN: !Ref OpenAISecretArn
+          LANGSMITH_SECRET_ARN: !Ref LangSmithSecretArn
+          DATABASE_HOST: !Ref DatabaseHost
+          DATABASE_PORT: !Ref DatabasePort
+          DATABASE_NAME: !Ref DatabaseName
+          LANGSMITH_TRACING: "true"
+          LANGSMITH_PROJECT: !Ref LangSmithProject
+      LoggingConfig:
+        LogFormat: JSON
+        ApplicationLogLevel: INFO
+        SystemLogLevel: WARN
+
+  WebFunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt WebFunction.Arn
+      AuthType: NONE
+      InvokeMode: BUFFERED
+
+  WebWarmupRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Low-cost warm ping for the hackathon web and chat demo.
+      ScheduleExpression: rate(5 minutes)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt WebFunction.Arn
+          Id: WebFunctionWarmup
+          Input: '{"warmup":true}'
+
+  WebWarmupPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref WebFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt WebWarmupRule.Arn
+
+  DatabaseBootstrapFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${EnvironmentName}-database-bootstrap"
+      Description: Idempotent schema migration, grants, and synthetic lakehouse seed.
+      PackageType: Image
+      Code:
+        ImageUri: !Ref ContainerImageUri
+      ImageConfig:
+        Command: ["webapp.backend.db.aws_bootstrap.lambda_handler"]
+      Role: !GetAtt DatabaseBootstrapExecutionRole.Arn
+      Architectures: [x86_64]
+      MemorySize: 1024
+      Timeout: 900
+      VpcConfig:
+        SecurityGroupIds: [!Ref LambdaSecurityGroupId]
+        SubnetIds: !Ref PrivateSubnetIds
+      Environment:
+        Variables:
+          DATABASE_OWNER_SECRET_ARN: !Ref DatabaseOwnerSecretArn
+          DATABASE_APP_SECRET_ARN: !Ref DatabaseAppSecretArn
+          MOTHERDUCK_SECRET_ARN: !Ref MotherDuckSecretArn
+          DATABASE_HOST: !Ref DatabaseHost
+          DATABASE_PORT: !Ref DatabasePort
+          DATABASE_NAME: !Ref DatabaseName
+          MOTHERDUCK_PG_HOST: pg.us-east-1-aws.motherduck.com
+          MOTHERDUCK_PG_PORT: "5432"
+          MOTHERDUCK_DATABASE: lakehouse
+          MOTHERDUCK_SCHEMA: silver
+      LoggingConfig:
+        LogFormat: JSON
+        ApplicationLogLevel: INFO
+        SystemLogLevel: WARN
+
+  PublicWebFunctionUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref WebFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+
+  PublicWebFunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref WebFunction
+      Action: lambda:InvokeFunction
+      Principal: "*"
+      InvokedViaFunctionUrl: true
 
   PublicFunctionUrlPermission:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !Ref SipFunction
+      FunctionName: !Ref SipAlias
       Action: lambda:InvokeFunctionUrl
       Principal: "*"
       FunctionUrlAuthType: NONE
@@ -124,16 +364,17 @@ Resources:
   PublicFunctionInvokePermission:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !Ref SipFunction
+      FunctionName: !Ref SipAlias
       Action: lambda:InvokeFunction
       Principal: "*"
       InvokedViaFunctionUrl: true
 
   WorkerRetryPolicy:
     Type: AWS::Lambda::EventInvokeConfig
+    DependsOn: SipAlias
     Properties:
       FunctionName: !Ref SipFunction
-      Qualifier: $LATEST
+      Qualifier: !Ref SipAliasName
       MaximumEventAgeInSeconds: 60
       MaximumRetryAttempts: 0
 
@@ -143,15 +384,49 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/${ProjectName}-${EnvironmentName}-sip"
       RetentionInDays: !Ref LogRetentionDays
 
+  WebLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ProjectName}-${EnvironmentName}-web"
+      RetentionInDays: !Ref LogRetentionDays
+
+  DatabaseBootstrapLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ProjectName}-${EnvironmentName}-database-bootstrap"
+      RetentionInDays: !Ref LogRetentionDays
+
 Outputs:
   FunctionUrl:
     Value: !GetAtt SipFunctionUrl.FunctionUrl
+
+  ApplicationUrl:
+    Value: !GetAtt WebFunctionUrl.FunctionUrl
+
+  WebFunctionName:
+    Value: !Ref WebFunction
+
+  WebWarmupSchedule:
+    Value: !GetAtt WebWarmupRule.Arn
+
+  DatabaseBootstrapFunctionName:
+    Value: !Ref DatabaseBootstrapFunction
 
   OpenAIWebhookUrl:
     Value: !Sub "${SipFunctionUrl.FunctionUrl}webhooks/openai"
 
   FunctionName:
     Value: !Ref SipFunction
+
+  SipAliasArn:
+    Value: !Ref SipAlias
+
+  SipPublishedVersion:
+    Value: !GetAtt SipFunctionVersion.Version
+
+  VoiceSnapStart:
+    Value: !Ref VoiceSnapStartApplyOn
+    Description: SnapStart setting applied to published SIP Lambda versions.
 
   MaximumCallDurationMinutes:
     Value: "14"

@@ -42,6 +42,7 @@ class CallerIdentity:
     age: int | None
     country: str | None
     detected_accent: str | None
+    preferred_locale: str | None
     assurance_level: str
 
 
@@ -62,6 +63,7 @@ class _CallerRecord:
     document_number: str
     country: str | None
     detected_accent: str | None
+    preferred_locale: str | None
 
 
 def normalize_phone(value: str) -> str:
@@ -195,6 +197,10 @@ class VoiceCallerIdentityService:
                         document_number=document,
                         country=(row.get("country") or "").strip() or None,
                         detected_accent=(row.get("detected_accent") or "").strip() or None,
+                        preferred_locale=(
+                            row.get("preferred_locale") or row.get("locale") or ""
+                        ).strip()
+                        or None,
                     )
                 )
 
@@ -378,6 +384,7 @@ class VoiceCallerIdentityService:
             age=None,
             country=record.country,
             detected_accent=record.detected_accent,
+            preferred_locale=record.preferred_locale,
             assurance_level=assurance,
         )
 
@@ -398,5 +405,6 @@ class VoiceCallerIdentityService:
             age=age,
             country=customer.country,
             detected_accent=customer.detected_accent.value,
+            preferred_locale=customer.interface_locale.value,
             assurance_level=assurance,
         )

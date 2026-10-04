@@ -48,8 +48,12 @@ VISA_COMPLAINT_TEMPLATES = {
 class ComplaintFilingService:
     """Persist one complaint per call using the replaceable repository contract."""
 
-    def __init__(self, complaints: ComplaintRepository) -> None:
+    def __init__(
+        self, complaints: ComplaintRepository, *, reception_channel: str = "Call Center"
+    ) -> None:
         self.complaints = complaints
+        # "Call Center" for phone calls, "Web Chat" for the Izzy chat in the web app.
+        self.reception_channel = reception_channel
 
     def file_from_call(
         self,
@@ -85,7 +89,7 @@ class ComplaintFilingService:
             case_type="Claim",
             category=template.category,
             subcategory=template.subcategory,
-            reception_channel="Call Center",
+            reception_channel=self.reception_channel,
             affected_product_id=transaction.product_id,
             related_branch_id=transaction.branch_id,
             origin_interaction_id=call_id,

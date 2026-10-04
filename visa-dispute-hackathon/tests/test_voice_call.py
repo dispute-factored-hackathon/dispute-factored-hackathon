@@ -2,10 +2,9 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-from dispute_agent.transaction_search import (
-    SQLiteTransactionSearchRepository,
-    TransactionSearchCriteria,
-)
+from fakes import demo_card_product_id, fruit_search_repository, voice_repositories
+
+from dispute_agent.transaction_search import TransactionSearchCriteria
 from dispute_agent.voice_call import (
     CardSecurityActionStatus,
     ComplaintFilingStatus,
@@ -15,17 +14,16 @@ from dispute_agent.voice_call import (
     VoiceCallService,
     VoiceCallStage,
 )
-from webapp.backend.demo_card import demo_card_product_id
 
 FIXTURE = Path(__file__).parent / "fixtures" / "customers.csv"
 
 
 class VoiceCallServiceTests(unittest.TestCase):
     def setUp(self):
-        self.transactions = SQLiteTransactionSearchRepository(seed_customer_id="CLI-002")
+        self.transactions = fruit_search_repository("CLI-002")
         self.calls = VoiceCallService(
             FIXTURE,
-            transaction_repository=self.transactions,
+            **voice_repositories(transaction_repository=self.transactions),
         )
 
     def tearDown(self):
@@ -42,7 +40,7 @@ class VoiceCallServiceTests(unittest.TestCase):
             method="phone",
         )
 
-    def test_known_phone_starts_with_language_confirmation_not_authentication(self):
+    def test_known_phone_skips_language_question_without_authenticating(self):
         state = self.calls.start(
             "+55 11 99999-0001",
             call_id="call_known",
@@ -51,7 +49,7 @@ class VoiceCallServiceTests(unittest.TestCase):
         self.assertEqual(state.call_id, "call_known")
         self.assertEqual(
             state.stage,
-            VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION,
+            VoiceCallStage.NEEDS_AUTH_METHOD,
         )
         self.assertIsNone(state.identity)
         self.assertIsNone(state.authentication_method)
@@ -306,6 +304,40 @@ class VoiceCallServiceTests(unittest.TestCase):
             state.stage,
             VoiceCallStage.HANDOFF,
         )
+        self.assertEqual(state.handoff_reason, "authentication_attempts_exhausted")
+
+    def test_explicit_human_request_preserves_authenticated_context(self):
+        state = self.authenticate_known_phone("call_explicit_human")
+
+        handed_off = self.calls.request_human(state.call_id)
+
+        self.assertEqual(handed_off.stage, VoiceCallStage.HANDOFF)
+        self.assertEqual(handed_off.handoff_reason, "customer_requested")
+        self.assertEqual(handed_off.identity, state.identity)
+        interaction = self.calls.call_interactions.interactions.get_by_id(
+            self.calls.call_interactions.interaction_id(state.call_id)
+        )
+        self.assertTrue(interaction.was_escalated)
+
+    def test_explicit_human_request_after_csat_can_still_be_transferred(self):
+        state = self.authenticate_known_phone("call_human_after_csat")
+        self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(merchant_query="lemon"),
+        )
+        self.calls.resolve_transaction_candidate(state.call_id, confirmed=True)
+        classified = self.calls.classify_dispute(
+            state.call_id,
+            allegation="DUPLICATE_PROCESSING",
+            customer_reports_duplicate=True,
+        )
+        completed = self.calls.record_csat(classified.state.call_id, rating=1)
+
+        handed_off = self.calls.request_human(completed.call_id)
+
+        self.assertEqual(handed_off.stage, VoiceCallStage.HANDOFF)
+        self.assertEqual(handed_off.handoff_reason, "customer_requested")
+        self.assertEqual(handed_off.identity, completed.identity)
 
     def test_dtmf_is_ignored_before_document_stage(self):
         state = self.calls.start(
@@ -336,7 +368,7 @@ class VoiceCallServiceTests(unittest.TestCase):
 
     def test_authentication_method_cannot_be_selected_before_language_confirmation(self):
         state = self.calls.start(
-            "+55 11 99999-0001",
+            "+55 11 90000-9999",
             call_id="call_wrong_stage",
         )
 

@@ -8,9 +8,19 @@ Parameters:
   GitHubOrganization:
     Type: String
     Default: dispute-factored-hackathon
+  GitHubOrganizationId:
+    Type: String
+    Default: "334323685"
+    AllowedPattern: "[0-9]+"
+    Description: Immutable numeric GitHub organization ID used in OIDC subject claims.
   GitHubRepository:
     Type: String
     Default: dispute-factored-hackathon
+  GitHubRepositoryId:
+    Type: String
+    Default: "1389807294"
+    AllowedPattern: "[0-9]+"
+    Description: Immutable numeric GitHub repository ID used in OIDC subject claims.
   ProjectName:
     Type: String
     Default: dispute-factored
@@ -34,9 +44,12 @@ Resources:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               StringLike:
                 token.actions.githubusercontent.com:sub:
-                  - !Sub "repo:${GitHubOrganization}/${GitHubRepository}:pull_request"
-                  - !Sub "repo:${GitHubOrganization}/${GitHubRepository}:ref:refs/heads/main"
-                  - !Sub "repo:${GitHubOrganization}/${GitHubRepository}:ref:refs/tags/*"
+                  - !Sub >-
+                    repo:${GitHubOrganization}@${GitHubOrganizationId}/${GitHubRepository}@${GitHubRepositoryId}:pull_request
+                  - !Sub >-
+                    repo:${GitHubOrganization}@${GitHubOrganizationId}/${GitHubRepository}@${GitHubRepositoryId}:ref:refs/heads/main
+                  - !Sub >-
+                    repo:${GitHubOrganization}@${GitHubOrganizationId}/${GitHubRepository}@${GitHubRepositoryId}:ref:refs/tags/*
       Policies:
         - PolicyName: DeployDemoApplication
           PolicyDocument:
@@ -49,6 +62,7 @@ Resources:
                   - cloudformation:DescribeStackEvents
                   - cloudformation:DescribeChangeSet
                   - cloudformation:GetTemplateSummary
+                  - cloudformation:ValidateTemplate
                 Resource: "*"
               - Sid: ChangeApplicationStack
                 Effect: Allow
@@ -75,28 +89,78 @@ Resources:
                 Effect: Allow
                 Action: ecr:GetAuthorizationToken
                 Resource: "*"
+              - Sid: InspectApplicationVpc
+                Effect: Allow
+                Action:
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeVpcs
+                Resource: "*"
+              - Sid: ResolveDeploymentSecrets
+                Effect: Allow
+                Action: secretsmanager:DescribeSecret
+                Resource:
+                  - !Sub >-
+                    arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ProjectName}/langsmith-*
               - Sid: ManageDemoLambda
                 Effect: Allow
                 Action:
                   - lambda:AddPermission
+                  - lambda:CreateAlias
                   - lambda:CreateFunction
                   - lambda:CreateFunctionUrlConfig
+                  - lambda:DeleteAlias
                   - lambda:DeleteFunction
                   - lambda:DeleteFunctionUrlConfig
+                  - lambda:GetAlias
                   - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
                   - lambda:GetFunctionUrlConfig
                   - lambda:GetPolicy
+                  - lambda:ListVersionsByFunction
                   - lambda:ListTags
+                  - lambda:PublishVersion
                   - lambda:PutFunctionEventInvokeConfig
                   - lambda:RemovePermission
                   - lambda:TagResource
                   - lambda:UntagResource
+                  - lambda:UpdateAlias
                   - lambda:UpdateFunctionCode
                   - lambda:UpdateFunctionConfiguration
                   - lambda:UpdateFunctionEventInvokeConfig
                   - lambda:UpdateFunctionUrlConfig
+                Resource:
+                  - !Sub >-
+                    arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-demo-sip
+                  - !Sub >-
+                    arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-demo-sip:*
+                  - !Sub >-
+                    arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-demo-web
+                  - !Sub >-
+                    arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-demo-database-bootstrap
+              - Sid: InvokeWebWarmup
+                Effect: Allow
+                Action: lambda:InvokeFunction
                 Resource: !Sub >-
-                  arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-demo-sip
+                  arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-demo-web
+              - Sid: ManageWebWarmupSchedule
+                Effect: Allow
+                Action:
+                  - events:DeleteRule
+                  - events:DescribeRule
+                  - events:ListTagsForResource
+                  - events:PutRule
+                  - events:PutTargets
+                  - events:RemoveTargets
+                  - events:TagResource
+                  - events:UntagResource
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/${ProjectName}-demo-*
+              - Sid: InvokeDatabaseBootstrap
+                Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-demo-database-bootstrap
               - Sid: ManageDemoExecutionRole
                 Effect: Allow
                 Action:
@@ -123,7 +187,7 @@ Resources:
                   - logs:TagResource
                   - logs:UntagResource
                 Resource: !Sub >-
-                  arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-demo-sip:*
+                  arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-demo-*:*
 
 Outputs:
   RoleArn:

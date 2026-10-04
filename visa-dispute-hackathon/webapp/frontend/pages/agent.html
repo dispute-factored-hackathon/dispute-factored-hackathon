@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1, viewport-fit=cover"
+    >
+
+    <meta
+        name="description"
+        content="Chat with Izzy, Factored Bank's virtual assistant for card disputes."
+    >
+
+    <title>Izzy · Factored Bank</title>
+
+    <link rel="icon" type="image/svg+xml" href="/static/assets/favicons/factored-bank.svg">
+
+    <link
+        rel="stylesheet"
+        href="/static/css/tokens.css"
+    >
+
+    <link
+        rel="stylesheet"
+        href="/static/css/global.css"
+    >
+
+    <link
+        rel="stylesheet"
+        href="/static/css/components.css?v=2"
+    >
+
+    <link
+        rel="stylesheet"
+        href="/static/css/pages/agent.css?v=4"
+    >
+</head>
+
+<body>
+    <main
+        id="agent-page"
+        class="agent-page"
+        hidden
+    >
+        <header class="agent-header">
+            <a
+                class="agent-back"
+                href="/home"
+                aria-label="Back to home"
+                data-history-back
+            >
+                <span aria-hidden="true">←</span>
+            </a>
+
+            <div class="agent-identity">
+                <span
+                    class="agent-avatar"
+                    aria-hidden="true"
+                >
+                    ✦
+                </span>
+
+                <div>
+                    <h1 class="agent-name">
+                        Izzy
+                    </h1>
+
+                    <p class="agent-role">
+                        Virtual assistant · Card disputes
+                    </p>
+                </div>
+            </div>
+
+            <a
+                id="agent-call"
+                class="agent-call"
+                href="tel:+16615779964"
+                aria-label="Call Izzy"
+            >
+                Call
+            </a>
+        </header>
+
+        <p class="agent-phone-banner">
+            <span>
+                Prefer to talk?
+            </span>
+
+            <a
+                id="agent-phone-link"
+                class="agent-phone-link"
+                href="tel:+16615779964"
+            >
+                +1 661 577 9964
+            </a>
+        </p>
+
+        <section
+            id="agent-messages"
+            class="agent-messages"
+            role="log"
+            aria-live="polite"
+            aria-label="Conversation with Izzy"
+        ></section>
+
+        <section
+            id="agent-closed"
+            class="agent-closed"
+            hidden
+        >
+            <p>
+                This conversation has ended.
+            </p>
+
+            <button
+                id="agent-new-chat"
+                class="button button-primary"
+                type="button"
+            >
+                Start a new chat
+            </button>
+        </section>
+
+        <form
+            id="agent-composer"
+            class="agent-composer"
+            autocomplete="off"
+        >
+            <label
+                class="agent-visually-hidden"
+                for="agent-input"
+            >
+                Message Izzy
+            </label>
+
+            <textarea
+                id="agent-input"
+                class="agent-input"
+                rows="1"
+                maxlength="500"
+                placeholder="Describe the transaction…"
+                disabled
+            ></textarea>
+
+            <button
+                id="agent-send"
+                class="agent-send"
+                type="submit"
+                aria-label="Send message"
+                disabled
+            >
+                <span aria-hidden="true">↑</span>
+            </button>
+        </form>
+
+        <nav
+            id="bottom-nav"
+            class="bottom-nav"
+            aria-label="Primary navigation"
+        ></nav>
+    </main>
+
+    <script type="module" src="/static/js/components/history-back.js?v=1"></script>
+
+    <script
+        type="module"
+        src="/static/js/pages/agent.js?v=6"
+    ></script>
+</body>
+</html>

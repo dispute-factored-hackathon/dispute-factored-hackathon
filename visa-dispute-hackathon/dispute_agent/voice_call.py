@@ -11,7 +11,6 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
-from webapp.backend.demo_card import seed_demo_card
 from webapp.backend.models.transaction import Transaction
 from webapp.backend.repositories.interfaces import (
     CallCenterInteractionRepository,
@@ -19,16 +18,9 @@ from webapp.backend.repositories.interfaces import (
     ComplaintRepository,
     CustomerRepository,
     ProductRepository,
+    Repositories,
     SatisfactionSurveyRepository,
     ServiceAgentRepository,
-)
-from webapp.backend.repositories.mock import (
-    MockCallCenterInteractionRepository,
-    MockCallTranscriptRepository,
-    MockComplaintRepository,
-    MockProductRepository,
-    MockSatisfactionSurveyRepository,
-    MockServiceAgentRepository,
 )
 from webapp.backend.services.call_interactions import CallInteractionService
 from webapp.backend.services.complaint_filing import ComplaintFilingService
@@ -55,7 +47,7 @@ from .dispute_classification import (
 from .language_context import ConversationLocaleContext
 from .transaction_search import (
     InsufficientTransactionCriteriaError,
-    SQLiteTransactionSearchRepository,
+    RepositoryTransactionSearch,
     TransactionSearchCriteria,
     TransactionSearchRepository,
 )
@@ -180,6 +172,20 @@ class DisputeClassificationResult:
     outcome: DisputeClassificationOutcome
 
 
+def voice_repository_arguments(repositories: Repositories) -> dict[str, Any]:
+    """Keyword arguments that connect the voice channel to the shared app repositories."""
+
+    return {
+        "transaction_repository": RepositoryTransactionSearch(repositories.transactions),
+        "product_repository": repositories.products,
+        "complaint_repository": repositories.complaints,
+        "service_agent_repository": repositories.service_agents,
+        "interaction_repository": repositories.call_center_interactions,
+        "transcript_repository": repositories.call_transcripts,
+        "satisfaction_survey_repository": repositories.satisfaction_surveys,
+    }
+
+
 class VoiceCallService:
     """Keep locale, authentication choices, identity, and DTMF server-owned."""
 
@@ -188,30 +194,31 @@ class VoiceCallService:
         customer_source: str | Path | CustomerRepository,
         *,
         max_document_attempts: int = 3,
-        transaction_repository: TransactionSearchRepository | None = None,
-        product_repository: ProductRepository | None = None,
-        complaint_repository: ComplaintRepository | None = None,
-        service_agent_repository: ServiceAgentRepository | None = None,
-        interaction_repository: CallCenterInteractionRepository | None = None,
-        transcript_repository: CallTranscriptRepository | None = None,
-        satisfaction_survey_repository: SatisfactionSurveyRepository | None = None,
-        transcription_model: str = "gpt-4o-mini-transcribe",
+        transaction_repository: TransactionSearchRepository,
+        product_repository: ProductRepository,
+        complaint_repository: ComplaintRepository,
+        service_agent_repository: ServiceAgentRepository,
+        interaction_repository: CallCenterInteractionRepository,
+        transcript_repository: CallTranscriptRepository,
+        satisfaction_survey_repository: SatisfactionSurveyRepository,
+        transcription_model: str = "gpt-transcribe",
         max_transaction_guesses: int = 3,
     ) -> None:
         started = time.monotonic()
         self.identity = VoiceCallerIdentityService(customer_source)
         self.max_document_attempts = max_document_attempts
         self.max_transaction_guesses = max_transaction_guesses
-        self.transactions = transaction_repository or SQLiteTransactionSearchRepository()
-        self.products = product_repository or MockProductRepository()
+        # All state lives in the shared repositories (PostgreSQL in production).
+        self.transactions = transaction_repository
+        self.products = product_repository
         self.product_service = ProductService(self.products)
-        self.complaints = complaint_repository or MockComplaintRepository()
+        self.complaints = complaint_repository
         self.complaint_filing = ComplaintFilingService(self.complaints)
         self.call_interactions = CallInteractionService(
-            service_agent_repository or MockServiceAgentRepository(),
-            interaction_repository or MockCallCenterInteractionRepository(),
-            transcript_repository or MockCallTranscriptRepository(),
-            satisfaction_survey_repository or MockSatisfactionSurveyRepository(),
+            service_agent_repository,
+            interaction_repository,
+            transcript_repository,
+            satisfaction_survey_repository,
             transcription_model=transcription_model,
         )
         self.classifier = DisputeClassificationService()
@@ -231,18 +238,28 @@ class VoiceCallService:
     ) -> VoiceCallState:
         """Initialize a call without authenticating the caller.
 
-        The calling code is used only as a locale hint. Phone authentication is
-        attempted later and only if the caller explicitly chooses that method.
+        A matching phone may supply locale context, but identity is only attached
+        after the caller deliberately chooses phone authentication.
         """
         started = time.monotonic()
         resolved_call_id = call_id or secrets.token_urlsafe(24)
-        calling_code = calling_code_from_phone(mobile_phone)
-        locale = ConversationLocaleContext.from_calling_code(calling_code)
+        phone_result = self.identity.identify_phone(mobile_phone)
+        if phone_result.status is CallerIdentityStatus.AUTHENTICATED:
+            assert phone_result.identity is not None
+            locale = ConversationLocaleContext.from_customer_record(
+                country=phone_result.identity.country,
+                detected_accent=phone_result.identity.detected_accent,
+                preferred_locale=phone_result.identity.preferred_locale,
+            )
+            initial_stage = VoiceCallStage.NEEDS_AUTH_METHOD
+        else:
+            locale = ConversationLocaleContext.from_calling_code(phone_result.country_code)
+            initial_stage = VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION
 
         state = VoiceCallState(
             call_id=resolved_call_id,
             caller_phone=mobile_phone,
-            stage=VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION,
+            stage=initial_stage,
             locale=locale,
         )
         self._calls[resolved_call_id] = state
@@ -257,7 +274,8 @@ class VoiceCallService:
             locale=state.locale.locale,
             accent=state.locale.accent,
             locale_source=state.locale.source,
-            has_calling_code=calling_code is not None,
+            phone_identity_status=phone_result.status.value,
+            authenticated=False,
         )
         return state
 
@@ -304,6 +322,7 @@ class VoiceCallService:
                 profile_locale = ConversationLocaleContext.from_customer_record(
                     country=state.identity.country,
                     detected_accent=state.identity.detected_accent,
+                    preferred_locale=state.identity.preferred_locale,
                 )
                 if profile_locale.language == language:
                     resolved_accent = profile_locale.accent
@@ -390,6 +409,40 @@ class VoiceCallService:
         )
         return updated
 
+    def request_human(
+        self,
+        call_id: str,
+        *,
+        reason: str = "customer_requested",
+    ) -> VoiceCallState:
+        """Preserve the current context and move an active call to human handoff."""
+
+        state = self.get(call_id)
+        if state.stage is VoiceCallStage.HANDOFF:
+            return state
+
+        updated = replace(
+            state,
+            stage=VoiceCallStage.HANDOFF,
+            handoff_reason=reason,
+        )
+        self._calls[call_id] = updated
+        self.call_interactions.sync(updated)
+        self._log_stage_transition(
+            call_id,
+            state.stage,
+            updated.stage,
+            reason=reason,
+        )
+        _telemetry(
+            "voice.handoff.requested",
+            call_id=call_id,
+            reason=reason,
+            authenticated=state.identity is not None,
+            from_stage=state.stage.value,
+        )
+        return updated
+
     def _authenticate_phone(self, state: VoiceCallState) -> VoiceCallState:
         """Authenticate using the number presented by the SIP call."""
         started = time.monotonic()
@@ -398,7 +451,6 @@ class VoiceCallService:
 
         if result.status is CallerIdentityStatus.AUTHENTICATED:
             assert result.identity is not None
-            seed_demo_card(self.products, result.identity.customer_id)
             updated = replace(
                 state,
                 stage=VoiceCallStage.AUTHENTICATED,
@@ -522,7 +574,6 @@ class VoiceCallService:
 
         if result.status is CallerIdentityStatus.AUTHENTICATED:
             assert result.identity is not None
-            seed_demo_card(self.products, result.identity.customer_id)
             updated = replace(
                 state,
                 stage=VoiceCallStage.AUTHENTICATED,
@@ -551,6 +602,11 @@ class VoiceCallService:
                 authentication_method=VoiceAuthenticationMethod.DOCUMENT,
                 failed_document_attempts=attempts,
                 document_digits="",
+                handoff_reason=(
+                    "authentication_attempts_exhausted"
+                    if attempts >= self.max_document_attempts
+                    else state.handoff_reason
+                ),
             )
             _telemetry(
                 "voice.authentication.failed",
@@ -995,7 +1051,7 @@ class VoiceCallService:
             guess_count=state.transaction_guess_attempts,
             no_match_count=state.transaction_no_match_attempts,
             active_filters=dict(state.transaction_criteria.active_filters()),
-            handoff_available=False,
+            handoff_requested=True,
         )
         return TransactionSelectionResult(
             updated,

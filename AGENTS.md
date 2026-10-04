@@ -9,7 +9,7 @@ Help build and document an issuer-side Visa dispute experience for a Latin Ameri
 ## Repository structure
 
 - `visa-dispute-hackathon/`: Python package, LangGraph workflow, classifiers, CLI, and tests.
-- `docs/`: Obsidian-compatible product and research documentation.
+- [GitHub Wiki](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki): product, research, architecture, and operating documentation.
 - `data/`: synthetic hackathon data and derived labels.
 - `agents/AGENTIC_UX_REVIEWER.md`: reusable rubric for agentic UX review.
 
@@ -67,7 +67,7 @@ Run the complete suite after changes. When the user experience changes, also exe
 ## Documentation
 
 - Keep the root and application READMEs consistent with implemented commands.
-- Preserve Obsidian-compatible relative links in `docs/`.
+- Keep GitHub Wiki pages, navigation, and sidebar consistent.
 - Cite external claims and label synthetic analysis clearly.
 - Explain banking terminology for technical readers without a financial background.
 - Update limitations whenever a component is mocked or unavailable.

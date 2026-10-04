@@ -13,9 +13,12 @@ dependencies = [
     "alembic>=1.13,<2",
     "certifi>=2026.7.22",
     "fastapi>=0.115,<1",
+    "httpx>=0.28,<1",
     "langchain-openai>=0.3,<2",
     "langgraph>=0.4,<2",
+    "langgraph-checkpoint-postgres>=3,<4",
     "langsmith>=0.3,<1",
+    "mangum>=0.19,<1",
     "openai>=3.19,<4",
     "psycopg[binary,pool]>=3.2,<4",
     "pydantic-settings>=2,<3",
@@ -51,7 +54,7 @@ include = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = [".", "tests"]
 
 
 [tool.uv]

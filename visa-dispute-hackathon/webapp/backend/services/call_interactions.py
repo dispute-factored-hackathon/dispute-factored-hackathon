@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -16,6 +17,30 @@ from webapp.backend.repositories.interfaces import (
     ServiceAgentRepository,
 )
 from webapp.backend.services.izzy_agent import IZZY_AGENT_ID, seed_izzy_agent
+
+
+@dataclass(frozen=True)
+class InteractionChannel:
+    """How an Izzy conversation is recorded in the call-center tables."""
+
+    interaction_type: str
+    channel: str
+    survey_channel: str
+    main_topics: str
+
+
+PHONE_CHANNEL = InteractionChannel(
+    interaction_type="Inbound Call",
+    channel="Phone",
+    survey_channel="Phone",
+    main_topics="Authentication, transaction search, Visa dispute",
+)
+WEB_CHAT_CHANNEL = InteractionChannel(
+    interaction_type="Web Chat",
+    channel="Web Chat",
+    survey_channel="Web Chat",
+    main_topics="Transaction search, Visa dispute",
+)
 
 
 def _id(prefix: str, call_id: str) -> str:
@@ -33,7 +58,9 @@ class CallInteractionService:
         surveys: SatisfactionSurveyRepository,
         *,
         transcription_model: str,
+        channel: InteractionChannel = PHONE_CHANNEL,
     ) -> None:
+        self.channel = channel
         self.agents = agents
         self.interactions = interactions
         self.transcripts = transcripts
@@ -119,7 +146,7 @@ class CallInteractionService:
                 customer_id=state.identity.customer_id,
                 agent_id=IZZY_AGENT_ID,
                 survey_type="CSAT",
-                send_channel="Phone",
+                send_channel=self.channel.survey_channel,
                 main_score=rating,
                 question_1_text="How would you rate this service from 1 to 5?",
                 question_1_response=rating,
@@ -174,8 +201,8 @@ class CallInteractionService:
                 process_date=now.date(),
                 customer_id=state.identity.customer_id,
                 agent_id=IZZY_AGENT_ID,
-                interaction_type="Inbound Call",
-                channel="Phone",
+                interaction_type=self.channel.interaction_type,
+                channel=self.channel.channel,
                 contact_reason="Card dispute support",
                 reason_category="Complaint",
                 duration_seconds=0,
@@ -217,7 +244,7 @@ class CallInteractionService:
             detected_accent=state.locale.accent,
             accent_confidence=1.0,
             detected_intents="Card dispute",
-            main_topics="Authentication, transaction search, Visa dispute",
+            main_topics=self.channel.main_topics,
             transcription_model=self.transcription_model,
             audio_quality="Unknown",
             duration_seconds=self._duration(state.call_id),

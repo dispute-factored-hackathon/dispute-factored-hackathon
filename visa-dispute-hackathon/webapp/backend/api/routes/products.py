@@ -8,13 +8,11 @@ from fastapi import (
 )
 
 from webapp.backend.api.dependencies import (
+    RepositoriesDependency,
     require_customer,
 )
 from webapp.backend.models.customer import Customer
 from webapp.backend.models.product import Product
-from webapp.backend.repositories.registry import (
-    product_repository,
-)
 from webapp.backend.schemas.product import (
     ProductResponse,
     ProductStatusResponse,
@@ -31,9 +29,11 @@ router = APIRouter(
 )
 
 
-product_service = ProductService(
-    product_repository,
-)
+def get_product_service(repositories: RepositoriesDependency) -> ProductService:
+    return ProductService(repositories.products)
+
+
+ProductServiceDependency = Annotated[ProductService, Depends(get_product_service)]
 
 
 def masked_number(
@@ -66,6 +66,7 @@ def list_products(
         Customer,
         Depends(require_customer),
     ],
+    product_service: ProductServiceDependency,
 ) -> list[ProductResponse]:
     products = product_service.list_customer_products(customer.customer_id)
 
@@ -82,6 +83,7 @@ def block_product(
         Customer,
         Depends(require_customer),
     ],
+    product_service: ProductServiceDependency,
 ) -> ProductStatusResponse:
     try:
         product = product_service.block(
@@ -117,6 +119,7 @@ def unblock_product(
         Customer,
         Depends(require_customer),
     ],
+    product_service: ProductServiceDependency,
 ) -> ProductStatusResponse:
     try:
         product = product_service.unblock(

@@ -1,0 +1,271 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Private, auto-pausing PostgreSQL and low-cost egress for the Factored demo.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: dispute-factored
+    AllowedPattern: "[a-z0-9-]+"
+  EnvironmentName:
+    Type: String
+    Default: demo
+    AllowedPattern: "[a-z0-9-]+"
+  DatabaseName:
+    Type: String
+    Default: factored
+    AllowedPattern: "[a-zA-Z][a-zA-Z0-9_]+"
+  AuroraEngineVersion:
+    Type: String
+    Default: "16.8"
+  NatAmi:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.42.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${EnvironmentName}"
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref Vpc
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.0.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${EnvironmentName}-public"
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.10.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${EnvironmentName}-private-a"
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.11.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${EnvironmentName}-private-b"
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet
+
+  NatSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Egress gateway accepts traffic only from the private subnet CIDRs.
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          CidrIp: 10.42.10.0/23
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  EgressInstance:
+    Type: AWS::EC2::Instance
+    DependsOn: PublicDefaultRoute
+    Properties:
+      ImageId: !Ref NatAmi
+      # nano runs out of memory while installing the forwarding rules on AL2023.
+      InstanceType: t4g.micro
+      SourceDestCheck: false
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds: [!Ref NatSecurityGroup]
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 8
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+          dnf install -y iptables-services
+          echo 'net.ipv4.ip_forward = 1' >/etc/sysctl.d/90-nat.conf
+          sysctl -p /etc/sysctl.d/90-nat.conf
+          PRIMARY_IFACE=$(ip route show default | awk '{print $5; exit}')
+          iptables -t nat -A POSTROUTING -o "$PRIMARY_IFACE" -j MASQUERADE
+          service iptables save
+          systemctl enable --now iptables
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${EnvironmentName}-nat"
+
+  NatElasticIp:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  NatElasticIpAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt NatElasticIp.AllocationId
+      InstanceId: !Ref EgressInstance
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+
+  PrivateDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: NatElasticIpAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      InstanceId: !Ref EgressInstance
+
+  PrivateSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnetA
+
+  PrivateSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnetB
+
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Egress for the Factored web, voice, and database bootstrap Lambdas.
+      VpcId: !Ref Vpc
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: PostgreSQL from Factored Lambda functions only.
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
+
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Private subnets for the Factored demo database.
+      SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+
+  DatabaseCluster:
+    Type: AWS::RDS::DBCluster
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DatabaseName: !Ref DatabaseName
+      DBClusterIdentifier: !Sub "${ProjectName}-${EnvironmentName}"
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      Engine: aurora-postgresql
+      EngineMode: provisioned
+      EngineVersion: !Ref AuroraEngineVersion
+      MasterUsername: factored_owner
+      ManageMasterUserPassword: true
+      Port: 5432
+      ServerlessV2ScalingConfiguration:
+        MinCapacity: 0
+        MaxCapacity: 1
+        SecondsUntilAutoPause: 300
+      StorageEncrypted: true
+      VpcSecurityGroupIds: [!Ref DatabaseSecurityGroup]
+
+  DatabaseInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBClusterIdentifier: !Ref DatabaseCluster
+      DBInstanceClass: db.serverless
+      Engine: aurora-postgresql
+      PubliclyAccessible: false
+
+  ApplicationDatabaseSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: Least-privilege PostgreSQL application role.
+      GenerateSecretString:
+        SecretStringTemplate: '{"username":"factored_app"}'
+        GenerateStringKey: password
+        PasswordLength: 40
+        ExcludePunctuation: true
+
+  MotherDuckSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: Read-only MotherDuck token used to seed and enrich the synthetic demo.
+      SecretString: '{"MOTHERDUCK_TOKEN":"replace-me-before-deploy"}'
+
+Outputs:
+  VpcId:
+    Value: !Ref Vpc
+  PrivateSubnetIds:
+    Value: !Join [",", [!Ref PrivateSubnetA, !Ref PrivateSubnetB]]
+  LambdaSecurityGroupId:
+    Value: !Ref LambdaSecurityGroup
+  DatabaseHost:
+    Value: !GetAtt DatabaseCluster.Endpoint.Address
+  DatabasePort:
+    Value: !GetAtt DatabaseCluster.Endpoint.Port
+  DatabaseName:
+    Value: !Ref DatabaseName
+  DatabaseOwnerSecretArn:
+    Value: !GetAtt DatabaseCluster.MasterUserSecret.SecretArn
+  DatabaseAppSecretArn:
+    Value: !Ref ApplicationDatabaseSecret
+  MotherDuckSecretArn:
+    Value: !Ref MotherDuckSecret
+  NatPublicIp:
+    Value: !Ref NatElasticIp
+    Description: Fixed egress IP; no inbound access is allowed.

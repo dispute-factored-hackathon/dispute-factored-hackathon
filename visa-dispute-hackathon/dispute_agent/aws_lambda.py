@@ -10,18 +10,12 @@ import os
 import time
 from typing import Any
 
-from webapp.backend.demo_seed import seed_demo_customers
-from webapp.backend.repositories.registry import (
-    call_center_interaction_repository,
-    call_transcript_repository,
-    complaint_repository,
-    customer_repository,
-    product_repository,
-    satisfaction_survey_repository,
-    service_agent_repository,
-)
+from webapp.backend.aws_runtime import configure_application_runtime
+from webapp.backend.config import get_settings
+from webapp.backend.repositories.postgres import open_repositories
 
 from .sip_realtime import SipRealtimeGateway, _value, extract_caller_phone
+from .voice_call import voice_repository_arguments
 
 LOGGER = logging.getLogger(__name__)
 
@@ -35,14 +29,17 @@ def _telemetry(event: str, *, call_id: str | None = None, **fields: Any) -> None
     LOGGER.info(json.dumps(payload, ensure_ascii=False, default=str))
 
 
-# The Lambda invokes itself asynchronously with this mode after the webhook
-# invocation has accepted the SIP call.
+# The Lambda invokes itself asynchronously with this mode as soon as the
+# webhook has been verified. The worker owns both accepting and controlling
+# the call so the public webhook can acknowledge delivery without waiting for
+# Secrets Manager, Jev, or OpenAI Realtime setup.
 WORKER_MODE = "control_realtime_call"
 
 # Leave headroom below a typical 15-minute Lambda timeout.
 MAX_CALL_SECONDS = 840
 
 _gateway: SipRealtimeGateway | None = None
+_repositories: Any | None = None
 
 
 def _load_json_secret(
@@ -91,12 +88,14 @@ def _load_json_secret(
 def _load_openai_secret() -> dict[str, str]:
     """Load OpenAI API and webhook signing credentials."""
 
+    names = {"JEV_API_KEY", "OPENAI_API_KEY", "OPENAI_WEBHOOK_SECRET"}
+    configured = {name: os.environ.get(name, "").strip() for name in names}
+    if all(configured.values()):
+        return configured
+
     return _load_json_secret(
         "OPENAI_SECRET_ARN",
-        required_keys={
-            "OPENAI_API_KEY",
-            "OPENAI_WEBHOOK_SECRET",
-        },
+        required_keys=names,
         secret_name="openai",
     )
 
@@ -132,27 +131,28 @@ def _configure_langsmith() -> None:
 def _get_gateway() -> SipRealtimeGateway:
     """Create one gateway per warm Lambda execution environment."""
 
-    global _gateway
+    global _gateway, _repositories
 
     if _gateway is None:
         started = time.monotonic()
+
+        configure_application_runtime()
+        get_settings.cache_clear()
 
         # Configure LangSmith before application code begins creating traced runs.
         _configure_langsmith()
 
         secret = _load_openai_secret()
 
-        seed_demo_customers(customer_repository, product_repository)
+        # Shared PostgreSQL configured with DATABASE_URL; customer data comes from the lakehouse seed.
+        repositories = open_repositories(get_settings())
+        _repositories = repositories
         _gateway = SipRealtimeGateway(
-            customer_repository,
-            product_repository=product_repository,
-            complaint_repository=complaint_repository,
-            service_agent_repository=service_agent_repository,
-            interaction_repository=call_center_interaction_repository,
-            transcript_repository=call_transcript_repository,
-            satisfaction_survey_repository=satisfaction_survey_repository,
+            repositories.customers,
+            **voice_repository_arguments(repositories),
             api_key=secret["OPENAI_API_KEY"],
             webhook_secret=secret["OPENAI_WEBHOOK_SECRET"],
+            jev_api_key=secret.get("JEV_API_KEY"),
         )
 
         _telemetry(
@@ -169,6 +169,15 @@ def _get_gateway() -> SipRealtimeGateway:
         )
 
     return _gateway
+
+
+def _close_gateway() -> None:
+    """Release database pools so warm Lambdas do not prevent Aurora auto-pause."""
+    global _gateway, _repositories
+    if _repositories is not None:
+        _repositories.close()
+    _repositories = None
+    _gateway = None
 
 
 def _response(
@@ -241,7 +250,7 @@ def _invoke_worker(
 
 
 def _run_worker(event: dict[str, Any]) -> dict[str, Any]:
-    """Run the long-lived sideband controller for one accepted SIP call."""
+    """Accept and run the long-lived sideband controller for one SIP call."""
 
     call_id = str(event.get("call_id", ""))
     caller_phone = str(event.get("caller_phone", ""))
@@ -265,6 +274,13 @@ def _run_worker(event: dict[str, Any]) -> dict[str, Any]:
     _telemetry("worker.started", call_id=call_id)
 
     try:
+        asyncio.run(
+            _get_gateway().accept_call(
+                call_id,
+                caller_phone,
+            )
+        )
+        _telemetry("sip.accept.completed", call_id=call_id, owner="worker")
         asyncio.run(
             _get_gateway().control_call(
                 call_id,
@@ -332,11 +348,11 @@ def _safe_reject(
         )
 
 
-def lambda_handler(
+def _dispatch_event(
     event: dict[str, Any],
     context: Any,
 ) -> dict[str, Any]:
-    """Verify the webhook, accept the SIP call, and launch its sideband worker."""
+    """Verify the webhook and launch the call-owning worker without blocking."""
 
     started = time.monotonic()
 
@@ -484,76 +500,9 @@ def lambda_handler(
         duration_ms=round((time.monotonic() - started) * 1000, 2),
     )
 
-    # ------------------------------------------------------------------
-    # 4. Accept the call synchronously.
-    #
-    # OpenAI makes the first accept/reject decision authoritative.
-    # Therefore a redelivered webhook normally gets a 404/other failure
-    # when trying to accept an already-decided call. We intentionally do
-    # NOT start another worker in that case.
-    # ------------------------------------------------------------------
-
-    _telemetry(
-        "sip.accept.started",
-        call_id=call_id,
-        event_id=event_id,
-        duration_from_handler_start_ms=round((time.monotonic() - started) * 1000, 2),
-    )
-
-    accept_started = time.monotonic()
-
-    try:
-        asyncio.run(
-            gateway.accept_call(
-                call_id,
-                caller_phone,
-            )
-        )
-
-    except Exception as error:
-        _telemetry(
-            "sip.accept.failed",
-            call_id=call_id,
-            event_id=event_id,
-            duration_ms=round((time.monotonic() - accept_started) * 1000, 2),
-            error_type=type(error).__name__,
-            error=str(error),
-        )
-        LOGGER.exception(
-            "SIP call could not be accepted; "
-            "it may already have been decided or become unavailable "
-            "event_id=%s call_id=%s",
-            event_id,
-            call_id,
-        )
-
-        # Return 200 so OpenAI does not keep redelivering an event whose
-        # call has already been accepted/rejected or is no longer live.
-        return _response(
-            200,
-            {
-                "status": "already_decided_or_unavailable",
-            },
-        )
-
-    LOGGER.info(
-        "SIP call accepted event_id=%s call_id=%s",
-        event_id,
-        call_id,
-    )
-
-    _telemetry(
-        "sip.accept.completed",
-        call_id=call_id,
-        event_id=event_id,
-        duration_ms=round((time.monotonic() - accept_started) * 1000, 2),
-        duration_from_handler_start_ms=round((time.monotonic() - started) * 1000, 2),
-    )
-
-    # ------------------------------------------------------------------
-    # 5. Start a separate asynchronous Lambda invocation for the
-    # long-running sideband WebSocket.
-    # ------------------------------------------------------------------
+    # Start a separate asynchronous invocation immediately. This keeps the
+    # webhook response below OpenAI's retry window. If the event is redelivered,
+    # OpenAI's authoritative accept endpoint rejects the duplicate worker.
 
     try:
         _invoke_worker(
@@ -574,14 +523,12 @@ def lambda_handler(
             call_id,
         )
 
-        # The SIP call is already accepted at this point. Returning a 5xx
-        # would encourage webhook redelivery, but a redelivery cannot safely
-        # accept the same call again. Log the infrastructure failure and
-        # acknowledge the webhook instead.
+        # A 5xx encourages webhook redelivery and gives the platform another
+        # chance to start the worker when Lambda invocation itself failed.
         return _response(
-            200,
+            503,
             {
-                "status": "accepted_worker_start_failed",
+                "status": "worker_start_failed",
             },
         )
 
@@ -589,13 +536,21 @@ def lambda_handler(
         "webhook.handler.completed",
         call_id=call_id,
         event_id=event_id,
-        status="accepted",
+        status="worker_started",
         duration_ms=round((time.monotonic() - started) * 1000, 2),
     )
 
     return _response(
         202,
         {
-            "status": "accepted",
+            "status": "worker_started",
         },
     )
+
+
+def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
+    """Dispatch one ingress/worker invocation and always release its database pool."""
+    try:
+        return _dispatch_event(event, context)
+    finally:
+        _close_gateway()
