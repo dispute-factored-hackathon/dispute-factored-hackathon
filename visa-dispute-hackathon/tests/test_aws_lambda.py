@@ -77,7 +77,7 @@ class AwsLambdaTests(unittest.TestCase):
         self.context = SimpleNamespace(invoked_function_arn="arn:aws:lambda:test:function:sip")
 
     def tearDown(self):
-        aws_lambda._gateway = None
+        aws_lambda._close_gateway()
 
     def test_gateway_uses_the_shared_postgres_repositories_without_seeding(self):
         gateway = object()
