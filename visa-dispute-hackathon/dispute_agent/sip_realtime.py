@@ -813,17 +813,31 @@ class SipRealtimeGateway:
                                         websocket,
                                         self.calls.get(call_id),
                                     )
-                        elif (
-                            event_type == "conversation.item.input_audio_transcription.failed"
-                            and deferred_handoff_event is not None
-                        ):
-                            await self._handle_tool_calls(
-                                websocket,
-                                call_id,
-                                deferred_handoff_event,
-                                last_customer_transcript="",
+                        elif event_type == "conversation.item.input_audio_transcription.failed":
+                            error_data = event.get("error", {})
+                            _telemetry(
+                                "voice.transcription.failed",
+                                call_id=call_id,
+                                item_id=str(event.get("item_id", "")),
+                                error_type=str(_value(error_data, "type", "")),
+                                error_code=str(_value(error_data, "code", "")),
                             )
-                            deferred_handoff_event = None
+                            if deferred_handoff_event is not None:
+                                await self._handle_tool_calls(
+                                    websocket,
+                                    call_id,
+                                    deferred_handoff_event,
+                                    last_customer_transcript="",
+                                )
+                                deferred_handoff_event = None
+                            elif opening_completed and not active_response:
+                                await self._speak(
+                                    websocket,
+                                    self._message_for(
+                                        self.calls.get(call_id),
+                                        "unclear_speech",
+                                    ),
+                                )
                         elif event_type in {
                             "response.output_audio_transcript.done",
                             "response.audio_transcript.done",
@@ -1189,6 +1203,35 @@ class SipRealtimeGateway:
                 reason = "dtmf_result"
 
             handoff = self._handoff_plan(state)
+            # DTMF can move the server-owned workflow from document entry to
+            # authenticated (or handoff) without a model tool call. Publish the
+            # new instructions and tools before speaking the result; otherwise
+            # Realtime keeps the old document-stage session and cannot route the
+            # caller's next transaction description.
+            await websocket.send(
+                json.dumps(
+                    {
+                        "type": "session.update",
+                        "session": {
+                            "type": "realtime",
+                            "instructions": self._system_instructions(state),
+                            "audio": self._input_audio_configuration(state),
+                            "tools": self._tools_for(state),
+                            "tool_choice": self._tool_choice_for(state),
+                            "parallel_tool_calls": False,
+                        },
+                    }
+                )
+            )
+            _telemetry(
+                "realtime.session.update.sent",
+                call_id=call_id,
+                stage=state.stage.value,
+                language=state.locale.language,
+                locale=state.locale.locale,
+                accent=state.locale.accent,
+                reason="dtmf_result",
+            )
             await self._speak(
                 websocket,
                 self._message_for(state, self._handoff_message_reason(handoff))
