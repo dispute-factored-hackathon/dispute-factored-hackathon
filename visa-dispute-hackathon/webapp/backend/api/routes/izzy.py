@@ -5,8 +5,6 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
-from dispute_agent.web_chat import ChatSessionNotFoundError, IzzyWebChat
-from dispute_agent.web_chat.replies import format_phone
 from webapp.backend.api.dependencies import require_customer
 from webapp.backend.config import get_settings
 from webapp.backend.models.customer import Customer
@@ -25,22 +23,28 @@ router = APIRouter(
 )
 
 
-def get_izzy_chat(request: Request) -> IzzyWebChat:
-    """The chat opened by the application lifespan (see `main.py`)."""
+async def get_izzy_chat(request: Request) -> Any:
+    """Load the chat stack on first use, independently from ordinary bank pages."""
 
-    chat = getattr(request.app.state, "izzy_chat", None)
-    if chat is None:
-        raise RuntimeError("The Izzy chat was not opened at application startup.")
-    return chat
+    from webapp.backend.services.runtime import ensure_izzy_chat
+
+    return await ensure_izzy_chat(request.app)
 
 
-IzzyChatDependency = Annotated[IzzyWebChat, Depends(get_izzy_chat)]
+IzzyChatDependency = Annotated[Any, Depends(get_izzy_chat)]
+
+
+def _format_phone(e164: str) -> str:
+    digits = e164.lstrip("+")
+    if e164.startswith("+1") and len(digits) == 11:
+        return f"+1 {digits[1:4]} {digits[4:7]} {digits[7:]}"
+    return e164
 
 
 @router.get("/contact", response_model=IzzyContactResponse)
 def contact() -> IzzyContactResponse:
     phone_number = get_settings().izzy_phone_number
-    return IzzyContactResponse(phone_number=phone_number, phone_display=format_phone(phone_number))
+    return IzzyContactResponse(phone_number=phone_number, phone_display=_format_phone(phone_number))
 
 
 @router.post(
@@ -88,7 +92,7 @@ def send_message(
 ) -> StreamingResponse:
     try:
         chat.ensure_owned(session_id, customer.customer_id)
-    except ChatSessionNotFoundError as error:
+    except LookupError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Chat session not found. Start a new chat.",
@@ -104,7 +108,7 @@ def send_message(
                 reject_options=request.reject_options,
             ):
                 yield _sse(event)
-        except ChatSessionNotFoundError:
+        except LookupError:
             yield _sse({"event": "error", "text": "Chat session not found. Start a new chat."})
 
     return StreamingResponse(

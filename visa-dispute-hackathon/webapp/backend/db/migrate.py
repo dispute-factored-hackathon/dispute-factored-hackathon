@@ -18,6 +18,7 @@ from psycopg import sql
 
 from webapp.backend.config import get_settings
 from webapp.backend.db.database import describe_target
+from webapp.backend.db.schema_version import LATEST_SCHEMA_REVISION
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
@@ -60,6 +61,10 @@ def expected_revision() -> str:
     head = ScriptDirectory.from_config(alembic_config(quiet=True)).get_current_head()
     if head is None:
         raise MigrationError("No Alembic revisions found.")
+    if head != LATEST_SCHEMA_REVISION:
+        raise MigrationError(
+            "LATEST_SCHEMA_REVISION must be updated when an Alembic migration is added."
+        )
     return head
 
 

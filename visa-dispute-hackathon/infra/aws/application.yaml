@@ -65,6 +65,13 @@ Parameters:
     AllowedValues: [PublishedVersions, "None"]
     Description: Enables low-cost SnapStart for published SIP Lambda versions.
 
+  WebMemorySize:
+    Type: Number
+    Default: 1024
+    MinValue: 512
+    MaxValue: 3008
+    Description: Web Lambda memory; 1024 MB adds CPU to reduce Python cold-start time.
+
   LogRetentionDays:
     Type: Number
     Default: 7
@@ -246,7 +253,7 @@ Resources:
         Command: ["webapp.backend.aws_lambda.lambda_handler"]
       Role: !GetAtt WebLambdaExecutionRole.Arn
       Architectures: [x86_64]
-      MemorySize: 512
+      MemorySize: !Ref WebMemorySize
       Timeout: 30
       VpcConfig:
         SecurityGroupIds: [!Ref LambdaSecurityGroupId]
@@ -276,6 +283,25 @@ Resources:
       TargetFunctionArn: !GetAtt WebFunction.Arn
       AuthType: NONE
       InvokeMode: BUFFERED
+
+  WebWarmupRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Low-cost warm ping for the hackathon web and chat demo.
+      ScheduleExpression: rate(5 minutes)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt WebFunction.Arn
+          Id: WebFunctionWarmup
+          Input: '{"warmup":true}'
+
+  WebWarmupPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref WebFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt WebWarmupRule.Arn
 
   DatabaseBootstrapFunction:
     Type: AWS::Lambda::Function
@@ -379,6 +405,9 @@ Outputs:
 
   WebFunctionName:
     Value: !Ref WebFunction
+
+  WebWarmupSchedule:
+    Value: !GetAtt WebWarmupRule.Arn
 
   DatabaseBootstrapFunctionName:
     Value: !Ref DatabaseBootstrapFunction

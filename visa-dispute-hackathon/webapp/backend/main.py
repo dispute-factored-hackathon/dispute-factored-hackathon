@@ -1,13 +1,11 @@
 from collections.abc import AsyncIterator
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from dispute_agent.web_chat import build_izzy_web_chat
-from dispute_agent.web_chat.checkpoint import open_chat_checkpointer
 from webapp.backend.api.dependencies import (
     SESSION_COOKIE_NAME,
     AuthenticationServiceDependency,
@@ -36,7 +34,7 @@ from webapp.backend.api.routes.transactions import (
     router as transactions_router,
 )
 from webapp.backend.config import get_settings
-from webapp.backend.repositories.postgres import open_repositories
+from webapp.backend.services.runtime import application_runtime
 
 settings = get_settings()
 
@@ -47,24 +45,10 @@ PAGES_DIR = FRONTEND_DIR / "pages"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    # PostgreSQL is the only data store; customer data comes from `dispute-db-seed-lakehouse`.
-    repositories = open_repositories(settings)
-    app.state.repositories = repositories
-    try:
-        async with AsyncExitStack() as stack:
-            # Izzy web chat: the voice dispute workflow over the same repositories, with its
-            # conversation checkpoints in the same PostgreSQL.
-            checkpointer = await open_chat_checkpointer(settings, stack)
-            app.state.izzy_chat = build_izzy_web_chat(
-                repositories, settings, checkpointer=checkpointer
-            )
-            try:
-                yield
-            finally:
-                del app.state.izzy_chat
-    finally:
-        del app.state.repositories
-        repositories.close()
+    # HTML and static assets do not wait for PostgreSQL, LangGraph, or model imports. Data-backed
+    # APIs initialize the shared repositories once; Izzy initializes separately on first use.
+    async with application_runtime(app):
+        yield
 
 
 app = FastAPI(

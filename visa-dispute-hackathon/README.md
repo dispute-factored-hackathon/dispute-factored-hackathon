@@ -15,7 +15,7 @@ Project documentation is maintained in the [GitHub Wiki](https://github.com/disp
 | Domain | Python services, deterministic policies and Pydantic tool schemas | Customer scope, transaction ranking, Visa mapping, card block, complaint creation and handoff preconditions |
 | Persistence | Repository contracts, PostgreSQL 16, psycopg/pool and Alembic | Shared web/voice operational data, schema evolution and replaceable test adapters |
 | Data ingestion | MotherDuck, Python seed pipeline and Pydantic mapping | Read-only synthetic source, validation, masking and idempotent PostgreSQL loads |
-| Cloud | Lambda, Function URLs, ECR, Secrets Manager, CloudWatch, IAM and CloudFormation | Cost-conscious runtime, secret retrieval, logs and repeatable infrastructure in `sa-east-1` |
+| Cloud | Lambda, Function URLs, EventBridge, ECR, Secrets Manager, CloudWatch, IAM and CloudFormation | Cost-conscious runtime, warm-up scheduling, secret retrieval, logs and repeatable infrastructure in `sa-east-1` |
 | Observability | Structured CloudWatch events, LangSmith, PostgreSQL telemetry, Twilio/OpenAI consoles and GitHub Actions | Call reconstruction, model/tool traces, interaction state, provider diagnosis and delivery evidence |
 | Engineering | `uv`, Docker, Pytest, Ruff, Coverage.py, Radon, Semgrep and optional SonarQube/Gitleaks | Reproducible environments, tests, code quality, security checks and deployment |
 
@@ -154,7 +154,8 @@ The hackathon deployment avoids redundant services. It does **not** create App R
 
 The components are:
 
-- **Web Lambda Function URL:** serves the FastAPI backend and both browser interfaces from the same immutable image. The public GitHub Pages address redirects here.
+- **Web Lambda Function URL:** serves the FastAPI backend and both browser interfaces from the same immutable image. Public pages and static assets start without opening PostgreSQL or loading the AI stack; those dependencies initialize only when their APIs are first used. The public GitHub Pages address redirects here.
+- **Web warm-up schedule:** EventBridge invokes the web Lambda every five minutes and initializes the database pool and Izzy chat runtime. The deploy script also warms the newly deployed function before reporting success.
 - **Voice Lambda Function URL:** receives the signed OpenAI webhook; standard Lambda invocation and duration charges still apply.
 - **Voice SnapStart alias:** the Function URL and asynchronous worker invoke a published `live` alias restored from a Python 3.12 snapshot. This reduces cold initialization without keeping paid capacity continuously provisioned.
 - **Lambda ingress invocation:** verifies the signature and accepts the SIP call immediately.
@@ -167,11 +168,13 @@ The components are:
 - **Low-cost egress instance:** provides outbound-only access from private Lambdas to OpenAI, MotherDuck and AWS APIs. It replaces the much more expensive NAT Gateway.
 - **Concurrency:** uses the account's unreserved Lambda capacity. The demo account currently has a total concurrency quota of 10, so the stack does not reserve concurrency; AWS requires all 10 executions to remain unreserved at that quota. Use account quotas and OpenAI-side limits as the cost and abuse boundary until the Lambda quota is increased.
 
-#### Low-cost voice cold-start control
+#### Low-cost cold-start control
 
 `application.yaml` enables Lambda SnapStart only for the SIP function. Every application deploy publishes a new immutable version, updates the stable `live` alias, and points both the public Function URL and internal asynchronous worker invocation at that alias. CloudFormation deletes the replaced version so unused cached snapshots do not accumulate charges. The deploy script verifies that the published version reports `SnapStart.OptimizationStatus=On` before declaring success.
 
-The web Lambda stays fully on demand. The stack does not enable Provisioned Concurrency, scheduled warmers, Fargate, an Application Load Balancer or API Gateway. At the 512 MB configuration, the São Paulo SnapStart cache is approximately USD 2.57 for a continuously active 30-day version, plus a very small charge for each restored environment and normal Lambda execution. This estimate uses the São Paulo entries in the [AWS Lambda public price list](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSLambda/current/index.json); verify current prices before budgeting. Delete obsolete versions and set `VOICE_SNAPSTART_APPLY_ON=None` when running `deploy.sh` if the optimization is no longer required.
+The web Lambda remains on demand and does not use continuously billed Provisioned Concurrency. It receives 1,024 MB rather than 512 MB, which also gives initialization more CPU, and an EventBridge rule sends a warm-up event every five minutes. The event eagerly opens the database pool and Izzy chat runtime, while ordinary public-page requests remain lightweight through lazy imports. A five-minute schedule produces about 8,640 short Lambda invocations in a 30-day month; normal Lambda and EventBridge pricing applies, but this volume is normally covered by their free tiers and is materially cheaper than keeping provisioned capacity active. The schedule reduces, but cannot guarantee the elimination of, cold starts because Lambda may recycle or scale execution environments.
+
+At the 512 MB voice configuration, the São Paulo SnapStart cache is approximately USD 2.57 for a continuously active 30-day version, plus a very small charge for each restored environment and normal Lambda execution. This estimate uses the São Paulo entries in the [AWS Lambda public price list](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSLambda/current/index.json); verify current prices before budgeting. Delete obsolete versions and set `VOICE_SNAPSTART_APPLY_ON=None` when running `deploy.sh` if the optimization is no longer required.
 
 SnapStart improves Lambda initialization, but it cannot remove Twilio routing, OpenAI call acceptance, model response or downstream database latency. AWS documents the supported runtimes and version/alias lifecycle in [Improving startup performance with Lambda SnapStart](https://docs.aws.amazon.com/lambda/latest/dg/snapstart.html). Diagnose the intervals independently with the structured events documented in [Application logs and traces](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki/Application-Logs-and-Traces).
 
@@ -235,7 +238,25 @@ The workflow uses GitHub OIDC to obtain short-lived AWS credentials. It does not
 
 The complete synthetic customer table is intentionally not committed. On GitHub-hosted runners, the deploy script extracts `customers.csv` from the newest immutable image already present in the project's ECR repository, then embeds it in the new image. Consequently, the first deployment must still be performed locally with `CUSTOMERS_BUILD_CONTEXT` pointing to a directory containing `customers.csv`. Subsequent automated deployments need no additional data service or paid storage.
 
-Each deployment uses the full Git commit SHA as its immutable image tag, runs Ruff and the complete unit-test suite, validates all CloudFormation templates, updates the application stack, migrates/seeds the existing private database, verifies the web health and login pages, and confirms that an unsigned webhook request is rejected with `invalid_webhook_signature`.
+Each deployment uses the full Git commit SHA as its immutable image tag, runs Ruff and the complete unit-test suite, validates all CloudFormation templates, updates the application stack, migrates/seeds the existing private database, warms the web runtime, verifies the web health and login pages, and confirms that an unsigned webhook request is rejected with `invalid_webhook_signature`.
+
+### Performance and workflow regression tests
+
+The repository includes regression coverage for startup, static assets, Izzy chat sessions and the full transaction-search → classification → complaint → satisfaction workflow. Run the focused suite locally with:
+
+```bash
+uv run pytest tests/performance tests/webapp/test_app_startup.py \
+  tests/webapp/test_izzy_chat.py tests/webapp/test_web_aws_lambda.py -q
+```
+
+Measure the deployed public shell independently of browser rendering with:
+
+```bash
+uv run python scripts/performance_smoke.py \
+  https://YOUR-WEB-FUNCTION-URL --runs 10 --max-p95-ms 1000
+```
+
+The performance thresholds are regression budgets, not an availability SLA. Before this change, CloudWatch showed web cold-start durations around 19–20.5 seconds, while repeated warm requests completed externally in roughly 0.10–0.15 seconds. A fresh local import of the application fell from about 5.16 seconds to 1.02–1.07 seconds after removing eager PostgreSQL, LangGraph and OpenAI initialization from the public request path. Continue monitoring Lambda `Duration` p50/p95/p99 and `Errors`; public-page latency and first chat latency should be analyzed separately.
 
 To remove active compute and the public endpoint after the demonstration while deliberately retaining the image repository and secret:
 

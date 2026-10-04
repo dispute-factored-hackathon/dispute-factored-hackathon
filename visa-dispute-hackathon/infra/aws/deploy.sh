@@ -160,10 +160,26 @@ elif [[ "${ACTION}" == "application" || "${ACTION}" == "all" ]]; then
     exit 1
   fi
 
+  WEB_FUNCTION_NAME="$(stack_output "${APPLICATION_STACK}" WebFunctionName)"
+  WEB_WARMUP_RESULT="$(mktemp "${TMPDIR:-/tmp}/dispute-web-warmup.XXXXXX")"
+  aws lambda invoke \
+    --region "${AWS_REGION}" \
+    --function-name "${WEB_FUNCTION_NAME}" \
+    --cli-binary-format raw-in-base64-out \
+    --payload '{"warmup":true}' \
+    "${WEB_WARMUP_RESULT}" >/dev/null
+  if ! grep -q '"warmed"[[:space:]]*:[[:space:]]*true' "${WEB_WARMUP_RESULT}"; then
+    echo "Web warmup failed. Inspect /aws/lambda/${WEB_FUNCTION_NAME}." >&2
+    rm -f -- "${WEB_WARMUP_RESULT}"
+    exit 1
+  fi
+  rm -f -- "${WEB_WARMUP_RESULT}"
+
   echo "Image: ${IMAGE_URI}"
   echo "LangSmith project: ${LANGSMITH_PROJECT}"
   echo "Human handoff: configured"
   echo "Voice SnapStart: ${SNAPSTART_STATUS} (version ${SIP_PUBLISHED_VERSION})"
+  echo "Web warmup: ready (${WEB_FUNCTION_NAME})"
   echo "Application: $(stack_output "${APPLICATION_STACK}" ApplicationUrl)"
   echo "Webhook: $(stack_output "${APPLICATION_STACK}" OpenAIWebhookUrl)"
 else

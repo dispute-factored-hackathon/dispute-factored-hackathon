@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from webapp.backend.config import Settings
 from webapp.backend.db.database import Database
-from webapp.backend.db.migrate import expected_revision
+from webapp.backend.db.schema_version import LATEST_SCHEMA_REVISION
 from webapp.backend.models.call_center_interaction import CallCenterInteraction
 from webapp.backend.models.call_transcript import CallTranscript
 from webapp.backend.models.card_transaction import (
@@ -534,7 +534,7 @@ def open_repositories(settings: Settings) -> Repositories:
     )
     database.open()
     try:
-        database.check_migrated(expected_revision())
+        database.check_migrated(LATEST_SCHEMA_REVISION)
     except Exception:
         database.close()
         raise

@@ -89,6 +89,14 @@ def test_function_url_serves_login_page():
     assert "Factored Bank" in response["body"]
 
 
+def test_scheduled_event_warms_the_data_and_chat_stack():
+    with patch.object(aws_lambda, "_warm_application", return_value={"warmed": True}) as warm:
+        response = aws_lambda.lambda_handler({"warmup": True}, lambda_context("warm-1"))
+
+    assert response == {"warmed": True}
+    warm.assert_called_once_with()
+
+
 def test_adapter_keeps_one_lifespan_for_the_warm_lambda_environment():
     probe = LifespanProbe()
     fake_app = SimpleNamespace(

@@ -919,8 +919,7 @@ class IzzyWebChat:
                             "href": "/complaints",
                         }
                     ]
-                    if workflow_state.complaint_id
-                    and outcome in {"csat_thanks", "csat_declined"}
+                    if workflow_state.complaint_id and outcome in {"csat_thanks", "csat_declined"}
                     else []
                 ),
             }

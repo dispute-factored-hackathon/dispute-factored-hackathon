@@ -13,13 +13,12 @@ from webapp.backend.services.auth import (
 SESSION_COOKIE_NAME = "factored_session"
 
 
-def get_repositories(request: Request) -> Repositories:
-    """Repositories opened by the application lifespan (see `main.py`)."""
+async def get_repositories(request: Request) -> Repositories:
+    """Return the shared repositories, opening them on the first data-backed request."""
 
-    repositories = getattr(request.app.state, "repositories", None)
-    if repositories is None:
-        raise RuntimeError("The database repositories were not opened at application startup.")
-    return repositories
+    from webapp.backend.services.runtime import ensure_repositories
+
+    return await ensure_repositories(request.app)
 
 
 RepositoriesDependency = Annotated[Repositories, Depends(get_repositories)]
