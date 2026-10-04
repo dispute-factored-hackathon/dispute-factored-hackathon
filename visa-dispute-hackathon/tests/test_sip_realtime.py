@@ -1653,6 +1653,20 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             {"set_authentication_method", "request_human"},
         )
         state = gateway.calls.choose_authentication_method(state.call_id, method="phone")
+        self.assertEqual(gateway._tool_choice_for(state), "required")
+        self.assertEqual(
+            {tool["name"] for tool in gateway._tools_for(state)},
+            {"search_transactions", "request_human"},
+        )
+        clarification = gateway.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(),
+        )
+        self.assertEqual(gateway._tool_choice_for(clarification.state), "required")
+        self.assertEqual(
+            {tool["name"] for tool in gateway._tools_for(clarification.state)},
+            {"search_transactions", "request_human"},
+        )
         selection = gateway.calls.search_transactions(
             state.call_id,
             TransactionSearchCriteria(merchant_query="lemon"),

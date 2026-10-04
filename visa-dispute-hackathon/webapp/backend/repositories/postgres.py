@@ -163,7 +163,16 @@ class PostgresCustomerRepository(_Table[Customer]):
         return self._fetch_one(self._where("document_number"), (document_number,))
 
     def get_by_phone(self, mobile_phone: str) -> Customer | None:
-        return self._fetch_one(self._where("mobile_phone"), (mobile_phone,))
+        # SIP providers send E.164 while profiles may contain display punctuation
+        # (for example ``+55 (11) 98102-0050``). Compare digits so both forms
+        # resolve to the same customer without rewriting historical seed data.
+        digits = "".join(character for character in mobile_phone if character.isdigit())
+        if not digits:
+            return None
+        normalized_phone = sql.SQL(
+            "regexp_replace(COALESCE(mobile_phone, ''), '[^0-9]', '', 'g') = %s"
+        )
+        return self._fetch_one(normalized_phone, (digits,))
 
     def search_by_full_name(self, query: str, *, limit: int = 10) -> list[Customer]:
         if "\x00" in query:

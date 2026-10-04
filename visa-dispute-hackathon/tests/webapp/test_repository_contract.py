@@ -144,6 +144,8 @@ def test_customer_round_trips_through_every_lookup(backend: Backend):
     assert customers.get_by_id("C1") == customer
     assert customers.get_by_document("DOC-C1") == customer
     assert customers.get_by_phone("+5511981020050") == customer
+    assert customers.get_by_phone("+55 (11) 98102-0050") == customer
+    assert customers.get_by_phone("5511981020050") == customer
     assert customers.get_by_id("missing") is None
     assert customers.get_by_document("missing") is None
     assert customers.get_by_phone("+000") is None
