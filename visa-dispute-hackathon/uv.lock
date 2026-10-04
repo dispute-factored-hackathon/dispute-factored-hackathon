@@ -891,7 +891,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1,<2" },
     { name = "seaborn", marker = "extra == 'analytics'", specifier = ">=0.13.2" },
     { name = "uvicorn", specifier = ">=0.30,<1" },
-    { name = "websockets", specifier = ">=15,<17" },
+    { name = "websockets", specifier = ">=15,<18" },
     { name = "wordcloud", marker = "extra == 'analytics'", specifier = ">=1.9.6" },
 ]
 provides-extras = ["analytics"]
