@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
+
 from webapp.backend.config import Settings
 from webapp.backend.repositories.card_purchases import CombinedCardPurchaseRepository
 from webapp.backend.repositories.interfaces import Repositories
@@ -12,7 +14,12 @@ from .interpreter import ChatTurnInterpreter
 from .service import WebChatDisputeService
 
 
-def build_izzy_web_chat(repositories: Repositories, settings: Settings) -> IzzyWebChat:
+def build_izzy_web_chat(
+    repositories: Repositories,
+    settings: Settings,
+    *,
+    checkpointer: BaseCheckpointSaver | None = None,
+) -> IzzyWebChat:
     """Wire the chat to the shared PostgreSQL repositories (called by the app lifespan)."""
 
     openai_api_key = settings.openai_api_key.get_secret_value() if settings.openai_api_key else None
@@ -29,6 +36,7 @@ def build_izzy_web_chat(repositories: Repositories, settings: Settings) -> IzzyW
         phone_number=settings.izzy_phone_number,
         openai_api_key=openai_api_key,
         model=settings.openai_agent_model,
+        checkpointer=checkpointer,
         session_ttl_seconds=settings.izzy_chat_session_ttl_minutes * 60,
         max_message_chars=settings.izzy_chat_max_message_chars,
         max_turns=settings.izzy_chat_max_turns,

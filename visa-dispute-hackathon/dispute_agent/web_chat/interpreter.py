@@ -145,6 +145,11 @@ Rules:
 - report_problem: the customer says whether they did not authorize the purchase
   (UNAUTHORIZED_CARD) or were charged more than once for one purchase (DUPLICATE_PROCESSING);
   use INSUFFICIENT_INFO when it is unclear. Set card_environment only if they said how it was paid.
+- In stage needs_dispute_classification: yes/no to the problem Izzy suggested is
+  confirm_transaction / deny_transaction; an answer about how it was paid (online, in person)
+  is report_problem with card_environment set and allegation null.
+- In stage confirm_complaint, confirm_transaction means yes, file the dispute now, and
+  deny_transaction means no, do not file it.
 - csat_rating / csat_decline: answer to the 1-5 satisfaction question.
 - request_human only for an explicit request to talk to a person. restart only for an explicit
   request to start over; cancel only for an explicit request to stop. Mentioning "agent",
@@ -162,7 +167,12 @@ ALLOWED_INTENTS: dict[str, tuple[ChatIntent, ...]] = {
         ChatIntent.DENY_TRANSACTION,
         ChatIntent.DESCRIBE_TRANSACTION,
     ),
-    "needs_dispute_classification": (ChatIntent.REPORT_PROBLEM,),
+    "needs_dispute_classification": (
+        ChatIntent.REPORT_PROBLEM,
+        ChatIntent.CONFIRM_TRANSACTION,
+        ChatIntent.DENY_TRANSACTION,
+    ),
+    "confirm_complaint": (ChatIntent.CONFIRM_TRANSACTION, ChatIntent.DENY_TRANSACTION),
     "dispute_classified": (ChatIntent.CSAT_RATING, ChatIntent.CSAT_DECLINE),
     "completed": (),
     "handoff": (),

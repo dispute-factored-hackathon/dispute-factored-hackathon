@@ -7,6 +7,7 @@ offline. Jev is disabled (no key), exactly like a local setup without JEV_API_KE
 import asyncio
 import json
 from collections import deque
+from datetime import timedelta
 
 import pytest
 from fakes import (
@@ -144,7 +145,10 @@ def test_session_starts_authenticated_and_never_asks_for_the_factored_id(chat_se
 def test_opening_follows_the_interface_language(chat_setup):
     chat, _, customer, _, _ = chat_setup
 
-    assert chat.open_session(customer, locale="es-CO").message.startswith("Hola, Gabriel.")
+    spanish = chat.open_session(customer, locale="es-CO")
+    chat._end(spanish.session_id)
+
+    assert spanish.message.startswith("Hola, Gabriel.")
     assert chat.open_session(customer, locale="pt-BR").message.startswith("Olá, Gabriel.")
 
 
@@ -187,7 +191,7 @@ def test_another_customers_transaction_is_ignored_without_revealing_it(chat_setu
 # ----------------------------------------------------------------------------- journey
 
 
-def test_full_dispute_journey_files_a_web_chat_complaint_and_records_csat(chat_setup):
+def test_full_dispute_journey_blocks_the_card_files_on_confirmation_and_ends(chat_setup):
     chat, repositories, customer, classifier, replies = chat_setup
     session = chat.open_session(customer, locale="en-US").session_id
 
@@ -195,44 +199,63 @@ def test_full_dispute_journey_files_a_web_chat_complaint_and_records_csat(chat_s
         turn("describe_transaction", merchant_query="mango gold", approximate_amount=125.3)
     )
     events, text = run_turn(chat, session, "A charge at Mango Gold for about 125.30")
-    assert [event["event"] for event in events][-2:] == ["state", "done"]
-    assert events[-2]["stage"] == "confirm_transaction"
     offered = next(event for event in events if event["event"] == "options")["options"]
     assert [option["merchant"] for option in offered] == ["Mango Gold Store"]
-    assert offered[0]["card_last_four"] == "9999"
     assert "Is it the one" in text
 
     classifier.queue.append(turn("confirm_transaction"))
     run_turn(chat, session, "Yes, that one")
-    assert chat.service.get(session).stage.value == "needs_dispute_classification"
 
+    # Unrecognized charge: the card is blocked right away (as in calls), nothing filed yet.
     classifier.queue.append(
         turn("report_problem", allegation="UNAUTHORIZED_CARD", card_environment="CARD_ABSENT")
     )
-    replies.queue.append("I recorded it.")  # drops the complaint id -> reference is sent
-    events, text = run_turn(chat, session, "I never made that online purchase")
+    run_turn(chat, session, "I never made that online purchase")
     state = chat.service.get(session)
-    assert state.stage.value == "dispute_classified"
-    assert state.complaint_id is not None
-    assert state.complaint_id in text
-    assert any(event["event"] == "replace" for event in events)
-    complaint = repositories.complaints.get_by_id(state.complaint_id)
+    card = repositories.products.list_by_customer(GABRIEL)[0]
+    assert card.product_status == "Blocked"
+    assert state.complaint_id is None
+    assert repositories.complaints.list_by_customer(GABRIEL) == []
+
+    # The customer confirms: the server inserts the complaint shown in /complaints.
+    classifier.queue.append(turn("confirm_transaction"))
+    calls_before = replies.calls
+    _, text = run_turn(chat, session, "yes, file it")
+    complaint = repositories.complaints.list_by_customer(GABRIEL)[0]
+    assert complaint.complaint_id in text
+    assert replies.calls == calls_before  # filing is a fixed text, never paraphrased
     assert complaint.reception_channel == "Web Chat"
-    assert complaint.customer_id == GABRIEL
-    interaction = repositories.call_center_interactions.list_by_customer(GABRIEL)[0]
-    assert interaction.channel == "Web Chat"
+    assert complaint.subcategory.startswith("Visa 10.3")  # POS channel: card present
 
     classifier.queue.append(turn("csat_rating", rating=5))
-    run_turn(chat, session, "5")
-    assert chat.service.get(session).stage.value == "completed"
+    events, text = run_turn(chat, session, "5")
+    assert events[-2]["closed"] is True
+    assert "This chat has ended" in text
+    interaction = repositories.call_center_interactions.list_by_customer(GABRIEL)[0]
     survey = repositories.satisfaction_surveys.get_by_interaction(interaction.interaction_id)
-    assert survey.main_score == 5
-    assert survey.send_channel == "Web Chat"
+    assert (survey.main_score, survey.send_channel, interaction.channel) == (
+        5,
+        "Web Chat",
+        "Web Chat",
+    )
 
-    calls_before = classifier.calls
-    _, text = run_turn(chat, session, "one more thing")
-    assert classifier.calls == calls_before  # a closed chat does not call the model
-    assert "+1 661 577 9964" in text
+    # The finished chat session is over.
+    with pytest.raises(ChatSessionNotFoundError):
+        chat.ensure_owned(session, GABRIEL)
+
+
+def test_declining_to_file_ends_the_chat_without_a_complaint(chat_setup):
+    chat, repositories, customer, classifier, _ = chat_setup
+    session = chat.open_session(customer, locale="en-US", transaction_id="FRUIT-10-MANGO")
+
+    classifier.queue.append(turn("report_problem", allegation="DUPLICATE_PROCESSING"))
+    run_turn(chat, session.session_id, "I was charged twice for it")
+    classifier.queue.append(turn("deny_transaction"))
+    events, text = run_turn(chat, session.session_id, "no, don't file it")
+
+    assert repositories.complaints.list_by_customer(GABRIEL) == []
+    assert events[-2]["closed"] is True
+    assert "didn't file a dispute" in text
 
 
 def test_low_confidence_turn_does_not_change_state(chat_setup):
@@ -281,7 +304,7 @@ def test_explicit_human_request_hands_off_with_the_phone_number(chat_setup):
     classifier.queue.append(turn("request_human", confidence=0.95))
     events, text = run_turn(chat, session, "I want to talk to a person")
 
-    assert chat.service.get(session).stage.value == "handoff"
+    assert events[-2]["stage"] == "handoff"
     assert "+1 661 577 9964" in text
     assert events[-2]["closed"] is True
     assert replies.calls == 0
@@ -531,3 +554,147 @@ def test_the_reply_model_receives_today_and_the_no_date_judgement_rule():
 
     assert facts["today"] == "2026-10-03"
     assert "never refuse to help because of a date" in REPLY_PROMPT
+
+
+# ----------------------------------------------------------------------------- checkpoints
+
+
+def test_without_a_usable_database_the_chat_keeps_in_memory_checkpoints():
+    from contextlib import AsyncExitStack
+
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from dispute_agent.web_chat.checkpoint import open_chat_checkpointer
+    from webapp.backend.config import Settings
+
+    async def open_with(settings):
+        async with AsyncExitStack() as stack:
+            return await open_chat_checkpointer(settings, stack)
+
+    unreachable = Settings(
+        _env_file=None, database_url="postgresql://factored_app:x@127.0.0.1:1/factored"
+    )
+    assert isinstance(asyncio.run(open_with(Settings(_env_file=None))), InMemorySaver)
+    assert isinstance(asyncio.run(open_with(unreachable)), InMemorySaver)
+
+
+def test_chat_turns_are_checkpointed_in_postgres_with_the_app_role(clean_postgres):
+    import selectors
+    from contextlib import AsyncExitStack
+
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+    from dispute_agent.web_chat.checkpoint import open_chat_checkpointer
+    from webapp.backend.config import Settings
+
+    settings = Settings(_env_file=None, database_url=clean_postgres.app_url)
+
+    async def scenario():
+        async with AsyncExitStack() as stack:
+            saver = await open_chat_checkpointer(settings, stack)
+            repositories = new_repositories()
+            seed_demo_customers(repositories.customers)
+            classifier = ScriptedClassifier()
+            chat = IzzyWebChat(
+                WebChatDisputeService.from_repositories(repositories),
+                ChatTurnInterpreter(
+                    jev_router=JevVoiceRouter(api_key=""), structured_model=classifier
+                ),
+                phone_number=PHONE,
+                session_ttl_seconds=60,
+                max_message_chars=500,
+                max_turns=10,
+                reply_model=ScriptedReplies(),
+                checkpointer=saver,
+            )
+            session = chat.open_session(repositories.customers.get_by_id(GABRIEL)).session_id
+            classifier.queue.append(turn("question"))
+            [event async for event in chat.stream_turn(session, GABRIEL, "What is a dispute?")]
+            stored = await saver.aget_tuple({"configurable": {"thread_id": session}})
+            return saver, stored
+
+    # psycopg's async driver needs a selector event loop (Windows defaults to Proactor).
+    def selector_loop():
+        return asyncio.SelectorEventLoop(selectors.SelectSelector())
+
+    with asyncio.Runner(loop_factory=selector_loop) as runner:  # Python 3.11+
+        saver, stored = runner.run(scenario())
+    assert isinstance(saver, AsyncPostgresSaver)
+    assert stored.checkpoint["channel_values"]["history"][0]["content"] == "What is a dispute?"
+
+
+# ----------------------------------------------------------------------------- resume and problem
+
+
+def add_purchase(repositories, transaction_id, **overrides):
+    base = demo_fruit_transactions(GABRIEL)[0]
+    repositories.transactions.create(
+        base.model_copy(update={"transaction_id": transaction_id, **overrides})
+    )
+
+
+def test_leaving_and_coming_back_resumes_the_open_chat(chat_setup):
+    chat, _, customer, classifier, _ = chat_setup
+    first = chat.open_session(customer, locale="en-US")
+    classifier.queue.append(turn("describe_transaction", merchant_query="mango gold"))
+    run_turn(chat, first.session_id, "Mango Gold")
+
+    again = chat.open_session(customer, locale="en-US")
+
+    assert (again.session_id, again.resumed) == (first.session_id, True)
+    assert [entry["role"] for entry in again.messages] == ["izzy", "customer", "izzy", "options"]
+    assert again.messages[1]["text"] == "Mango Gold"
+    # Opening from a purchase is a new, explicit context.
+    assert chat.open_session(customer, transaction_id="FRUIT-01-LEMON").session_id != (
+        first.session_id
+    )
+
+
+def test_unauthorized_report_with_follow_up_answer_reaches_the_complaint(chat_setup):
+    """Regression: "online" after "I did not authorize it" lost the allegation and stalled."""
+
+    chat, repositories, customer, classifier, _ = chat_setup
+    add_purchase(repositories, "TIENDA-1", merchant_name="Tienda Don Jose", channel="Mobile App")
+    session = chat.open_session(customer, locale="en-US", transaction_id="TIENDA-1").session_id
+
+    classifier.queue.append(turn("report_problem", allegation="UNAUTHORIZED_CARD"))
+    _, text = run_turn(chat, session, "I did not authorize it")
+    assert "in-person card purchase" in text  # the one follow-up question, verbatim
+
+    classifier.queue.append(turn("report_problem", channel="online"))
+    _, text = run_turn(chat, session, "online")
+    assert "10.4" in text and "file this dispute" in text
+    assert repositories.products.list_by_customer(GABRIEL)[0].product_status == "Blocked"
+
+    classifier.queue.append(turn("confirm_transaction"))
+    run_turn(chat, session, "yes")
+    assert repositories.complaints.list_by_customer(GABRIEL)[0].subcategory.startswith("Visa 10.4")
+
+
+def test_a_flagged_purchase_is_suggested_as_unauthorized(chat_setup):
+    chat, repositories, customer, classifier, _ = chat_setup
+    add_purchase(repositories, "FLAGGED-1", is_fraud=True, channel="POS")
+
+    opening = chat.open_session(customer, locale="en-US", transaction_id="FLAGGED-1")
+    assert "flagged as possibly not made by you" in opening.message
+
+    classifier.queue.append(turn("confirm_transaction"))
+    _, text = run_turn(chat, opening.session_id, "yes, it wasn't me")
+    assert "10.3" in text and "file this dispute" in text
+    assert repositories.products.list_by_customer(GABRIEL)[0].product_status == "Blocked"
+
+
+def test_a_repeated_charge_is_suggested_and_a_no_asks_the_open_question(chat_setup):
+    chat, repositories, customer, classifier, _ = chat_setup
+    fruit = demo_fruit_transactions(GABRIEL)[0]
+    add_purchase(
+        repositories, "LEMON-AGAIN", transaction_date=fruit.transaction_date + timedelta(hours=2)
+    )
+
+    opening = chat.open_session(customer, locale="en-US", transaction_id="FRUIT-01-LEMON")
+    assert "same amount a few days apart" in opening.message
+
+    classifier.queue.append(turn("deny_transaction"))
+    _, text = run_turn(chat, opening.session_id, "no")
+    assert "did you not make or authorize this purchase" in text
+    assert chat.service.get(opening.session_id).stage.value == "needs_dispute_classification"

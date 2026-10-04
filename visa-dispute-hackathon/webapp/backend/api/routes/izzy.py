@@ -11,6 +11,7 @@ from webapp.backend.api.dependencies import require_customer
 from webapp.backend.config import get_settings
 from webapp.backend.models.customer import Customer
 from webapp.backend.schemas.izzy import (
+    IzzyChatEntry,
     IzzyContactResponse,
     IzzyMessageRequest,
     IzzyPurchaseOption,
@@ -65,6 +66,8 @@ def open_session(
         transaction_context=opening.transaction_context,
         options=[IzzyPurchaseOption(**option) for option in opening.options],
         selected_transaction_id=opening.selected_transaction_id,
+        messages=[IzzyChatEntry(**entry) for entry in opening.messages],
+        resumed=opening.resumed,
         phone_number=chat.phone_number,
         phone_display=chat.phone_display,
     )

@@ -27,6 +27,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field, replace
 from typing import Annotated, Any, TypedDict
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
@@ -87,6 +88,15 @@ CLARIFICATION_OUTCOMES = {
 CLOSED_STAGES = {VoiceCallStage.COMPLETED, VoiceCallStage.HANDOFF}
 
 
+def _environment_from_channel(channel: str | None) -> str | None:
+    text = (channel or "").casefold()
+    if any(word in text for word in ("online", "internet", "web", "e-commerce", "en linea")):
+        return "CARD_ABSENT"
+    if any(word in text for word in ("person", "persona", "pessoa", "store", "pos", "tienda")):
+        return "CARD_PRESENT"
+    return None
+
+
 def _keep_recent(
     existing: list[dict[str, str]] | None, new: list[dict[str, str]] | None
 ) -> list[dict[str, str]]:
@@ -143,6 +153,7 @@ class IzzyChatGraph:
         reply_model_factory: Callable[[str, str], Any] = _default_reply_model,
         openai_api_key: str | None = None,
         model: str = "gpt-4.1-mini",
+        checkpointer: BaseCheckpointSaver | None = None,
     ) -> None:
         self.service = service
         self.interpreter = interpreter
@@ -153,7 +164,7 @@ class IzzyChatGraph:
         self.max_turns = max_turns
         self._reply_model = reply_model
         self._reply_model_factory = reply_model_factory
-        self.graph = self._build().compile(checkpointer=InMemorySaver())
+        self.graph = self._build().compile(checkpointer=checkpointer or InMemorySaver())
 
     def _build(self) -> StateGraph:
         builder = StateGraph(ChatGraphState)
@@ -215,7 +226,7 @@ class IzzyChatGraph:
             }
         try:
             decision = await self.interpreter.interpret(
-                stage=workflow_state.stage.value,
+                stage=self._stage_name(workflow_state),
                 message=state["message"],
                 language=workflow_state.locale.language,
                 candidate=self._candidate_summary(workflow_state),
@@ -248,7 +259,7 @@ class IzzyChatGraph:
             return {}
         session_id = state["session_id"]
         workflow_state = self.service.get(session_id)
-        if not self.interpreter.passes(self._decision(state), workflow_state.stage.value):
+        if not self.interpreter.passes(self._decision(state), self._stage_name(workflow_state)):
             return {}
         if intent is ChatIntent.REQUEST_HUMAN:
             self.service.request_human(session_id)
@@ -269,8 +280,12 @@ class IzzyChatGraph:
             return {"outcome": "question"}
         if intent is ChatIntent.OUT_OF_SCOPE:
             return {"outcome": "out_of_scope"}
-        clarification = CLARIFICATION_OUTCOMES.get(workflow_state.stage, "conversation_closed")
-        if not self.interpreter.passes(self._decision(state), workflow_state.stage.value):
+        clarification = (
+            "complaint_confirmation"
+            if self.service.awaiting_complaint_confirmation(workflow_state)
+            else CLARIFICATION_OUTCOMES.get(workflow_state.stage, "conversation_closed")
+        )
+        if not self.interpreter.passes(self._decision(state), self._stage_name(workflow_state)):
             return {"outcome": clarification}
         try:
             return {"outcome": self._apply(state, workflow_state, intent)}
@@ -333,6 +348,23 @@ class IzzyChatGraph:
 
     # ------------------------------------------------------------------ helpers
 
+    def _problem_question(self, session_id: str) -> str:
+        """After a purchase is selected, propose the problem the data suggests, if any."""
+
+        suggestion = self.service.suggest_problem(session_id)
+        if suggestion == "UNAUTHORIZED_CARD":
+            return "suggest_unauthorized"
+        if suggestion == "DUPLICATE_PROCESSING":
+            return "suggest_duplicate"
+        return "classification_question"
+
+    def _stage_name(self, workflow_state: VoiceCallState) -> str:
+        """Workflow stage for the classifier; waiting for the filing "yes" is its own step."""
+
+        if self.service.awaiting_complaint_confirmation(workflow_state):
+            return "confirm_complaint"
+        return workflow_state.stage.value
+
     @staticmethod
     def _decision(state: ChatGraphState) -> TurnDecision:
         return TurnDecision(
@@ -362,15 +394,13 @@ class IzzyChatGraph:
                 )
                 if transaction_id is None:
                     return "options_unclear"
-                selection = self.service.select_option(session_id, transaction_id)
-                return SELECTION_OUTCOMES[selection.outcome]
+                self.service.select_option(session_id, transaction_id)
+                return self._problem_question(session_id)
             if intent is ChatIntent.CONFIRM_TRANSACTION:
                 if len(options) != 1:
                     return "options_unclear"
-                selection = self.service.select_option(
-                    session_id, options[0].transaction.transaction_id
-                )
-                return SELECTION_OUTCOMES[selection.outcome]
+                self.service.select_option(session_id, options[0].transaction.transaction_id)
+                return self._problem_question(session_id)
             if intent is ChatIntent.DENY_TRANSACTION:
                 rejected = self.service.reject_options(session_id)
                 if (
@@ -382,16 +412,35 @@ class IzzyChatGraph:
                         session_id, self.service.get(session_id), interpretation, state["message"]
                     )
                 return SELECTION_OUTCOMES[rejected.outcome]
-        if stage is VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION and (
-            intent is ChatIntent.REPORT_PROBLEM
-        ):
-            evidence = self._classification_evidence(state, interpretation)
+        if stage is VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION:
+            suggestion = self.service.pending_suggestion(session_id)
+            if intent is ChatIntent.DENY_TRANSACTION and suggestion:
+                self.service.clear_suggestion(session_id)
+                return "classification_question"
+            if intent is ChatIntent.CONFIRM_TRANSACTION and suggestion:
+                allegation = suggestion
+            elif intent is ChatIntent.REPORT_PROBLEM:
+                allegation = None
+            else:
+                return "classification_clarification"
+            evidence = self._classification_evidence(
+                state, interpretation, workflow_state, allegation=allegation
+            )
+            self.service.clear_suggestion(session_id)
             result = self.service.classify_dispute(session_id, **evidence)
             return (
-                "classification_complete"
+                "complaint_confirmation"
                 if result.outcome is DisputeClassificationOutcome.CLASSIFIED
                 else "classification_clarification"
             )
+        if self.service.awaiting_complaint_confirmation(workflow_state):
+            if intent is ChatIntent.CONFIRM_TRANSACTION:
+                self.service.file_complaint(session_id)
+                return "complaint_filed"
+            if intent is ChatIntent.DENY_TRANSACTION:
+                self.service.decline_complaint(session_id)
+                return "complaint_declined"
+            return "complaint_confirmation"
         if stage is VoiceCallStage.DISPUTE_CLASSIFIED:
             if intent is ChatIntent.CSAT_DECLINE:
                 self.service.decline_csat(session_id)
@@ -451,20 +500,32 @@ class IzzyChatGraph:
 
     @staticmethod
     def _classification_evidence(
-        state: ChatGraphState, interpretation: ChatTurnInterpretation | None
+        state: ChatGraphState,
+        interpretation: ChatTurnInterpretation | None,
+        workflow_state: VoiceCallState,
+        *,
+        allegation: str | None = None,
     ) -> dict[str, Any]:
         jev = state.get("jev_arguments") or {}
-        if jev.get("allegation"):
-            allegation = str(jev["allegation"])
-            environment = jev.get("customer_reported_card_environment")
-        elif interpretation is not None and interpretation.allegation:
-            allegation = interpretation.allegation
-            environment = interpretation.card_environment
-        else:
-            allegation = DisputeAllegation.INSUFFICIENT_INFO.value
-            environment = None
+        environment = jev.get("customer_reported_card_environment") or (
+            interpretation.card_environment if interpretation is not None else None
+        )
+        if environment in {None, "UNKNOWN"} and interpretation is not None:
+            # "online" / "in person" answers arrive as a channel.
+            environment = _environment_from_channel(interpretation.channel)
         if environment == "UNKNOWN":
             environment = None
+        stated = jev.get("allegation") or (
+            interpretation.allegation if interpretation is not None else None
+        )
+        previous = workflow_state.dispute_classification
+        if allegation is None:
+            allegation = stated
+        if allegation in {None, DisputeAllegation.INSUFFICIENT_INFO.value} and previous:
+            # Keep what the customer already said ("I didn't authorize it") while answering
+            # Izzy's follow-up question ("online").
+            allegation = previous.allegation.value
+        allegation = allegation or DisputeAllegation.INSUFFICIENT_INFO.value
         return {
             "allegation": DisputeAllegation(allegation),
             "customer_denies_authorization": allegation == "UNAUTHORIZED_CARD",
@@ -575,6 +636,8 @@ class ChatSession:
     customer_id: str
     last_seen: float
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # What the customer sees, so the chat can be shown again after leaving the page.
+    messages: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -586,6 +649,8 @@ class ChatOpening:
     transaction_context: bool
     options: tuple[dict[str, Any], ...] = ()
     selected_transaction_id: str | None = None
+    messages: tuple[dict[str, Any], ...] = ()
+    resumed: bool = False
 
 
 class IzzyWebChat:
@@ -604,6 +669,7 @@ class IzzyWebChat:
         reply_model_factory: Callable[[str, str], Any] = _default_reply_model,
         openai_api_key: str | None = None,
         model: str = "gpt-4.1-mini",
+        checkpointer: BaseCheckpointSaver | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.service = service
@@ -619,9 +685,22 @@ class IzzyWebChat:
             reply_model_factory=reply_model_factory,
             openai_api_key=openai_api_key,
             model=model,
+            checkpointer=checkpointer,
         )
         self._clock = clock
         self._sessions: dict[str, ChatSession] = {}
+        self._active: dict[str, str] = {}  # customer_id -> open chat session
+
+    @staticmethod
+    def _mark_last_options(session: ChatSession, selected: str | None) -> None:
+        """Close the latest option list, recording the chosen purchase if any."""
+
+        for entry in reversed(session.messages):
+            if entry["role"] == "options":
+                if not entry.get("closed"):
+                    entry["selected"] = entry.get("selected") or selected
+                    entry["closed"] = True
+                return
 
     @property
     def phone_display(self) -> str:
@@ -631,8 +710,7 @@ class IzzyWebChat:
         now = self._clock()
         for session_id, session in list(self._sessions.items()):
             if now - session.last_seen > self.session_ttl_seconds and not session.lock.locked():
-                del self._sessions[session_id]
-                self.service.forget(session_id)
+                self._end(session_id)
 
     def _owned(self, session_id: str, customer_id: str) -> ChatSession:
         self._purge_expired()
@@ -649,9 +727,17 @@ class IzzyWebChat:
         locale: str | None = None,
         transaction_id: str | None = None,
     ) -> ChatOpening:
-        """Start a chat for the session customer; never asks for the Factored ID again."""
+        """Resume the customer's open chat, or start one; never asks for the Factored ID again.
+
+        Opening from a purchase (`transaction_id`) always starts a new chat for that purchase.
+        """
 
         self._purge_expired()
+        active = self._active.get(customer.customer_id)
+        if active is not None and active in self._sessions:
+            if not transaction_id:
+                return self._resume(self._sessions[active])
+            self._end(active)
         session_id = secrets.token_urlsafe(24)
         state = self.service.start_session(session_id, customer, locale=locale)
         language = state.locale.language
@@ -669,10 +755,24 @@ class IzzyWebChat:
                 selected_transaction_id = purchase.transaction.transaction_id
                 candidate = selected_transaction_message(selected.state)
                 greeting = web_text(language, "greeting_with_transaction", name=customer.first_name)
-                message = f"{greeting} {candidate}"
-        self._sessions[session_id] = ChatSession(session_id, customer.customer_id, self._clock())
+                question = self.chat._problem_question(session_id)
+                follow_up = (
+                    reference_message(selected.state, question, phone=self.phone_number)
+                    if question != "classification_question"
+                    else web_text(language, "ask_problem")
+                )
+                message = f"{greeting} {candidate} {follow_up}"
+        session = ChatSession(session_id, customer.customer_id, self._clock())
+        session.messages.append({"role": "izzy", "text": message})
+        if options:
+            session.messages.append(
+                {"role": "options", "options": list(options), "selected": selected_transaction_id}
+            )
+        self._sessions[session_id] = session
+        self._active[customer.customer_id] = session_id
         self.service.record_transcript_turn(session_id, speaker="agent", text=message)
         return ChatOpening(
+            messages=tuple(session.messages),
             session_id=session_id,
             message=message,
             stage=self.service.get(session_id).stage.value,
@@ -681,6 +781,46 @@ class IzzyWebChat:
             options=options,
             selected_transaction_id=selected_transaction_id,
         )
+
+    def _resume(self, session: ChatSession) -> ChatOpening:
+        session.last_seen = self._clock()
+        state = self.service.get(session.session_id)
+        return ChatOpening(
+            session_id=session.session_id,
+            message=next((m["text"] for m in session.messages if m["role"] == "izzy"), ""),
+            stage=state.stage.value,
+            language=state.locale.language,
+            transaction_context=False,
+            messages=tuple(session.messages),
+            resumed=True,
+        )
+
+    def _end(self, session_id: str) -> None:
+        session = self._sessions.pop(session_id, None)
+        if session is not None and self._active.get(session.customer_id) == session_id:
+            del self._active[session.customer_id]
+        self.service.forget(session_id)
+
+    def _customer_line(
+        self, session_id: str, message: str, selected: str | None, reject: bool
+    ) -> str:
+        """What the customer's bubble shows for a typed message, a tap, or "None of these"."""
+
+        if reject:
+            return web_text(self.service.get(session_id).locale.language, "none_of_these")
+        chosen = next(
+            (
+                o
+                for o in self.service.options(session_id)
+                if o.transaction.transaction_id == selected
+            ),
+            None,
+        )
+        if chosen is None:
+            return message
+        transaction = chosen.transaction
+        merchant = transaction.merchant_name or "-"
+        return f"{merchant} · {transaction.currency} {transaction.amount:,.2f}"
 
     def ensure_owned(self, session_id: str, customer_id: str) -> None:
         self._owned(session_id, customer_id)
@@ -717,6 +857,15 @@ class IzzyWebChat:
             "reply": "",
         }
         async with session.lock:
+            session.messages.append(
+                {
+                    "role": "customer",
+                    "text": self._customer_line(
+                        session_id, message, selected_transaction_id, reject_options
+                    ),
+                }
+            )
+            offered: list[dict[str, Any]] | None = None
             try:
                 async for part in self.chat.graph.astream(
                     turn_input, config, stream_mode=["messages", "custom"], version="v2"
@@ -732,6 +881,10 @@ class IzzyWebChat:
                             yield {"event": "delta", "text": content}
                     elif part["type"] == "custom":
                         data = dict(part["data"])
+                        if data["type"] == "options":
+                            offered = data["options"]
+                        elif data["type"] == "selected":
+                            self._mark_last_options(session, data["transaction_id"])
                         yield {"event": data.pop("type"), **data}
             except Exception as error:
                 _log("web_chat.turn.failed", error_type=type(error).__name__)
@@ -745,6 +898,11 @@ class IzzyWebChat:
                 return
             snapshot = await self.chat.graph.aget_state({"configurable": {"thread_id": session_id}})
             workflow_state = self.service.get(session_id)
+            if reject_options or workflow_state.stage is not VoiceCallStage.CONFIRM_TRANSACTION:
+                self._mark_last_options(session, None)
+            session.messages.append({"role": "izzy", "text": snapshot.values.get("reply", "")})
+            if offered:
+                session.messages.append({"role": "options", "options": offered, "selected": None})
             yield {
                 "event": "state",
                 "stage": workflow_state.stage.value,
@@ -752,4 +910,9 @@ class IzzyWebChat:
                 "complaint_id": workflow_state.complaint_id,
                 "closed": workflow_state.stage in CLOSED_STAGES,
             }
+            if workflow_state.stage in CLOSED_STAGES:
+                # The workflow is finished: record the interaction and end the chat session.
+                # The conversation stays in the checkpoints and the call-center transcript.
+                self._end(session_id)
+                _log("web_chat.session.finished", stage=workflow_state.stage.value)
             yield {"event": "done"}

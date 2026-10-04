@@ -31,6 +31,16 @@ class IzzyPurchaseOption(BaseModel):
     card_last_four: str
 
 
+class IzzyChatEntry(BaseModel):
+    """One item of the visible chat: a bubble, or a list of offered purchases."""
+
+    role: str  # "izzy", "customer" or "options"
+    text: str | None = None
+    options: list[IzzyPurchaseOption] | None = None
+    selected: str | None = None
+    closed: bool = False
+
+
 class IzzySessionResponse(BaseModel):
     session_id: str
     message: str
@@ -40,6 +50,9 @@ class IzzySessionResponse(BaseModel):
     options: list[IzzyPurchaseOption]
     # Set when the chat was opened from a purchase: it is already selected.
     selected_transaction_id: str | None
+    # The chat so far: the greeting for a new chat, everything shown when it is resumed.
+    messages: list[IzzyChatEntry]
+    resumed: bool
     phone_number: str
     phone_display: str
 

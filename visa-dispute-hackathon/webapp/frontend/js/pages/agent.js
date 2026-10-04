@@ -90,7 +90,7 @@ function disableOptions(selectedId = null) {
     activeOptions = null;
 }
 
-function renderOptions(options, { selectedId = null } = {}) {
+function renderOptions(options, { selectedId = null, closed = false } = {}) {
     disableOptions();
     if (!options?.length) return;
 
@@ -147,8 +147,8 @@ function renderOptions(options, { selectedId = null } = {}) {
     messages.append(group);
     activeOptions = group;
 
-    if (selectedId) {
-        // Opened from a purchase: it is already the selected transaction, shown as context.
+    if (selectedId || closed) {
+        // Already answered (or opened from a purchase): shown as context, not clickable.
         disableOptions(selectedId);
         scrollToLatest();
         return;
@@ -278,6 +278,23 @@ async function sendTurn({ text = "", selectedTransactionId = null, rejectOptions
 }
 
 
+function renderHistory(entries, stage) {
+    // A new chat has just the greeting; a resumed chat shows everything said so far.
+    const lastOptions = entries.map((entry) => entry.role).lastIndexOf("options");
+    entries.forEach((entry, index) => {
+        if (entry.role === "options") {
+            const active = index === lastOptions && stage === "confirm_transaction";
+            renderOptions(entry.options, {
+                selectedId: entry.selected,
+                closed: entry.closed || !active,
+            });
+        } else {
+            addBubble(entry.role, entry.text);
+        }
+    });
+}
+
+
 async function openSession() {
     messages.replaceChildren();
     activeOptions = null;
@@ -296,8 +313,7 @@ async function openSession() {
         sessionId = opening.session_id;
         setPhone(opening.phone_number, opening.phone_display);
         typing.remove();
-        addBubble("izzy", opening.message);
-        renderOptions(opening.options, { selectedId: opening.selected_transaction_id });
+        renderHistory(opening.messages, opening.stage);
         setComposerEnabled(true);
     } catch (error) {
         if (error instanceof ApiError && error.status === 401) {

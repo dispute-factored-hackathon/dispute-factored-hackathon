@@ -270,7 +270,7 @@ uv sync
 uv run dispute-db-migrate
 uv run dispute-db-seed-lakehouse --dry-run      # read and validate only
 uv run dispute-db-seed-lakehouse                # 100 active customers, about 2,000 transactions
-uv run uvicorn webapp.backend.main:app --port 8000
+uv run uvicorn webapp.backend.main:app --port 8000 --loop asyncio:SelectorEventLoop
 ```
 
 The seed picks active customers with an active credit card and at least one transaction, in a stable order. Re-running it is safe because existing rows are kept. It refuses non-local databases unless `--allow-remote` is passed, and it warns when fewer than 1,000 transactions are available. Use `--customers N` for a different sample. Card numbers are masked to the last four digits before they leave the lakehouse query.
@@ -292,6 +292,9 @@ How it works:
 - **Customer context:** the customer comes from the web session cookie, so Izzy greets them by name and never asks for the Factored ID, phone, or document again. The session id is bound to that customer; any other customer gets `404`.
 - **Same workflow as calls:** `dispute_agent/web_chat` contains the chat's own LangGraph graph (`guard_input → interpret → screen_abuse → global_controls → workflow → compose_reply`). It runs on `WebChatDisputeService`, a subclass of `VoiceCallService`, so it reuses the call stages unchanged: transaction search and confirmation, Visa classification, card blocking, complaint filing, and CSAT. The voice module is untouched. Interactions, transcripts, surveys, and complaints are recorded with the `Web Chat` channel.
 - **Decisions:** each turn goes first through Jev, with the same bounded questions and thresholds as calls. Then a schema-constrained LLM classifier (`ChatTurnInterpretation`) handles what a call's Realtime model handles: search filters and stage intents. State changes only for an allowed, non-`other` intent above the confidence gate. Prompt abuse is blocked on the single ingress before any branch runs. Human, restart, and cancel are handled before stage decisions.
+- **Suggested problem:** after the purchase is chosen, Izzy proposes the problem the data suggests. A purchase flagged by the fraud model (`is_fraud`, or `fraud_score` of 0.8 or more) is proposed as unauthorized. Another charge at the same merchant for the same amount within three days is proposed as duplicate processing. A "yes" classifies it; a "no" asks the open question. Follow-up answers such as "online" keep the allegation the customer already gave. Classification, filing and closing messages are fixed texts, not paraphrased by the model.
+- **Leaving and coming back:** while a chat is open, opening `/agent` again resumes it with everything shown so far. Opening Izzy from a purchase starts a new chat for that purchase.
+- **Card block and filing:** when an unrecognized charge is classified (Visa 10.3 or 10.4), Izzy blocks the card right away, exactly like a call. It then summarizes the Visa code and asks whether to file the dispute. Only after the customer says yes does the server insert the complaint into PostgreSQL (`complaints`, with a parameterized INSERT through `ComplaintRepository`; the model never writes SQL). The complaint appears in `/complaints` with channel `Web Chat`. If the customer says no, nothing is filed and the chat ends. After the 1-5 rating, Izzy says the chat has ended and the session closes.
 - **Replies:** the greeting is deterministic. After that, each reply is generated in streaming from authoritative facts (the transaction, Visa code, complaint number) and a reference message: the voice templates or web-specific texts. If the model fails, or drops a required identifier such as the complaint number, the reference text replaces it.
 - **Finding the transaction:** Izzy searches only the authenticated customer's **card purchases** (credit or debit card, type `Purchase`). It reads them from two places:
   - the synthetic lakehouse (`silver`, read-only, the seeded customers' history);
@@ -310,7 +313,9 @@ How it works:
   - `POST /api/izzy/sessions` with `{transaction_id?, locale?}` opens a chat.
   - `POST /api/izzy/sessions/{id}/messages` with `{message}`, `{selected_transaction_id}`, or `{reject_options: true}` returns `text/event-stream`, with `delta`, `replace`, `options`, `selected`, `error`, `state`, and `done` events.
 
-Limitations: chat sessions and LangGraph checkpoints live in process memory (`InMemorySaver`). They expire after `IZZY_CHAT_SESSION_TTL_MINUTES`, are lost on restart, and require a single server process. There is no live human handoff in the web chat; Izzy offers the phone line instead. Complaints are demo records and are never sent to Visa. Without `OPENAI_API_KEY`, the chat answers with an "unavailable" message that includes the phone number.
+Conversation checkpoints are saved in PostgreSQL with LangGraph's `AsyncPostgresSaver`. `dispute-db-migrate` creates the tables with the owner role, and the app role can only read and write rows. Async psycopg cannot run on uvicorn's default Windows event loop; hence `--loop asyncio:SelectorEventLoop`. Without it, or without a migrated database, the chat logs a warning and keeps checkpoints in memory.
+
+Limitations: the live workflow state of an open chat (stage, options) is in process memory. It expires after `IZZY_CHAT_SESSION_TTL_MINUTES`, so an open chat cannot resume after a restart, and the app needs a single server process; finished conversations remain in the checkpoints and in `call_transcripts`. There is no live human handoff in the web chat; Izzy offers the phone line instead. Complaints are demo records and are never sent to Visa. Without `OPENAI_API_KEY`, the chat answers with an "unavailable" message that includes the phone number.
 
 ## Demo web login
 

@@ -28,6 +28,17 @@ DETERMINISTIC_OUTCOMES = frozenset(
         "cancelled",
         "transaction_options",
         "options_unclear",
+        "complaint_declined",
+        # Steps where wording carries the decision: fixed text, never paraphrased.
+        "classification_question",
+        "classification_clarification",
+        "complaint_confirmation",
+        "complaint_filed",
+        "csat_thanks",
+        "csat_declined",
+        "csat_unclear",
+        "suggest_unauthorized",
+        "suggest_duplicate",
     }
 )
 
@@ -41,21 +52,25 @@ VOICE_TEMPLATE_OUTCOMES = frozenset(
         "classification_question",
         "classification_clarification",
         "classification_complete",
-        "csat_thanks",
-        "csat_declined",
         "csat_unclear",
     }
 )
 
 WEB_TEXTS: dict[str, dict[str, str]] = {
     "en": {
+        "suggest_unauthorized": "This purchase was flagged as possibly not made by you. Did you not make or authorize it?",
+        "suggest_duplicate": "I see another charge at {merchant} for the same amount a few days apart. Were you charged more than once for the same purchase?",
+        "ask_problem": "To understand the problem: did you not make or authorize it, or do you recognize it but were charged more than once?",
+        "none_of_these": "None of these",
+        "confirm_filing": "Do you want me to file this dispute now?",
+        "complaint_declined": "Okay, I didn't file a dispute. This chat has ended; you can start a new one anytime.",
+        "chat_finished": "This chat has ended. You can follow your dispute in Complaints.",
         "transaction_options": "I found {count} purchases that could match. Tap the right one, or choose “None of these”.",
         "transaction_option_single": "I found this purchase. Is it the one you want to dispute? Tap it to confirm, or choose “None of these”.",
         "options_unclear": "Tap the purchase that matches, or tell me its number. If none matches, choose “None of these”.",
         "selected_transaction": (
             "Let's dispute your {amount} {currency} purchase at {merchant} on {date}{place}, "
-            "shown below. To understand the problem: did you not make or authorize it, or do "
-            "you recognize it but were charged more than once?"
+            "shown below."
         ),
         "ask_transaction": (
             "Which transaction is causing the problem? Tell me the merchant, approximate "
@@ -100,13 +115,19 @@ WEB_TEXTS: dict[str, dict[str, str]] = {
         "cancelled": "Okay, I stopped here and didn't file anything new. You can start a new chat anytime.",
     },
     "es": {
+        "suggest_unauthorized": "Esta compra fue marcada como posiblemente no hecha por ti. ¿No la hiciste ni la autorizaste?",
+        "suggest_duplicate": "Veo otro cargo en {merchant} por el mismo monto con pocos días de diferencia. ¿Te cobraron más de una vez la misma compra?",
+        "ask_problem": "Para entender el problema: ¿no hiciste ni autorizaste esta compra, o la reconoces pero te la cobraron más de una vez?",
+        "none_of_these": "Ninguna de estas",
+        "confirm_filing": "¿Quieres que registre este reclamo ahora?",
+        "complaint_declined": "Listo, no registré ningún reclamo. Este chat terminó; puedes iniciar uno nuevo cuando quieras.",
+        "chat_finished": "Este chat terminó. Puedes seguir tu reclamo en Reclamos.",
         "transaction_options": "Encontré {count} compras que podrían coincidir. Toca la correcta o elige “Ninguna de estas”.",
         "transaction_option_single": "Encontré esta compra. ¿Es la que quieres reclamar? Tócala para confirmar o elige “Ninguna de estas”.",
         "options_unclear": "Toca la compra que coincide o dime su número. Si ninguna coincide, elige “Ninguna de estas”.",
         "selected_transaction": (
             "Vamos a reclamar tu compra de {amount} {currency} en {merchant} el {date}{place}, "
-            "que ves abajo. Para entender el problema: ¿no hiciste ni autorizaste esta compra, "
-            "o la reconoces pero te la cobraron más de una vez?"
+            "que ves abajo."
         ),
         "ask_transaction": (
             "¿Qué transacción te está dando problemas? Cuéntame el comercio, el monto "
@@ -155,13 +176,19 @@ WEB_TEXTS: dict[str, dict[str, str]] = {
         "cancelled": "Listo, me detengo aquí y no registré nada nuevo. Puedes iniciar un chat nuevo cuando quieras.",
     },
     "pt": {
+        "suggest_unauthorized": "Esta compra foi sinalizada como possivelmente não feita por você. Você não fez nem autorizou essa compra?",
+        "suggest_duplicate": "Vejo outra cobrança em {merchant} no mesmo valor com poucos dias de diferença. Você foi cobrado mais de uma vez pela mesma compra?",
+        "ask_problem": "Para entender o problema: você não fez nem autorizou essa compra, ou a reconhece, mas foi cobrado mais de uma vez?",
+        "none_of_these": "Nenhuma destas",
+        "confirm_filing": "Quer que eu registre esta contestação agora?",
+        "complaint_declined": "Certo, não registrei nenhuma contestação. Este chat foi encerrado; você pode iniciar um novo quando quiser.",
+        "chat_finished": "Este chat foi encerrado. Você pode acompanhar sua contestação em Reclamações.",
         "transaction_options": "Encontrei {count} compras que podem corresponder. Toque na certa ou escolha “Nenhuma destas”.",
         "transaction_option_single": "Encontrei esta compra. É a que você quer contestar? Toque nela para confirmar ou escolha “Nenhuma destas”.",
         "options_unclear": "Toque na compra que corresponde ou diga o número dela. Se nenhuma corresponder, escolha “Nenhuma destas”.",
         "selected_transaction": (
             "Vamos contestar sua compra de {amount} {currency} em {merchant} em {date}{place}, "
-            "mostrada abaixo. Para entender o problema: você não fez nem autorizou essa compra, "
-            "ou a reconhece, mas foi cobrado mais de uma vez?"
+            "mostrada abaixo."
         ),
         "ask_transaction": (
             "Qual transação está causando o problema? Diga o estabelecimento, o valor "
@@ -223,9 +250,11 @@ def format_phone(e164: str) -> str:
     return e164
 
 
-def web_text(language: str, key: str, *, name: str = "", phone: str = "", count: int = 0) -> str:
+def web_text(
+    language: str, key: str, *, name: str = "", phone: str = "", count: int = 0, **values: str
+) -> str:
     texts = WEB_TEXTS.get(language, WEB_TEXTS["en"])
-    return texts[key].format(name=name, phone=format_phone(phone), count=count)
+    return texts[key].format(name=name, phone=format_phone(phone), count=count, **values)
 
 
 MONTHS_EN = (
@@ -279,6 +308,8 @@ def current_step_message(state: VoiceCallState, *, phone: str) -> str:
         return web_text(state.locale.language, "ask_transaction")
     if stage == "confirm_transaction":
         return web_text(state.locale.language, "options_unclear")
+    if stage == "dispute_classified" and state.complaint_filing_status is None:
+        return web_text(state.locale.language, "confirm_filing")
     step = {
         "needs_transaction_details": "transaction_clarification",
         "needs_dispute_classification": "classification_question",
@@ -297,6 +328,22 @@ def reference_message(state: VoiceCallState, outcome: str, *, phone: str) -> str
         return SipRealtimeGateway._message_for(state, outcome)
     if outcome == "transaction_handoff":
         return web_text(language, "handoff", phone=phone)
+    if outcome in {"suggest_unauthorized", "suggest_duplicate"}:
+        transaction = state.confirmed_transaction
+        merchant = transaction.merchant_name if transaction is not None else ""
+        return web_text(language, outcome, merchant=merchant or "-")
+    if outcome == "complaint_confirmation":
+        # The voice classification summary (code, card block) without its filing sentence.
+        summary = SipRealtimeGateway._classification_complete_message(state)
+        filing = SipRealtimeGateway._complaint_filing_message(state)
+        if summary.endswith(filing):
+            summary = summary[: -len(filing)]
+        return f"{summary} {web_text(language, 'confirm_filing')}"
+    if outcome == "complaint_filed":
+        return SipRealtimeGateway._complaint_filing_message(state).strip()
+    if outcome in {"csat_thanks", "csat_declined"}:
+        closing = SipRealtimeGateway._message_for(state, outcome)
+        return f"{closing} {web_text(language, 'chat_finished')}"
     if outcome == "transaction_options":
         count = len(state.transaction_candidates)
         key = "transaction_option_single" if count == 1 else "transaction_options"

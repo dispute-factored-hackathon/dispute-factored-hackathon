@@ -33,6 +33,11 @@ APP_GRANTS = (
     ),
     "GRANT SELECT, INSERT, DELETE ON sessions TO {role}",
     "GRANT SELECT ON alembic_version TO {role}",
+    # Izzy web chat checkpoints (LangGraph tables, created below by the owner role).
+    (
+        "GRANT SELECT, INSERT, UPDATE, DELETE ON checkpoints, checkpoint_blobs, "
+        "checkpoint_writes, checkpoint_migrations TO {role}"
+    ),
 )
 
 
@@ -86,6 +91,12 @@ def ensure_app_role(connection: psycopg.Connection, *, database: str, password: 
 
 def upgrade(owner_url: str, app_password: str | None, *, quiet: bool = False) -> None:
     command.upgrade(alembic_config(owner_url, quiet=quiet), "head")
+    # The LangGraph checkpointer owns its own schema and migrations; run them as the owner so
+    # the application role never needs CREATE.
+    from langgraph.checkpoint.postgres import PostgresSaver
+
+    with PostgresSaver.from_conn_string(owner_url) as saver:
+        saver.setup()
     with psycopg.connect(owner_url) as connection:
         ensure_app_role(connection, database=connection.info.dbname, password=app_password)
 

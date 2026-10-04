@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, status
@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from dispute_agent.web_chat import build_izzy_web_chat
+from dispute_agent.web_chat.checkpoint import open_chat_checkpointer
 from webapp.backend.api.dependencies import (
     SESSION_COOKIE_NAME,
     AuthenticationServiceDependency,
@@ -49,12 +50,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # PostgreSQL is the only data store; customer data comes from `dispute-db-seed-lakehouse`.
     repositories = open_repositories(settings)
     app.state.repositories = repositories
-    # Izzy web chat: the voice dispute workflow over the same repositories.
-    app.state.izzy_chat = build_izzy_web_chat(repositories, settings)
     try:
-        yield
+        async with AsyncExitStack() as stack:
+            # Izzy web chat: the voice dispute workflow over the same repositories, with its
+            # conversation checkpoints in the same PostgreSQL.
+            checkpointer = await open_chat_checkpointer(settings, stack)
+            app.state.izzy_chat = build_izzy_web_chat(
+                repositories, settings, checkpointer=checkpointer
+            )
+            try:
+                yield
+            finally:
+                del app.state.izzy_chat
     finally:
-        del app.state.izzy_chat
         del app.state.repositories
         repositories.close()
 

@@ -14,6 +14,7 @@ as the app and the voice agent. It only adds what the web needs and leaves calls
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import timedelta
 from typing import Any
 
 from webapp.backend.models.card_transaction import CardTransaction
@@ -43,6 +44,8 @@ from .search import CardPurchaseCriteria, CardPurchaseSearch
 
 WEB_SESSION_ASSURANCE = "DEMO_ONLY_WEB_SESSION"
 SUPPORTED_LANGUAGES = {"en", "pt", "es"}
+# A purchase at or above this fraud-model score is proposed as possibly unauthorized.
+FRAUD_SCORE_SUGGESTION = 0.8
 SEARCH_STAGES = {
     VoiceCallStage.AUTHENTICATED,
     VoiceCallStage.NEEDS_TRANSACTION_DETAILS,
@@ -90,6 +93,7 @@ class WebChatDisputeService(VoiceCallService):
         self.purchases = purchases
         self.purchase_search = CardPurchaseSearch(purchases)
         self._options: dict[str, tuple[CardTransaction, ...]] = {}
+        self._suggestions: dict[str, str] = {}
         self.complaint_filing = ComplaintFilingService(
             self.complaints, reception_channel="Web Chat"
         )
@@ -298,6 +302,98 @@ class WebChatDisputeService(VoiceCallService):
             rejected_transaction_ids=rejected,
         )
 
+    # ------------------------------------------------------------------ suggested problem
+
+    def suggested_allegation(self, session_id: str) -> str | None:
+        """What the data suggests about the selected purchase, for Izzy to propose.
+
+        A purchase flagged by the bank's fraud model suggests an unauthorized charge; another
+        purchase at the same merchant for the same amount within three days suggests duplicate
+        processing. The customer still has to confirm before anything is classified.
+        """
+
+        state = self.get(session_id)
+        purchase = self.selected_purchase(session_id)
+        if purchase is None or state.identity is None:
+            return None
+        transaction = purchase.transaction
+        if transaction.is_fraud or (transaction.fraud_score or 0.0) >= FRAUD_SCORE_SUGGESTION:
+            return "UNAUTHORIZED_CARD"
+        if self.duplicate_of(session_id) is not None:
+            return "DUPLICATE_PROCESSING"
+        return None
+
+    def suggest_problem(self, session_id: str) -> str | None:
+        """Compute and remember the suggestion Izzy is about to make (None if none)."""
+
+        suggestion = self.suggested_allegation(session_id)
+        if suggestion is None:
+            self._suggestions.pop(session_id, None)
+        else:
+            self._suggestions[session_id] = suggestion
+        return suggestion
+
+    def pending_suggestion(self, session_id: str) -> str | None:
+        return self._suggestions.get(session_id)
+
+    def clear_suggestion(self, session_id: str) -> None:
+        self._suggestions.pop(session_id, None)
+
+    def duplicate_of(self, session_id: str) -> CardTransaction | None:
+        state = self.get(session_id)
+        selected = self.selected_purchase(session_id)
+        if selected is None or state.identity is None:
+            return None
+        chosen = selected.transaction
+        return next(
+            (
+                other
+                for other in self.purchases.list_by_customer(state.identity.customer_id)
+                if other.transaction.transaction_id != chosen.transaction_id
+                and other.transaction.merchant_name == chosen.merchant_name
+                and abs(other.transaction.amount - chosen.amount) < 0.01
+                and abs(other.transaction.transaction_date - chosen.transaction_date)
+                <= timedelta(days=3)
+            ),
+            None,
+        )
+
+    # ------------------------------------------------------------------ complaint
+
+    def _file_classified_complaint(self, state: VoiceCallState) -> VoiceCallState:
+        """Web chat files only after the customer confirms (see `file_complaint`).
+
+        Classification still blocks the card right away for unauthorized-card reports, exactly
+        as in calls (`VoiceCallService.classify_dispute`).
+        """
+
+        return state
+
+    @staticmethod
+    def awaiting_complaint_confirmation(state: VoiceCallState) -> bool:
+        return (
+            state.stage is VoiceCallStage.DISPUTE_CLASSIFIED
+            and state.complaint_filing_status is None
+        )
+
+    def file_complaint(self, session_id: str) -> VoiceCallState:
+        """The customer confirmed: insert the complaint into PostgreSQL (shown in /complaints)."""
+
+        state = self.get(session_id)
+        if not self.awaiting_complaint_confirmation(state):
+            raise ValueError("there is no classified dispute awaiting confirmation")
+        updated = super()._file_classified_complaint(state)
+        self._calls[session_id] = updated
+        self.call_interactions.sync(updated)
+        return updated
+
+    def decline_complaint(self, session_id: str) -> VoiceCallState:
+        """The customer does not want to file: end the chat without a complaint."""
+
+        if not self.awaiting_complaint_confirmation(self.get(session_id)):
+            raise ValueError("there is no classified dispute awaiting confirmation")
+        return self.cancel(session_id)
+
     # ------------------------------------------------------------------ controls
 
     def restart_search(self, session_id: str) -> VoiceCallState:
@@ -347,6 +443,7 @@ class WebChatDisputeService(VoiceCallService):
         """Release an expired chat after recording its final interaction state."""
 
         self._options.pop(session_id, None)
+        self._suggestions.pop(session_id, None)
         if session_id in self._calls:
             self.finalize(session_id)
             del self._calls[session_id]
