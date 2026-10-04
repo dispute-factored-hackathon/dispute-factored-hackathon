@@ -63,3 +63,21 @@ def test_database_bootstrap_migrates_before_idempotent_remote_seed():
     seed.assert_called_once_with(["--customers", "100", "--allow-remote"])
     connection = connect.return_value.__enter__.return_value
     assert connection.execute.call_count == 2
+
+
+def test_empty_optional_langsmith_secret_does_not_break_runtime(monkeypatch):
+    monkeypatch.setenv("DATABASE_HOST", "private.cluster")
+    monkeypatch.setenv("DATABASE_PORT", "5432")
+    monkeypatch.setenv("DATABASE_NAME", "factored")
+    monkeypatch.setenv("DATABASE_APP_SECRET_ARN", "app-secret")
+    monkeypatch.setenv("LANGSMITH_SECRET_ARN", "langsmith-secret")
+    secrets = {
+        "app-secret": {"username": "factored_app", "password": "password"},
+        "langsmith-secret": {"LANGSMITH_API_KEY": ""},
+    }
+    with patch.object(aws_runtime, "load_json_secret", side_effect=secrets.__getitem__):
+        aws_runtime.configure_application_runtime()
+
+    assert "LANGSMITH_API_KEY" not in aws_runtime.os.environ
+    aws_runtime.os.environ.pop("DATABASE_URL", None)
+    aws_runtime.os.environ.pop("DEMO_SELECTOR_SECRET", None)

@@ -81,7 +81,9 @@ def configure_application_runtime() -> None:
     langsmith_arn = os.environ.get("LANGSMITH_SECRET_ARN", "").strip()
     if langsmith_arn:
         langsmith = load_json_secret(langsmith_arn)
-        os.environ["LANGSMITH_API_KEY"] = _required_secret(langsmith, "LANGSMITH_API_KEY")
+        # Tracing is optional; an empty trial secret must not take down banking routes.
+        if value := langsmith.get("LANGSMITH_API_KEY", "").strip():
+            os.environ["LANGSMITH_API_KEY"] = value
 
 
 def configure_owner_runtime() -> None:
