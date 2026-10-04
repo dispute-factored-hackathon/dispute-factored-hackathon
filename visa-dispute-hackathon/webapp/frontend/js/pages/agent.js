@@ -204,6 +204,25 @@ async function readEvents(response, onEvent) {
 }
 
 
+function sessionRequest() {
+    const transactionId = new URLSearchParams(window.location.search).get("transaction_id");
+    return {
+        transaction_id: transactionId || null,
+        locale: getLocale(),
+    };
+}
+
+
+async function replaceLostSession() {
+    const opening = await apiRequest("/izzy/sessions", {
+        method: "POST",
+        body: JSON.stringify(sessionRequest()),
+    });
+    sessionId = opening.session_id;
+    setPhone(opening.phone_number, opening.phone_display);
+}
+
+
 async function sendTurn({ text = "", selectedTransactionId = null, rejectOptions = false, label }) {
     busy = true;
     setComposerEnabled(false);
@@ -221,16 +240,28 @@ async function sendTurn({ text = "", selectedTransactionId = null, rejectOptions
     };
 
     try {
-        const response = await fetch(`/api/izzy/sessions/${encodeURIComponent(sessionId)}/messages`, {
-            method: "POST",
-            credentials: "same-origin",
-            headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-            body: JSON.stringify({
-                message: text,
-                selected_transaction_id: selectedTransactionId,
-                reject_options: rejectOptions,
-            }),
-        });
+        const submit = () => fetch(
+            `/api/izzy/sessions/${encodeURIComponent(sessionId)}/messages`,
+            {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+                body: JSON.stringify({
+                    message: text,
+                    selected_transaction_id: selectedTransactionId,
+                    reject_options: rejectOptions,
+                }),
+            },
+        );
+        let response = await submit();
+
+        // A serverless worker can be recycled between two HTTP requests. Re-open the same
+        // customer/transaction context once and deliver the message instead of declaring that a
+        // chat which was opened seconds ago has expired.
+        if (response.status === 404) {
+            await replaceLostSession();
+            response = await submit();
+        }
 
         if (response.status === 401) {
             window.location.replace("/login");
@@ -300,15 +331,11 @@ async function openSession() {
     activeOptions = null;
     closedPanel.hidden = true;
     composer.hidden = false;
-    const transactionId = new URLSearchParams(window.location.search).get("transaction_id");
     const typing = addTypingBubble();
     try {
         const opening = await apiRequest("/izzy/sessions", {
             method: "POST",
-            body: JSON.stringify({
-                transaction_id: transactionId || null,
-                locale: getLocale(),
-            }),
+            body: JSON.stringify(sessionRequest()),
         });
         sessionId = opening.session_id;
         setPhone(opening.phone_number, opening.phone_display);

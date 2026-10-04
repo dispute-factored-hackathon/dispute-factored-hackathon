@@ -4,6 +4,18 @@ from unittest.mock import patch
 from webapp.backend import aws_lambda
 
 
+class LifespanProbe:
+    def __init__(self) -> None:
+        self.entries = 0
+
+    async def __aenter__(self):
+        self.entries += 1
+        return self
+
+    async def __aexit__(self, *args):
+        return None
+
+
 def function_url_event(path: str) -> dict:
     return {
         "version": "2.0",
@@ -75,3 +87,29 @@ def test_function_url_serves_login_page():
 
     assert response["statusCode"] == 200
     assert "Factored Bank" in response["body"]
+
+
+def test_adapter_keeps_one_lifespan_for_the_warm_lambda_environment():
+    probe = LifespanProbe()
+    fake_app = SimpleNamespace(
+        router=SimpleNamespace(lifespan_context=lambda app: probe),
+    )
+    adapter = object()
+    previous_adapter = aws_lambda._adapter
+    previous_lifespan = aws_lambda._lifespan
+    aws_lambda._adapter = None
+    aws_lambda._lifespan = None
+    try:
+        with (
+            patch.object(aws_lambda, "configure_application_runtime"),
+            patch("webapp.backend.main.app", fake_app),
+            patch.object(aws_lambda, "Mangum", return_value=adapter) as mangum,
+        ):
+            assert aws_lambda._get_adapter() is adapter
+            assert aws_lambda._get_adapter() is adapter
+    finally:
+        aws_lambda._adapter = previous_adapter
+        aws_lambda._lifespan = previous_lifespan
+
+    assert probe.entries == 1
+    mangum.assert_called_once_with(fake_app, lifespan="off")
