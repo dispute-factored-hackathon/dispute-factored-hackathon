@@ -139,6 +139,16 @@ def completed_transcript_event(*, speaker: str, transcript: str) -> str:
     )
 
 
+def failed_transcript_event() -> str:
+    return json.dumps(
+        {
+            "type": "conversation.item.input_audio_transcription.failed",
+            "item_id": "item_customer_failed",
+            "error": {"type": "transcription_error", "code": "audio_unintelligible"},
+        }
+    )
+
+
 class FakeWebhooks:
     def __init__(self, event=None, error=None):
         self.event = event
@@ -1276,17 +1286,20 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
 
         session_updates = self._instruction_session_updates(websocket)
 
-        self.assertEqual(
-            len(session_updates),
-            3,
-        )
+        self.assertEqual(len(session_updates), 4)
         self.assertIn(
             "es-CO",
             session_updates[0]["session"]["instructions"],
         )
         self.assertIn(
             "needs_document",
-            session_updates[-1]["session"]["instructions"],
+            session_updates[-2]["session"]["instructions"],
+        )
+        self.assertIn("authenticated", session_updates[-1]["session"]["instructions"])
+        self.assertEqual(session_updates[-1]["session"]["tool_choice"], "required")
+        self.assertIn(
+            "search_transactions",
+            {tool["name"] for tool in session_updates[-1]["session"]["tools"]},
         )
 
         outbound = json.dumps(
@@ -1349,10 +1362,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         session_updates = self._instruction_session_updates(websocket)
         tool_outputs = self._tool_outputs(websocket)
 
-        self.assertEqual(
-            len(session_updates),
-            3,
-        )
+        self.assertEqual(len(session_updates), 4)
         self.assertEqual(
             len(tool_outputs),
             2,
@@ -1368,8 +1378,9 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn(
             "needs_document",
-            session_updates[-1]["session"]["instructions"],
+            session_updates[-2]["session"]["instructions"],
         )
+        self.assertIn("authenticated", session_updates[-1]["session"]["instructions"])
 
         outbound = json.dumps(
             websocket.sent,
@@ -1379,6 +1390,24 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             "123456789",
             outbound,
         )
+
+    async def test_failed_transcription_prompts_the_caller_to_repeat(self):
+        events = [
+            *opened_session_events(),
+            tool_call_event("confirm_language", "tool_language", {}),
+            tool_call_event(
+                "set_authentication_method",
+                "tool_auth",
+                {"method": "phone"},
+            ),
+            failed_transcript_event(),
+        ]
+        gateway, websocket, _ = self._gateway(events)
+
+        await gateway.accept_and_control("call_transcription_failure", "+5511999990001")
+
+        outbound = json.dumps(websocket.sent, ensure_ascii=False)
+        self.assertIn("áudio chegou incompleto ou com muito ruído", outbound)
 
     async def test_authenticated_caller_searches_and_confirms_transaction(self):
         events = [
