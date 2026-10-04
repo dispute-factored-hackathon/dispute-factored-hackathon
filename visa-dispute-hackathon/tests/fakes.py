@@ -72,9 +72,7 @@ class InMemoryCustomerRepository:
                 customer
                 for customer in self._customers.values()
                 if customer.mobile_phone
-                and "".join(
-                    character for character in customer.mobile_phone if character.isdigit()
-                )
+                and "".join(character for character in customer.mobile_phone if character.isdigit())
                 == digits
             ),
             None,
