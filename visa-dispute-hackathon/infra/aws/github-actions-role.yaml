@@ -89,6 +89,13 @@ Resources:
                 Effect: Allow
                 Action: ecr:GetAuthorizationToken
                 Resource: "*"
+              - Sid: InspectApplicationVpc
+                Effect: Allow
+                Action:
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeVpcs
+                Resource: "*"
               - Sid: ResolveDeploymentSecrets
                 Effect: Allow
                 Action: secretsmanager:DescribeSecret
@@ -131,6 +138,24 @@ Resources:
                     arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-demo-web
                   - !Sub >-
                     arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-demo-database-bootstrap
+              - Sid: InvokeWebWarmup
+                Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-demo-web
+              - Sid: ManageWebWarmupSchedule
+                Effect: Allow
+                Action:
+                  - events:DeleteRule
+                  - events:DescribeRule
+                  - events:ListTagsForResource
+                  - events:PutRule
+                  - events:PutTargets
+                  - events:RemoveTargets
+                  - events:TagResource
+                  - events:UntagResource
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/${ProjectName}-demo-*
               - Sid: InvokeDatabaseBootstrap
                 Effect: Allow
                 Action: lambda:InvokeFunction
