@@ -64,11 +64,16 @@ class InMemoryCustomerRepository:
         )
 
     def get_by_phone(self, mobile_phone: str) -> Customer | None:
+        digits = "".join(character for character in mobile_phone if character.isdigit())
+        if not digits:
+            return None
         return next(
             (
                 customer
                 for customer in self._customers.values()
-                if customer.mobile_phone == mobile_phone
+                if customer.mobile_phone
+                and "".join(character for character in customer.mobile_phone if character.isdigit())
+                == digits
             ),
             None,
         )
