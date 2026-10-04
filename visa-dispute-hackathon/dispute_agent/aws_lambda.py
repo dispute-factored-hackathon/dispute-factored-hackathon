@@ -30,9 +30,8 @@ def _telemetry(event: str, *, call_id: str | None = None, **fields: Any) -> None
 
 
 # The Lambda invokes itself asynchronously with this mode as soon as the
-# webhook has been verified. The worker owns both accepting and controlling
-# the call so the public webhook can acknowledge delivery without waiting for
-# Secrets Manager, Jev, or OpenAI Realtime setup.
+# webhook has accepted the pending SIP call. The ingress invocation owns the
+# time-sensitive accept decision; the worker owns the long-lived sideband.
 WORKER_MODE = "control_realtime_call"
 
 # Leave headroom below a typical 15-minute Lambda timeout.
@@ -223,6 +222,7 @@ def _invoke_worker(
         "mode": WORKER_MODE,
         "call_id": call_id,
         "caller_phone": caller_phone,
+        "accepted": True,
     }
 
     invoke_started = time.monotonic()
@@ -250,7 +250,7 @@ def _invoke_worker(
 
 
 def _run_worker(event: dict[str, Any]) -> dict[str, Any]:
-    """Accept and run the long-lived sideband controller for one SIP call."""
+    """Run the long-lived sideband controller for one accepted SIP call."""
 
     call_id = str(event.get("call_id", ""))
     caller_phone = str(event.get("caller_phone", ""))
@@ -274,13 +274,16 @@ def _run_worker(event: dict[str, Any]) -> dict[str, Any]:
     _telemetry("worker.started", call_id=call_id)
 
     try:
-        asyncio.run(
-            _get_gateway().accept_call(
-                call_id,
-                caller_phone,
+        if not bool(event.get("accepted")):
+            # Backward compatibility for queued payloads created by an older
+            # deployment. New ingress invocations always accept first.
+            asyncio.run(
+                _get_gateway().accept_call(
+                    call_id,
+                    caller_phone,
+                )
             )
-        )
-        _telemetry("sip.accept.completed", call_id=call_id, owner="worker")
+            _telemetry("sip.accept.completed", call_id=call_id, owner="worker")
         asyncio.run(
             _get_gateway().control_call(
                 call_id,
@@ -500,9 +503,30 @@ def _dispatch_event(
         duration_ms=round((time.monotonic() - started) * 1000, 2),
     )
 
-    # Start a separate asynchronous invocation immediately. This keeps the
-    # webhook response below OpenAI's retry window. If the event is redelivered,
-    # OpenAI's authoritative accept endpoint rejects the duplicate worker.
+    # Accept in the ingress invocation. The SIP decision is time-sensitive and
+    # answering here gives the carrier a final response before the asynchronous
+    # worker cold-starts, avoiding repeated INVITEs and silent dialing.
+    try:
+        asyncio.run(gateway.accept_call(call_id, caller_phone))
+        _telemetry(
+            "sip.accept.completed",
+            call_id=call_id,
+            owner="webhook",
+            duration_ms=round((time.monotonic() - started) * 1000, 2),
+        )
+    except Exception as error:
+        _telemetry(
+            "sip.accept.failed",
+            call_id=call_id,
+            owner="webhook",
+            error_type=type(error).__name__,
+            error=str(error),
+        )
+        LOGGER.exception("Could not accept incoming SIP call call_id=%s", call_id)
+        return _response(502, {"status": "call_accept_failed"})
+
+    # The worker only owns the long-lived sideband after acceptance, keeping
+    # the public webhook response bounded while preserving the answered call.
 
     try:
         _invoke_worker(
@@ -519,7 +543,7 @@ def _dispatch_event(
             error=str(error),
         )
         LOGGER.exception(
-            "Call was accepted but Realtime worker could not be started call_id=%s",
+            "Realtime worker could not be started after accept call_id=%s",
             call_id,
         )
 
