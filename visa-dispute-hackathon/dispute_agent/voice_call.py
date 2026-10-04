@@ -249,14 +249,17 @@ class VoiceCallService:
             locale = ConversationLocaleContext.from_customer_record(
                 country=phone_result.identity.country,
                 detected_accent=phone_result.identity.detected_accent,
+                preferred_locale=phone_result.identity.preferred_locale,
             )
+            initial_stage = VoiceCallStage.NEEDS_AUTH_METHOD
         else:
             locale = ConversationLocaleContext.from_calling_code(phone_result.country_code)
+            initial_stage = VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION
 
         state = VoiceCallState(
             call_id=resolved_call_id,
             caller_phone=mobile_phone,
-            stage=VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION,
+            stage=initial_stage,
             locale=locale,
         )
         self._calls[resolved_call_id] = state
@@ -319,6 +322,7 @@ class VoiceCallService:
                 profile_locale = ConversationLocaleContext.from_customer_record(
                     country=state.identity.country,
                     detected_accent=state.identity.detected_accent,
+                    preferred_locale=state.identity.preferred_locale,
                 )
                 if profile_locale.language == language:
                     resolved_accent = profile_locale.accent

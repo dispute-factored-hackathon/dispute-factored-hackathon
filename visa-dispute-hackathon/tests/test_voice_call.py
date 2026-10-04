@@ -40,7 +40,7 @@ class VoiceCallServiceTests(unittest.TestCase):
             method="phone",
         )
 
-    def test_known_phone_starts_with_language_confirmation_not_authentication(self):
+    def test_known_phone_skips_language_question_without_authenticating(self):
         state = self.calls.start(
             "+55 11 99999-0001",
             call_id="call_known",
@@ -49,7 +49,7 @@ class VoiceCallServiceTests(unittest.TestCase):
         self.assertEqual(state.call_id, "call_known")
         self.assertEqual(
             state.stage,
-            VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION,
+            VoiceCallStage.NEEDS_AUTH_METHOD,
         )
         self.assertIsNone(state.identity)
         self.assertIsNone(state.authentication_method)
@@ -368,7 +368,7 @@ class VoiceCallServiceTests(unittest.TestCase):
 
     def test_authentication_method_cannot_be_selected_before_language_confirmation(self):
         state = self.calls.start(
-            "+55 11 99999-0001",
+            "+55 11 90000-9999",
             call_id="call_wrong_stage",
         )
 

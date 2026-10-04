@@ -96,14 +96,17 @@ def test_customer_pages_load_shared_localization_layer() -> None:
         assert "i18n.js?v=1" in script.read_text(), script.name
 
 
-def test_interface_supports_exactly_three_languages() -> None:
+def test_profile_creation_offers_five_language_and_accent_options() -> None:
     signup = (FRONTEND_DIR / "pages" / "signup.html").read_text()
     profile = (FRONTEND_DIR / "pages" / "profile.html").read_text()
 
     for page in (signup, profile):
-        assert 'value="en-US"' in page
-        assert 'value="pt-BR"' in page
-        assert 'value="es-419"' in page
+        assert page.count('<option value="en-US">') == 1
+        assert page.count('<option value="pt-BR">') == 1
+        assert page.count('<option value="es-AR">') == 1
+        assert page.count('<option value="es-CO">') == 1
+        assert page.count('<option value="es-MX">') == 1
+        assert '<option value="es-419">' not in page
 
 
 def test_factored_login_uses_locale_selected_during_signup() -> None:

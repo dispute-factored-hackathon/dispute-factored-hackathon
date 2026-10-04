@@ -35,13 +35,15 @@ Run the local GUI login with the full synthetic customer table:
 CUSTOMERS_CSV=../data/raw/customers.csv uv run python -m dispute_agent.gui_app
 ```
 
-Then open `http://127.0.0.1:8000`. The authenticated experience includes cards, transactions, complaints, profile, guided onboarding and the Shady Business simulator. The `/agent` browser chat remains a placeholder; the complete agentic dispute journey currently runs through the telephone channel.
+Then open `http://127.0.0.1:8000`. The authenticated experience includes cards, transactions, complaints, profile, guided onboarding, the Shady Business simulator and the implemented `/agent` dispute chat.
 
 ## Synthetic voice identity contract
 
-`VoiceCallerIdentityService` first performs an exact normalized lookup of the supplied mobile phone. A unique match creates `DEMO_ONLY_PHONE_MATCH`. An unknown phone preserves only its calling-code hint and requires a numeric `document_number`; a unique exact normalized document match creates `DEMO_ONLY_DOCUMENT_MATCH`. The telephone integration must collect this value from DTMF keypad events rather than speech or model extraction. Alphanumeric documents require human fallback because a numeric telephone keypad cannot represent them unambiguously. Neither mechanism is secure enough for real banking.
+`VoiceCallerIdentityService` first performs an exact normalized lookup of the supplied mobile phone. A unique match supplies the registered language and regional accent, but does not authenticate the caller: Izzy greets in that locale, skips the redundant language question and asks whether to authenticate with the calling number or a document. Only an explicit phone-method choice performs the second lookup and creates `DEMO_ONLY_PHONE_MATCH`.
 
-The service returns country and detected-accent data only from the matched synthetic customer record. It does not expose documents or phone numbers to the conversational model. The language branch consumes this deterministic result and owns the conversation state needed to keep or explicitly change language and accent.
+An unknown phone preserves only its calling-code hint. Izzy greets with the corresponding regional accent, asks whether to keep or change the language, and then asks for the authentication method. A numeric `document_number` must be collected from DTMF keypad events rather than speech or model extraction; a unique match creates `DEMO_ONLY_DOCUMENT_MATCH`. Alphanumeric documents require human fallback because a numeric telephone keypad cannot represent them unambiguously. Neither mechanism is secure enough for real banking. Izzy states during the opening that the caller may request a human operator at any point in the workflow.
+
+The service returns the preferred locale, country and accent only from the matched synthetic customer record. It does not expose documents or phone numbers to the conversational model. Registered profiles can select American English, Brazilian Portuguese, Argentine Spanish, Colombian Spanish or Mexican Spanish. The caller may still explicitly change language or regional accent during the call.
 
 ## Test a real phone call through SIP and OpenAI Realtime
 
@@ -49,7 +51,7 @@ The SIP adapter in `dispute_agent.sip_realtime` implements the inbound Realtime 
 
 For this synthetic demo, `DEMO_LOG_FULL_TRANSCRIPTS=true` enables OpenAI input-audio transcription and stores every completed customer and agent utterance in CloudWatch as a `voice.transcript.completed` JSON event. The `transcript` value is written exactly as received, without redaction or truncation, and `speaker` identifies `customer` or `agent`. This mode must only be used with fake data: disable it before adapting the service to real customers, and never speak real credentials, document numbers, card numbers, or other secrets during a demo call. Keypad document digits remain outside the verbal transcript and are not logged.
 
-The caller number is evaluated before the model speaks. A unique exact normalized match in `customers.mobile_phone` authenticates the synthetic customer and loads language, country, and accent from that customer record. If the complete number is not found or is ambiguous, it does not authenticate: only the international calling code is used as a regional language/accent hint, the caller confirms or changes the language, and authentication continues with keypad-only document entry. An explicit language change updates the active Realtime session instructions for the rest of the call.
+The caller number is evaluated before the model speaks. A unique exact normalized match in `customers.mobile_phone` loads the profile's registered language/accent and advances directly to authentication-method choice without attaching an authenticated identity. If the complete number is not found or is ambiguous, only the international calling code is used as an unverified regional hint; the caller confirms or changes the language before choosing phone or keypad-document authentication. An explicit language change updates the active Realtime session instructions for the rest of the call.
 
 This remains a synthetic demonstration. A SIP `From` header can be spoofed and is explicitly treated as untrusted metadata by OpenAI. Even when it uniquely matches the synthetic table, `DEMO_ONLY_PHONE_MATCH` is not production-grade authentication.
 

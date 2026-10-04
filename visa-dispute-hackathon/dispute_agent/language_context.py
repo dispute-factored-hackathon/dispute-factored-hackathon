@@ -11,6 +11,7 @@ SUPPORTED_LOCALES = {
     "es": {"es-419", "es-AR", "es-CO", "es-ES", "es-MX"},
 }
 DEFAULT_LOCALES = {"en": "en-US", "pt": "pt-BR", "es": "es-419"}
+REGISTERED_PROFILE_LOCALES = {"en-US", "pt-BR", "es-AR", "es-CO", "es-MX"}
 LOCALE_ACCENTS = {
     "en-US": "american",
     "pt-BR": "brazilian",
@@ -22,6 +23,17 @@ LOCALE_ACCENTS = {
     "es-MX": "mexican",
 }
 ACCENT_LOCALES = {accent: locale for locale, accent in LOCALE_ACCENTS.items()}
+ACCENT_LOCALES.update(
+    {
+        "english": "en-US",
+        "american_english": "en-US",
+        "portuguese": "pt-BR",
+        "brazilian_portuguese": "pt-BR",
+        "argentine_spanish": "es-AR",
+        "colombian_spanish": "es-CO",
+        "mexican_spanish": "es-MX",
+    }
+)
 COUNTRY_DEFAULTS = {
     "argentina": ("es", "es-AR"),
     "brasil": ("pt", "pt-BR"),
@@ -57,18 +69,26 @@ class ConversationLocaleContext:
 
     @classmethod
     def from_customer_record(
-        cls, *, country: str | None, detected_accent: str | None
+        cls,
+        *,
+        country: str | None,
+        detected_accent: str | None,
+        preferred_locale: str | None = None,
     ) -> ConversationLocaleContext:
         normalized_country = _normalize_country(country)
         country_default = COUNTRY_DEFAULTS.get(normalized_country)
-        language, locale = country_default or ("en", "en-US")
+        normalized_preference = (preferred_locale or "").strip()
         normalized_accent = (detected_accent or "").strip().casefold().replace("-", "_")
         accent_locale = ACCENT_LOCALES.get(normalized_accent)
-        # Country is the authoritative regional signal. A generic or conflicting
-        # accent label must not turn a Brazilian profile into Portuguese from
-        # Portugal (or move a Colombian profile to another Spanish locale).
-        if country_default is None and accent_locale in SUPPORTED_LOCALES[language]:
+
+        if normalized_preference in REGISTERED_PROFILE_LOCALES:
+            locale = normalized_preference
+        elif accent_locale in REGISTERED_PROFILE_LOCALES:
             locale = accent_locale
+        else:
+            _, locale = country_default or ("en", "en-US")
+
+        language = locale.split("-", 1)[0]
         return cls(country, language, locale, LOCALE_ACCENTS[locale], "customer_record")
 
     @classmethod
