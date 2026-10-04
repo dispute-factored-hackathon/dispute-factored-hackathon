@@ -10,6 +10,7 @@ FROM public.ecr.aws/lambda/python:3.12
 COPY --from=build ${LAMBDA_TASK_ROOT} ${LAMBDA_TASK_ROOT}
 COPY dispute_agent ${LAMBDA_TASK_ROOT}/dispute_agent
 COPY webapp ${LAMBDA_TASK_ROOT}/webapp
+COPY alembic.ini ${LAMBDA_TASK_ROOT}/alembic.ini
 
 ENV OPENAI_REALTIME_MODEL=gpt-realtime-2.1 \
     OPENAI_REALTIME_VOICE=cedar \

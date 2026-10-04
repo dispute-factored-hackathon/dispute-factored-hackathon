@@ -2,14 +2,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from webapp.backend.api.dependencies import require_customer
+from webapp.backend.api.dependencies import RepositoriesDependency, require_customer
 from webapp.backend.models.customer import Customer
 from webapp.backend.models.store import StoreCartItem, StoreProduct
-from webapp.backend.repositories.mock import MockStoreCatalogRepository
-from webapp.backend.repositories.registry import (
-    product_repository,
-    transaction_repository,
-)
+from webapp.backend.repositories.store_catalog import StaticStoreCatalogRepository
 from webapp.backend.schemas.store import (
     CheckoutRequest,
     CheckoutResponse,
@@ -24,11 +20,14 @@ from webapp.backend.store_catalog import STORE_PRODUCTS
 
 router = APIRouter(prefix="/api/store", tags=["shady-business"])
 
-store_service = StoreService(
-    MockStoreCatalogRepository(STORE_PRODUCTS),
-    product_repository,
-    transaction_repository,
-)
+store_catalog = StaticStoreCatalogRepository(STORE_PRODUCTS)
+
+
+def get_store_service(repositories: RepositoriesDependency) -> StoreService:
+    return StoreService(store_catalog, repositories.products, repositories.transactions)
+
+
+StoreServiceDependency = Annotated[StoreService, Depends(get_store_service)]
 
 
 def product_response(product: StoreProduct) -> StoreProductResponse:
@@ -36,12 +35,14 @@ def product_response(product: StoreProduct) -> StoreProductResponse:
 
 
 @router.get("/products", response_model=list[StoreProductResponse])
-def list_store_products() -> list[StoreProductResponse]:
+def list_store_products(store_service: StoreServiceDependency) -> list[StoreProductResponse]:
     return [product_response(product) for product in store_service.list_catalog()]
 
 
 @router.get("/products/{product_id}", response_model=StoreProductResponse)
-def get_store_product(product_id: str) -> StoreProductResponse:
+def get_store_product(
+    product_id: str, store_service: StoreServiceDependency
+) -> StoreProductResponse:
     try:
         return product_response(store_service.get_catalog_product(product_id))
     except StoreProductNotFoundError as error:
@@ -55,6 +56,7 @@ def get_store_product(product_id: str) -> StoreProductResponse:
 def checkout(
     request: CheckoutRequest,
     customer: Annotated[Customer, Depends(require_customer)],
+    store_service: StoreServiceDependency,
 ) -> CheckoutResponse:
     try:
         purchase, _anomaly, item_count = store_service.checkout(

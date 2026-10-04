@@ -1,4 +1,4 @@
-name: Deploy AWS voice demo
+name: Deploy AWS application
 
 on:
   release:
@@ -26,7 +26,7 @@ jobs:
         (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
       }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: visa-dispute-hackathon
@@ -43,7 +43,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv and Python
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           working-directory: visa-dispute-hackathon
           python-version: "3.11"
@@ -67,11 +67,12 @@ jobs:
           role-session-name: github-dispute-demo
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Validate CloudFormation templates
         run: |
           aws cloudformation validate-template --template-body file://infra/aws/bootstrap.yaml >/dev/null
+          aws cloudformation validate-template --template-body file://infra/aws/database.yaml >/dev/null
           aws cloudformation validate-template --template-body file://infra/aws/application.yaml >/dev/null
 
       - name: Build, push, and deploy
@@ -93,18 +94,41 @@ jobs:
           grep -q 'invalid_webhook_signature' response.json
           echo "Protected webhook smoke test passed."
 
+      - name: Verify the web application
+        run: |
+          application_url="$(aws cloudformation describe-stacks \
+            --stack-name dispute-factored-demo \
+            --query "Stacks[0].Outputs[?OutputKey=='ApplicationUrl'].OutputValue" \
+            --output text)"
+          health_status="$(curl --silent --output health.json --write-out '%{http_code}' \
+            --max-time 60 \
+            "${application_url}health")"
+          login_status="$(curl --silent --output login.html --write-out '%{http_code}' \
+            --max-time 60 \
+            "${application_url}login")"
+          test "${health_status}" = "200"
+          test "${login_status}" = "200"
+          grep -q '"status":"ok"' health.json
+          grep -q 'Factored Bank' login.html
+          echo "Web application smoke test passed."
+
       - name: Publish deployment summary
         if: ${{ success() }}
         run: |
+          application_url="$(aws cloudformation describe-stacks \
+            --stack-name dispute-factored-demo \
+            --query "Stacks[0].Outputs[?OutputKey=='ApplicationUrl'].OutputValue" \
+            --output text)"
           webhook_url="$(aws cloudformation describe-stacks \
             --stack-name dispute-factored-demo \
             --query "Stacks[0].Outputs[?OutputKey=='OpenAIWebhookUrl'].OutputValue" \
             --output text)"
           {
-            echo '## AWS voice demo deployed'
+            echo '## AWS application deployed'
             echo
             echo "- Region: \`${AWS_REGION}\`"
             echo "- Revision: \`${GITHUB_SHA}\`"
+            echo "- Application: ${application_url}"
             echo "- Webhook: ${webhook_url}"
-            echo '- Smoke test: unsigned requests are rejected as expected.'
+            echo '- Smoke tests: frontend/API are healthy and unsigned webhook requests are rejected.'
           } >> "${GITHUB_STEP_SUMMARY}"

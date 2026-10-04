@@ -3,7 +3,10 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from fakes import new_repositories
+
 from dispute_agent import aws_lambda
+from dispute_agent.transaction_search import RepositoryTransactionSearch
 
 
 class FakeWebhooks:
@@ -74,18 +77,22 @@ class AwsLambdaTests(unittest.TestCase):
         self.context = SimpleNamespace(invoked_function_arn="arn:aws:lambda:test:function:sip")
 
     def tearDown(self):
-        aws_lambda._gateway = None
+        aws_lambda._close_gateway()
 
-    def test_gateway_uses_shared_mock_backend(self):
+    def test_gateway_uses_the_shared_postgres_repositories_without_seeding(self):
         gateway = object()
+        repositories = new_repositories()
         with (
+            patch.object(aws_lambda, "configure_application_runtime"),
             patch.object(aws_lambda, "_configure_langsmith"),
+            patch.object(aws_lambda, "open_repositories", return_value=repositories),
             patch.object(
                 aws_lambda,
                 "_load_openai_secret",
                 return_value={
                     "OPENAI_API_KEY": "test-key",
                     "OPENAI_WEBHOOK_SECRET": "test-secret",
+                    "JEV_API_KEY": "jev-test-key",
                 },
             ),
             patch.object(
@@ -97,14 +104,20 @@ class AwsLambdaTests(unittest.TestCase):
             resolved = aws_lambda._get_gateway()
 
         self.assertIs(resolved, gateway)
-        customer_source = gateway_type.call_args.args[0]
-        customer = customer_source.get_by_phone("+5511981020050")
-        self.assertIsNotNone(customer)
-        self.assertEqual(customer.document_number, "123456")
-        self.assertEqual(customer.first_name, "Gabriel")
-        self.assertEqual(customer.last_name, "Silveira")
+        arguments = gateway_type.call_args
+        self.assertIs(arguments.args[0], repositories.customers)
+        self.assertIs(arguments.kwargs["complaint_repository"], repositories.complaints)
+        self.assertIsInstance(
+            arguments.kwargs["transaction_repository"], RepositoryTransactionSearch
+        )
+        self.assertIs(
+            arguments.kwargs["transaction_repository"].transactions, repositories.transactions
+        )
+        self.assertEqual(arguments.kwargs["jev_api_key"], "jev-test-key")
+        # Regression: a hardcoded demo customer used to be seeded on every cold start.
+        self.assertEqual(repositories.customers.search_by_full_name("", limit=10), [])
 
-    def test_valid_webhook_accepts_then_invokes_worker(self):
+    def test_valid_webhook_returns_before_worker_accepts_call(self):
         gateway = FakeGateway(incoming_event())
         request = {"body": "{}", "headers": {"webhook-signature": "test"}}
 
@@ -115,7 +128,7 @@ class AwsLambdaTests(unittest.TestCase):
             response = aws_lambda.lambda_handler(request, self.context)
 
         self.assertEqual(response["statusCode"], 202)
-        self.assertEqual(gateway.accepted, [("call_aws", "+5511999990001")])
+        self.assertEqual(gateway.accepted, [])
         invoke_worker.assert_called_once_with(
             self.context,
             call_id="call_aws",
@@ -153,6 +166,7 @@ class AwsLambdaTests(unittest.TestCase):
             response = aws_lambda.lambda_handler(event, self.context)
 
         self.assertEqual(response, {"status": "call_finished"})
+        self.assertEqual(gateway.accepted, [("call_aws", "+5511999990001")])
         self.assertEqual(
             gateway.controlled,
             [("call_aws", "+5511999990001", aws_lambda.MAX_CALL_SECONDS)],

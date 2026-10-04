@@ -1,13 +1,14 @@
-from fastapi.testclient import TestClient
-
-from webapp.backend.main import app
-from webapp.backend.repositories.mock import (
+from fakes import (
+    add_history,
     complaint_repository,
     customer_repository,
     product_repository,
     session_repository,
     transaction_repository,
 )
+from fastapi.testclient import TestClient
+
+from webapp.backend.main import app
 
 
 def clear_repositories() -> None:
@@ -24,6 +25,7 @@ def create_customer(
     factored_id: str,
     first_name: str,
     phone: str,
+    history: bool = True,
 ) -> dict:
     response = client.post(
         "/api/customers",
@@ -40,7 +42,11 @@ def create_customer(
 
     assert response.status_code == 201
 
-    return response.json()
+    created = response.json()
+    if history:
+        add_history(created["customer_id"])
+
+    return created
 
 
 def login(
@@ -101,7 +107,31 @@ def test_complaint_detail_requires_authentication() -> None:
     assert response.status_code == 401
 
 
-def test_signup_creates_demo_complaints() -> None:
+def test_signup_starts_without_complaints() -> None:
+    """Regression: signup used to invent hardcoded history; activity now comes from the shop."""
+
+    client = TestClient(app)
+
+    create_customer(
+        client,
+        factored_id="111111",
+        first_name="Gabriel",
+        phone="+5511981020050",
+        history=False,
+    )
+
+    login(
+        client,
+        "111111",
+    )
+
+    response = client.get("/api/complaints")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_customer_history_lists_every_owned_complaint() -> None:
     client = TestClient(app)
 
     create_customer(

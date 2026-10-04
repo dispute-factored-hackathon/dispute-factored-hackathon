@@ -1,14 +1,11 @@
 from dataclasses import dataclass
 from typing import Annotated
 
-from fastapi import Cookie, Depends, HTTPException, status
+from fastapi import Cookie, Depends, HTTPException, Request, status
 
 from webapp.backend.models.customer import Customer
 from webapp.backend.models.session import CustomerSession
-from webapp.backend.repositories.registry import (
-    customer_repository,
-    session_repository,
-)
+from webapp.backend.repositories.interfaces import Repositories
 from webapp.backend.services.auth import (
     AuthenticationService,
 )
@@ -16,10 +13,24 @@ from webapp.backend.services.auth import (
 SESSION_COOKIE_NAME = "factored_session"
 
 
-authentication_service = AuthenticationService(
-    customer_repository,
-    session_repository,
-)
+async def get_repositories(request: Request) -> Repositories:
+    """Return the shared repositories, opening them on the first data-backed request."""
+
+    from webapp.backend.services.runtime import ensure_repositories
+
+    return await ensure_repositories(request.app)
+
+
+RepositoriesDependency = Annotated[Repositories, Depends(get_repositories)]
+
+
+def get_authentication_service(repositories: RepositoriesDependency) -> AuthenticationService:
+    return AuthenticationService(repositories.customers, repositories.sessions)
+
+
+AuthenticationServiceDependency = Annotated[
+    AuthenticationService, Depends(get_authentication_service)
+]
 
 
 @dataclass(frozen=True)
@@ -29,6 +40,7 @@ class AuthenticatedContext:
 
 
 def require_authenticated_context(
+    authentication_service: AuthenticationServiceDependency,
     factored_session: Annotated[str | None, Cookie()] = None,
 ) -> AuthenticatedContext:
     if not factored_session:

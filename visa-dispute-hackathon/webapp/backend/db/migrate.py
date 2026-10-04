@@ -18,6 +18,7 @@ from psycopg import sql
 
 from webapp.backend.config import get_settings
 from webapp.backend.db.database import describe_target
+from webapp.backend.db.schema_version import LATEST_SCHEMA_REVISION
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
@@ -33,6 +34,11 @@ APP_GRANTS = (
     ),
     "GRANT SELECT, INSERT, DELETE ON sessions TO {role}",
     "GRANT SELECT ON alembic_version TO {role}",
+    # Izzy web chat checkpoints (LangGraph tables, created below by the owner role).
+    (
+        "GRANT SELECT, INSERT, UPDATE, DELETE ON checkpoints, checkpoint_blobs, "
+        "checkpoint_writes, checkpoint_migrations TO {role}"
+    ),
 )
 
 
@@ -55,6 +61,10 @@ def expected_revision() -> str:
     head = ScriptDirectory.from_config(alembic_config(quiet=True)).get_current_head()
     if head is None:
         raise MigrationError("No Alembic revisions found.")
+    if head != LATEST_SCHEMA_REVISION:
+        raise MigrationError(
+            "LATEST_SCHEMA_REVISION must be updated when an Alembic migration is added."
+        )
     return head
 
 
@@ -86,6 +96,12 @@ def ensure_app_role(connection: psycopg.Connection, *, database: str, password: 
 
 def upgrade(owner_url: str, app_password: str | None, *, quiet: bool = False) -> None:
     command.upgrade(alembic_config(owner_url, quiet=quiet), "head")
+    # The LangGraph checkpointer owns its own schema and migrations; run them as the owner so
+    # the application role never needs CREATE.
+    from langgraph.checkpoint.postgres import PostgresSaver
+
+    with PostgresSaver.from_conn_string(owner_url) as saver:
+        saver.setup()
     with psycopg.connect(owner_url) as connection:
         ensure_app_role(connection, database=connection.info.dbname, password=app_password)
 

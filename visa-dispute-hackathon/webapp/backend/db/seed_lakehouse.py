@@ -1,11 +1,11 @@
 """Seed the Docker PostgreSQL with cards, transactions and complaints from the lakehouse.
 
-    uv run dispute-db-seed-lakehouse                 # 300 customers (a few thousand transactions)
+    uv run dispute-db-seed-lakehouse                 # 100 customers (roughly 2,000 transactions)
     uv run dispute-db-seed-lakehouse --customers 50
     uv run dispute-db-seed-lakehouse --dry-run       # read + validate only, writes nothing
     uv run dispute-db-seed-lakehouse --all           # every customer (long: ~1.4M transactions)
 
-The source is the synthetic hackathon dataset (`lakehouse.silver` on MotherDuck, read through its
+This is the web app's only source of customer data. The source is the synthetic hackathon dataset (`lakehouse.silver` on MotherDuck, read through its
 PostgreSQL endpoint with `MOTHERDUCK_TOKEN`). The script only ever runs SELECTs there. It writes
 with the owner role (`DATABASE_URL_OWNER`), is idempotent (existing rows are kept) and refuses
 non-local targets unless `--allow-remote` is given.
@@ -16,31 +16,35 @@ reaches this process.
 """
 
 import argparse
-import re
 import sys
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol, TypeVar
 
-import certifi
 import psycopg
 from psycopg import sql
-from psycopg.conninfo import conninfo_to_dict, make_conninfo
+from psycopg.conninfo import conninfo_to_dict
 from pydantic import BaseModel, ValidationError
 
 from webapp.backend.config import Settings, get_settings
 from webapp.backend.db import lakehouse_mapping as mapping
 from webapp.backend.db.database import describe_target
+from webapp.backend.db.motherduck import (
+    LakehouseUnavailableError,
+    connect_lakehouse,
+    lakehouse_schema,
+)
 from webapp.backend.repositories.postgres import PostgresCustomerRepository, dump_model
 
 T = TypeVar("T")
 M = TypeVar("M", bound=BaseModel)
 
-DEFAULT_CUSTOMERS = 300
+DEFAULT_CUSTOMERS = 100
+# Below this the demo has too little card activity to search and dispute; the report warns.
+MIN_DEMO_TRANSACTIONS = 1_000
 DEFAULT_CHUNK_SIZE = 200
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", ""}
-_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _CARD_TYPES_SQL = ", ".join(f"'{card_type}'" for card_type in mapping.CARD_TYPES)
 
 
@@ -65,10 +69,18 @@ class SeedReport:
     transactions_skipped: int = 0
     complaints_inserted: int = 0
     rows_rejected: int = 0
+    # Transactions available to the demo afterwards (whole table, or the validated rows on a dry run).
+    transactions_available: int = 0
 
     def lines(self) -> list[str]:
         present = f"(already present: {self.customers_already_present})"
         skipped = f"(skipped: {self.transactions_skipped})"
+        warnings = []
+        if self.transactions_available < MIN_DEMO_TRANSACTIONS:
+            warnings.append(
+                f"WARNING: only {self.transactions_available} transactions are available; the "
+                f"demo needs at least {MIN_DEMO_TRANSACTIONS}. Re-run with a larger --customers."
+            )
         return [
             f"customers selected      : {self.customers_selected}",
             f"customers inserted      : {self.customers_inserted} {present}",
@@ -77,6 +89,8 @@ class SeedReport:
             f"transactions inserted   : {self.transactions_inserted} {skipped}",
             f"complaints inserted     : {self.complaints_inserted}",
             f"rows rejected by models : {self.rows_rejected}",
+            f"transactions available  : {self.transactions_available}",
+            *warnings,
         ]
 
 
@@ -87,33 +101,11 @@ class MotherDuckSource:
     """Read-only access to `lakehouse.silver` through MotherDuck's PostgreSQL endpoint."""
 
     def __init__(self, settings: Settings) -> None:
-        if settings.motherduck_token is None:
-            raise SeedError("MOTHERDUCK_TOKEN is not set. Add it to .env (see .env.example).")
-        if not _IDENTIFIER.match(settings.motherduck_schema):
-            raise SeedError("MOTHERDUCK_SCHEMA must be a plain identifier such as 'silver'.")
-        self.schema = settings.motherduck_schema
-        self._target = f"{settings.motherduck_pg_host}/{settings.motherduck_database}"
-        dsn = make_conninfo(
-            host=settings.motherduck_pg_host,
-            port=5432,
-            user="postgres",
-            password=settings.motherduck_token.get_secret_value(),
-            dbname=settings.motherduck_database,
-            sslmode="verify-full",
-            # certifi ships the ISRG Root X1 used by the endpoint; "system" is unreliable on Windows.
-            sslrootcert=certifi.where(),
-            connect_timeout=20,
-        )
         try:
-            # Client-side binding: the endpoint is a proxy, so plain SQL text is the safest protocol.
-            self._connection = psycopg.connect(
-                dsn, cursor_factory=psycopg.ClientCursor, autocommit=True
-            )
-        except psycopg.OperationalError as error:
-            raise SeedError(
-                f"Cannot connect to MotherDuck at {self._target} "
-                "(check MOTHERDUCK_TOKEN, MOTHERDUCK_PG_HOST and your network)."
-            ) from error
+            self.schema = lakehouse_schema(settings)
+            self._connection = connect_lakehouse(settings)
+        except LakehouseUnavailableError as error:
+            raise SeedError(str(error)) from error
 
     def close(self) -> None:
         self._connection.close()
@@ -346,6 +338,12 @@ def seed(
             f"chunk {index}/{total_chunks}: customers={len(customers)} cards={len(cards)} "
             f"transactions={len(transactions)} complaints={len(complaints)}"
         )
+    if connection is None:
+        report.transactions_available = report.transactions_inserted
+    else:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM transactions")
+            report.transactions_available = cursor.fetchone()[0]
     return report
 
 

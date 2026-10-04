@@ -7,14 +7,8 @@ from fastapi import (
     status,
 )
 
-from webapp.backend.api.dependencies import require_customer
+from webapp.backend.api.dependencies import RepositoriesDependency, require_customer
 from webapp.backend.models.customer import Customer
-from webapp.backend.repositories.registry import (
-    complaint_repository,
-    customer_repository,
-    product_repository,
-    transaction_repository,
-)
 from webapp.backend.schemas.customer import (
     CustomerProfileResponse,
     CustomerProfileUpdateRequest,
@@ -32,13 +26,12 @@ router = APIRouter(
 )
 
 
-signup_service = SignupService(
-    customer_repository,
-    product_repository,
-    transaction_repository,
-    complaint_repository,
-)
-profile_service = CustomerProfileService(customer_repository)
+def get_signup_service(repositories: RepositoriesDependency) -> SignupService:
+    return SignupService(repositories.customers, repositories.products)
+
+
+def get_profile_service(repositories: RepositoriesDependency) -> CustomerProfileService:
+    return CustomerProfileService(repositories.customers)
 
 
 def profile_response(customer: Customer) -> CustomerProfileResponse:
@@ -63,6 +56,7 @@ def profile_response(customer: Customer) -> CustomerProfileResponse:
 )
 def create_customer(
     request: CustomerSignupRequest,
+    signup_service: Annotated[SignupService, Depends(get_signup_service)],
 ) -> CustomerSignupResponse:
     try:
         return signup_service.signup(request)
@@ -91,6 +85,7 @@ def get_profile(
 def update_profile(
     request: CustomerProfileUpdateRequest,
     customer: Annotated[Customer, Depends(require_customer)],
+    profile_service: Annotated[CustomerProfileService, Depends(get_profile_service)],
 ) -> CustomerProfileResponse:
     try:
         updated = profile_service.update(customer, request)

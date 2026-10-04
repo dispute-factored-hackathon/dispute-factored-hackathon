@@ -18,15 +18,17 @@ from psycopg.conninfo import make_conninfo
 from webapp.backend.config import Settings
 from webapp.backend.db import migrate
 from webapp.backend.db.database import Database, DatabaseUnavailableError
-from webapp.backend.repositories.postgres import hash_session_id, normalize_search_name
-from webapp.backend.repositories.registry import BackendConfigurationError, build_repositories
+from webapp.backend.repositories.postgres import (
+    BackendConfigurationError,
+    hash_session_id,
+    normalize_search_name,
+    open_repositories,
+)
 
 
 @pytest.fixture
 def repos(clean_postgres):
-    built = build_repositories(
-        Settings(_env_file=None, repository_backend="postgres", database_url=clean_postgres.app_url)
-    )
+    built = open_repositories(Settings(_env_file=None, database_url=clean_postgres.app_url))
     yield built
     built.close()
 
@@ -58,9 +60,7 @@ def test_session_survives_a_new_connection_pool_like_an_app_restart(repos, clean
     session = make_session("persisted-session")
     repos.sessions.create(session)
 
-    restarted = build_repositories(
-        Settings(_env_file=None, repository_backend="postgres", database_url=clean_postgres.app_url)
-    )
+    restarted = open_repositories(Settings(_env_file=None, database_url=clean_postgres.app_url))
     try:
         assert restarted.sessions.get("persisted-session") == session
     finally:
@@ -179,11 +179,11 @@ def test_a_failed_write_leaves_no_partial_row(repos):
     assert repos.customers.get_by_id("C2") is None
 
 
-def test_search_normalisation_matches_the_mock_implementation():
-    from webapp.backend.repositories.mock import MockCustomerRepository
+def test_search_normalisation_matches_the_in_memory_test_double():
+    from fakes import InMemoryCustomerRepository
 
     for text in ("José María  Pérez", "ÁÉÍÓÚ ñandú", "  MIXED   Case ", "", "Zoë Müller-Åberg"):
-        assert normalize_search_name(text) == MockCustomerRepository._normalize_name(text)
+        assert normalize_search_name(text) == InMemoryCustomerRepository._normalize_name(text)
 
 
 def test_session_hash_is_a_stable_sha256_hex_digest():
@@ -292,11 +292,11 @@ def test_outdated_schema_revision_is_rejected(clean_postgres):
         database.close()
 
 
-def test_postgres_backend_requires_a_database_url():
-    settings = Settings(_env_file=None, repository_backend="postgres")
+def test_opening_the_repositories_requires_a_database_url():
+    settings = Settings(_env_file=None)
 
     with pytest.raises(BackendConfigurationError, match=r"DATABASE_URL"):
-        build_repositories(settings)
+        open_repositories(settings)
 
 
 def test_nul_bytes_are_rejected_as_invalid_input_not_as_a_server_error(repos):
