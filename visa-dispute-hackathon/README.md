@@ -15,13 +15,13 @@ Project documentation is maintained in the [GitHub Wiki](https://github.com/disp
 | Domain | Python services, deterministic policies and Pydantic tool schemas | Customer scope, transaction ranking, Visa mapping, card block, complaint creation and handoff preconditions |
 | Persistence | Repository contracts, PostgreSQL 16, psycopg/pool and Alembic | Shared web/voice operational data, schema evolution and replaceable test adapters |
 | Data ingestion | MotherDuck, Python seed pipeline and Pydantic mapping | Read-only synthetic source, validation, masking and idempotent PostgreSQL loads |
-| Cloud | Lambda, Function URLs, ECR, Secrets Manager, CloudWatch, IAM and CloudFormation | Cost-conscious runtime, secret retrieval, logs and repeatable infrastructure in `sa-east-1` |
+| Cloud | Lambda, Function URLs, EventBridge, ECR, Secrets Manager, CloudWatch, IAM and CloudFormation | Cost-conscious runtime, warm-up scheduling, secret retrieval, logs and repeatable infrastructure in `sa-east-1` |
 | Observability | Structured CloudWatch events, LangSmith, PostgreSQL telemetry, Twilio/OpenAI consoles and GitHub Actions | Call reconstruction, model/tool traces, interaction state, provider diagnosis and delivery evidence |
 | Engineering | `uv`, Docker, Pytest, Ruff, Coverage.py, Radon, Semgrep and optional SonarQube/Gitleaks | Reproducible environments, tests, code quality, security checks and deployment |
 
 The AI layer never receives authority to choose customer scope, execute arbitrary SQL, block cards, create complaints or select the transfer destination. It returns typed interpretations; server-owned services validate evidence and perform permitted actions.
 
-For diagrams, deployment status, design boundaries and the full technology inventory, read [Solution architecture and technology stack](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki/Solution-Architecture-and-Technology-Stack). For diagnostics, read the root [`APPLICATION_LOGS.md`](../APPLICATION_LOGS.md).
+For diagrams, deployment status, design boundaries and the full technology inventory, read [Solution architecture and technology stack](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki/Solution-Architecture-and-Technology-Stack). For diagnostics, read [Application logs and traces](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki/Application-Logs-and-Traces).
 
 ## Synthetic GUI login contract
 
@@ -35,13 +35,15 @@ Run the local GUI login with the full synthetic customer table:
 CUSTOMERS_CSV=../data/raw/customers.csv uv run python -m dispute_agent.gui_app
 ```
 
-Then open `http://127.0.0.1:8000`. The authenticated experience includes cards, transactions, complaints, profile, guided onboarding and the Shady Business simulator. The `/agent` browser chat remains a placeholder; the complete agentic dispute journey currently runs through the telephone channel.
+Then open `http://127.0.0.1:8000`. The authenticated experience includes cards, transactions, complaints, profile, guided onboarding, the Shady Business simulator and the implemented `/agent` dispute chat.
 
 ## Synthetic voice identity contract
 
-`VoiceCallerIdentityService` first performs an exact normalized lookup of the supplied mobile phone. A unique match creates `DEMO_ONLY_PHONE_MATCH`. An unknown phone preserves only its calling-code hint and requires a numeric `document_number`; a unique exact normalized document match creates `DEMO_ONLY_DOCUMENT_MATCH`. The telephone integration must collect this value from DTMF keypad events rather than speech or model extraction. Alphanumeric documents require human fallback because a numeric telephone keypad cannot represent them unambiguously. Neither mechanism is secure enough for real banking.
+`VoiceCallerIdentityService` first performs an exact normalized lookup of the supplied mobile phone. A unique match supplies the registered language and regional accent, but does not authenticate the caller: Izzy greets in that locale, skips the redundant language question and asks whether to authenticate with the calling number or a document. Only an explicit phone-method choice performs the second lookup and creates `DEMO_ONLY_PHONE_MATCH`.
 
-The service returns country and detected-accent data only from the matched synthetic customer record. It does not expose documents or phone numbers to the conversational model. The language branch consumes this deterministic result and owns the conversation state needed to keep or explicitly change language and accent.
+An unknown phone preserves only its calling-code hint. Izzy greets with the corresponding regional accent, asks whether to keep or change the language, and then asks for the authentication method. A numeric `document_number` must be collected from DTMF keypad events rather than speech or model extraction; a unique match creates `DEMO_ONLY_DOCUMENT_MATCH`. Alphanumeric documents require human fallback because a numeric telephone keypad cannot represent them unambiguously. Neither mechanism is secure enough for real banking. Izzy states during the opening that the caller may request a human operator at any point in the workflow.
+
+The service returns the preferred locale, country and accent only from the matched synthetic customer record. It does not expose documents or phone numbers to the conversational model. Registered profiles can select American English, Brazilian Portuguese, Argentine Spanish, Colombian Spanish or Mexican Spanish. The caller may still explicitly change language or regional accent during the call.
 
 ## Test a real phone call through SIP and OpenAI Realtime
 
@@ -49,7 +51,7 @@ The SIP adapter in `dispute_agent.sip_realtime` implements the inbound Realtime 
 
 For this synthetic demo, `DEMO_LOG_FULL_TRANSCRIPTS=true` enables OpenAI input-audio transcription and stores every completed customer and agent utterance in CloudWatch as a `voice.transcript.completed` JSON event. The `transcript` value is written exactly as received, without redaction or truncation, and `speaker` identifies `customer` or `agent`. This mode must only be used with fake data: disable it before adapting the service to real customers, and never speak real credentials, document numbers, card numbers, or other secrets during a demo call. Keypad document digits remain outside the verbal transcript and are not logged.
 
-The caller number is evaluated before the model speaks. A unique exact normalized match in `customers.mobile_phone` authenticates the synthetic customer and loads language, country, and accent from that customer record. If the complete number is not found or is ambiguous, it does not authenticate: only the international calling code is used as a regional language/accent hint, the caller confirms or changes the language, and authentication continues with keypad-only document entry. An explicit language change updates the active Realtime session instructions for the rest of the call.
+The caller number is evaluated before the model speaks. A unique exact normalized match in `customers.mobile_phone` loads the profile's registered language/accent and advances directly to authentication-method choice without attaching an authenticated identity. If the complete number is not found or is ambiguous, only the international calling code is used as an unverified regional hint; the caller confirms or changes the language before choosing phone or keypad-document authentication. An explicit language change updates the active Realtime session instructions for the rest of the call.
 
 This remains a synthetic demonstration. A SIP `From` header can be spoofed and is explicitly treated as untrusted metadata by OpenAI. Even when it uniquely matches the synthetic table, `DEMO_ONLY_PHONE_MATCH` is not production-grade authentication.
 
@@ -148,27 +150,33 @@ Check `http://127.0.0.1:8001/health`. A local HTTPS tunnel remains useful for sh
 
 ### Cost-conscious AWS deployment
 
-The hackathon deployment intentionally avoids always-on or redundant services. It does **not** create App Runner, ECS/Fargate, EC2, an Application Load Balancer, API Gateway, a NAT Gateway, Route 53, ACM, DynamoDB, or a VPC.
+The hackathon deployment avoids redundant services. It does **not** create App Runner, ECS/Fargate, an Application Load Balancer, API Gateway, a NAT Gateway, Route 53, ACM or DynamoDB. PostgreSQL is private, so the stack creates a small VPC and one `t4g.micro` egress instance; this is materially cheaper than a managed NAT Gateway and has no inbound rule.
 
 The components are:
 
-- **Web Lambda Function URL:** serves the FastAPI backend and both browser interfaces from the same immutable image. The public GitHub Pages address redirects here.
+- **Web Lambda Function URL:** serves the FastAPI backend and both browser interfaces from the same immutable image. Public pages and static assets start without opening PostgreSQL or loading the AI stack; those dependencies initialize only when their APIs are first used. The public GitHub Pages address redirects here.
+- **Web warm-up schedule:** EventBridge invokes the web Lambda every five minutes and initializes the database pool and Izzy chat runtime. The deploy script also warms the newly deployed function before reporting success.
 - **Voice Lambda Function URL:** receives the signed OpenAI webhook; standard Lambda invocation and duration charges still apply.
 - **Voice SnapStart alias:** the Function URL and asynchronous worker invoke a published `live` alias restored from a Python 3.12 snapshot. This reduces cold initialization without keeping paid capacity continuously provisioned.
 - **Lambda ingress invocation:** verifies the signature and accepts the SIP call immediately.
 - **Lambda asynchronous worker invocation:** opens the private Realtime sideband WebSocket for the duration of the call. It stops at 14 minutes, before Lambda's 15-minute limit.
 - **ECR:** stores the immutable Docker image and retains only the three newest images.
-- **One Secrets Manager secret:** stores `OPENAI_API_KEY`, `OPENAI_WEBHOOK_SECRET`, and `JEV_API_KEY`. It is fetched once per Lambda execution environment rather than on every message or keypad event.
+- **Secrets Manager:** keeps the OpenAI/Jev/LangSmith runtime credentials, the Aurora owner credential, the generated least-privilege application credential and the MotherDuck token outside the image and browser.
 - **CloudWatch Logs:** keeps JSON logs for three days. The application never logs document digits.
+- **Aurora PostgreSQL Serverless v2:** one encrypted private PostgreSQL 16.8 instance, limited to 0–1 ACU and configured to auto-pause after five idle minutes. It stores shared web/voice state.
+- **Database bootstrap Lambda:** alone can read the owner credential; it serializes bootstrap runs with a PostgreSQL advisory lock, runs Alembic, refreshes the restricted `factored_app` grants, guarantees the canonical Izzy service-agent row and imports 100 synthetic customers idempotently.
+- **Low-cost egress instance:** provides outbound-only access from private Lambdas to OpenAI, MotherDuck and AWS APIs. It replaces the much more expensive NAT Gateway.
 - **Concurrency:** uses the account's unreserved Lambda capacity. The demo account currently has a total concurrency quota of 10, so the stack does not reserve concurrency; AWS requires all 10 executions to remain unreserved at that quota. Use account quotas and OpenAI-side limits as the cost and abuse boundary until the Lambda quota is increased.
 
-#### Low-cost voice cold-start control
+#### Low-cost cold-start control
 
 `application.yaml` enables Lambda SnapStart only for the SIP function. Every application deploy publishes a new immutable version, updates the stable `live` alias, and points both the public Function URL and internal asynchronous worker invocation at that alias. CloudFormation deletes the replaced version so unused cached snapshots do not accumulate charges. The deploy script verifies that the published version reports `SnapStart.OptimizationStatus=On` before declaring success.
 
-The web Lambda stays fully on demand. The stack does not enable Provisioned Concurrency, scheduled warmers, Fargate, an Application Load Balancer or API Gateway. At the 512 MB configuration, the São Paulo SnapStart cache is approximately USD 2.57 for a continuously active 30-day version, plus a very small charge for each restored environment and normal Lambda execution. This estimate uses the São Paulo entries in the [AWS Lambda public price list](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSLambda/current/index.json); verify current prices before budgeting. Delete obsolete versions and set `VOICE_SNAPSTART_APPLY_ON=None` when running `deploy.sh` if the optimization is no longer required.
+The web Lambda remains on demand and does not use continuously billed Provisioned Concurrency. It receives 1,024 MB rather than 512 MB, which also gives initialization more CPU, and an EventBridge rule sends a warm-up event every five minutes. The event eagerly opens the database pool and Izzy chat runtime, while ordinary public-page requests remain lightweight through lazy imports. A five-minute schedule produces about 8,640 short Lambda invocations in a 30-day month; normal Lambda and EventBridge pricing applies, but this volume is normally covered by their free tiers and is materially cheaper than keeping provisioned capacity active. The schedule reduces, but cannot guarantee the elimination of, cold starts because Lambda may recycle or scale execution environments.
 
-SnapStart improves Lambda initialization, but it cannot remove Twilio routing, OpenAI call acceptance, model response or downstream database latency. AWS documents the supported runtimes and version/alias lifecycle in [Improving startup performance with Lambda SnapStart](https://docs.aws.amazon.com/lambda/latest/dg/snapstart.html). Diagnose the intervals independently with the structured events documented in the root `APPLICATION_LOGS.md`.
+At the 512 MB voice configuration, the São Paulo SnapStart cache is approximately USD 2.57 for a continuously active 30-day version, plus a very small charge for each restored environment and normal Lambda execution. This estimate uses the São Paulo entries in the [AWS Lambda public price list](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSLambda/current/index.json); verify current prices before budgeting. Delete obsolete versions and set `VOICE_SNAPSTART_APPLY_ON=None` when running `deploy.sh` if the optimization is no longer required.
+
+SnapStart improves Lambda initialization, but it cannot remove Twilio routing, OpenAI call acceptance, model response or downstream database latency. AWS documents the supported runtimes and version/alias lifecycle in [Improving startup performance with Lambda SnapStart](https://docs.aws.amazon.com/lambda/latest/dg/snapstart.html). Diagnose the intervals independently with the structured events documented in [Application logs and traces](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki/Application-Logs-and-Traces).
 
 The call media does not pass through AWS. Browser traffic uses a separate Lambda so a website request cannot interfere with the long-running call worker:
 
@@ -181,7 +189,7 @@ Caller → SIP provider → OpenAI Realtime
 Browser → GitHub Pages redirect → Web Lambda Function URL → FastAPI + static frontend
 ```
 
-This arrangement has no continuously running compute. Lambda is billed only while the short webhook and active call worker execute. The Function URL has no separate endpoint charge. One Secrets Manager secret currently has a small recurring charge, and ECR and CloudWatch are usage-based. OpenAI Realtime and the SIP provider are billed separately.
+Lambda and Aurora application compute are on demand; Aurora pauses when idle. The egress EC2 instance and its public IPv4 address remain running, and encrypted storage, Secrets Manager, ECR and CloudWatch are billed separately. The fixed AWS baseline is expected to be roughly USD 10–15/month in São Paulo before Aurora active time and traffic; verify the current AWS price list before budgeting. OpenAI Realtime, MotherDuck and the SIP provider are billed separately.
 
 Prerequisites are an AWS account, an AWS CLI profile with deployment permissions, and Docker Buildx. From `visa-dispute-hackathon/`, create the persistent ECR repository and secret:
 
@@ -202,15 +210,19 @@ Open **AWS Secrets Manager → dispute-factored/openai-realtime** and replace `O
 Do not commit this value or pass it as a CloudFormation parameter. Then build the Lambda container for Linux, push it to ECR, and deploy the function:
 
 ```bash
+AWS_REGION=sa-east-1 ./infra/aws/deploy.sh database
 AWS_REGION=sa-east-1 ./infra/aws/deploy.sh application
 ```
+
+The one-time `database` action creates the private cluster/network and copies `MOTHERDUCK_TOKEN` from the local ignored `.env` into its retained runtime secret without printing it. The `application` action builds the image, wires web/voice to the database, invokes the idempotent migration/seed function, and fails if it does not return `ready`. Later CI releases update only the application stack and invoke the same safe migration; the GitHub OIDC role cannot create or delete database/network resources.
 
 The command prints both `Application` and `Webhook` addresses. The application address serves the browser experience. Use the exact webhook address to create the OpenAI project webhook, copy its new signing secret, and replace `OPENAI_WEBHOOK_SECRET` in the same AWS secret **before placing the first call**. No voice Lambda environment has started yet, so the first call reads the correct value. After a later secret rotation, deploy a new image tag to replace any warm environments.
 
 The infrastructure definitions are split because ECR must exist before Docker can push the image:
 
 - `infra/aws/bootstrap.yaml`: ECR and the retained secret.
-- `infra/aws/application.yaml`: IAM with least-privilege policies, Lambda, Function URL, bounded asynchronous invocation, and log retention.
+- `infra/aws/database.yaml`: private auto-pausing Aurora, restricted credentials, subnets/security groups and low-cost outbound routing.
+- `infra/aws/application.yaml`: least-privilege IAM, web/voice/bootstrap Lambdas, database wiring, Function URLs, bounded asynchronous invocation and log retention.
 - `Dockerfile.aws`: reproducible Python 3.12 Lambda image using the locked `uv` dependencies. BuildKit adds only `data/raw/customers.csv` from the supplied 150,000-row synthetic dataset; it does not upload the other raw tables to Docker.
 - `infra/aws/deploy.sh`: repeatable bootstrap/build/deploy commands.
 
@@ -226,7 +238,25 @@ The workflow uses GitHub OIDC to obtain short-lived AWS credentials. It does not
 
 The complete synthetic customer table is intentionally not committed. On GitHub-hosted runners, the deploy script extracts `customers.csv` from the newest immutable image already present in the project's ECR repository, then embeds it in the new image. Consequently, the first deployment must still be performed locally with `CUSTOMERS_BUILD_CONTEXT` pointing to a directory containing `customers.csv`. Subsequent automated deployments need no additional data service or paid storage.
 
-Each deployment uses the full Git commit SHA as its immutable image tag, runs Ruff and the complete unit-test suite, validates both CloudFormation templates, updates the application stack, verifies the web health and login pages, and confirms that an unsigned webhook request is rejected with `invalid_webhook_signature`.
+Each deployment uses the full Git commit SHA as its immutable image tag, runs Ruff and the complete unit-test suite, validates all CloudFormation templates, updates the application stack, migrates/seeds the existing private database, warms the web runtime, verifies the web health and login pages, and confirms that an unsigned webhook request is rejected with `invalid_webhook_signature`.
+
+### Performance and workflow regression tests
+
+The repository includes regression coverage for startup, static assets, Izzy chat sessions and the full transaction-search → classification → complaint → satisfaction workflow. Run the focused suite locally with:
+
+```bash
+uv run pytest tests/performance tests/webapp/test_app_startup.py \
+  tests/webapp/test_izzy_chat.py tests/webapp/test_web_aws_lambda.py -q
+```
+
+Measure the deployed public shell independently of browser rendering with:
+
+```bash
+uv run python scripts/performance_smoke.py \
+  https://YOUR-WEB-FUNCTION-URL --runs 10 --max-p95-ms 1000
+```
+
+The performance thresholds are regression budgets, not an availability SLA. Before this change, CloudWatch showed web cold-start durations around 19–20.5 seconds, while repeated warm requests completed externally in roughly 0.10–0.15 seconds. A fresh local import of the application fell from about 5.16 seconds to 1.02–1.07 seconds after removing eager PostgreSQL, LangGraph and OpenAI initialization from the public request path. Continue monitoring Lambda `Duration` p50/p95/p99 and `Errors`; public-page latency and first chat latency should be analyzed separately.
 
 To remove active compute and the public endpoint after the demonstration while deliberately retaining the image repository and secret:
 
@@ -291,9 +321,9 @@ The document digits are accumulated and checked only in backend memory. They are
 uv run python -m unittest tests.test_sip_realtime tests.test_voice_call -v
 ```
 
-## Run the web app (PostgreSQL + lakehouse seed)
+## Run the application data layer (PostgreSQL + lakehouse seed)
 
-The web app stores customers, cards (bank products), transactions, complaints and sessions only in a local PostgreSQL started with Docker. It does not start without that database, and it no longer creates customers or history in code. All customer data is copied from the synthetic hackathon lakehouse (`lakehouse.silver` on MotherDuck, read-only). Copy `.env.example` to `.env` and fill in the passwords and `MOTHERDUCK_TOKEN`. Then run, from this directory:
+The web app, web chat and telephone agent share one PostgreSQL operational store. Locally it runs in Docker; the deployed demo uses private Aurora PostgreSQL Serverless v2. The application does not start without PostgreSQL and no longer creates customer or transaction history in code. Customer data is copied from the read-only synthetic hackathon lakehouse (`lakehouse.silver` on MotherDuck). Copy `.env.example` to `.env`, fill in the passwords and `MOTHERDUCK_TOKEN`, then run from this directory:
 
 ```powershell
 docker compose up -d db
@@ -301,7 +331,7 @@ uv sync
 uv run dispute-db-migrate
 uv run dispute-db-seed-lakehouse --dry-run      # read and validate only
 uv run dispute-db-seed-lakehouse                # 100 active customers, about 2,000 transactions
-uv run uvicorn webapp.backend.main:app --port 8000
+uv run uvicorn webapp.backend.main:app --port 8000 --loop asyncio:SelectorEventLoop
 ```
 
 The seed picks active customers with an active credit card and at least one transaction, in a stable order. Re-running it is safe because existing rows are kept. It refuses non-local databases unless `--allow-remote` is passed, and it warns when fewer than 1,000 transactions are available. Use `--customers N` for a different sample. Card numbers are masked to the last four digits before they leave the lakehouse query.
@@ -310,9 +340,51 @@ New sign-ups get one demo credit card and no history. Their transactions come fr
 
 Tests: `uv run pytest -q`. Web and voice tests use the in-memory test doubles and synthetic fixtures in `tests/fakes.py`. The PostgreSQL integration tests run only when `TEST_POSTGRES_URL` points at a disposable server (`postgresql://postgres:<password>@127.0.0.1:<port>/postgres`). Otherwise they are skipped.
 
-The voice channel (`dispute-sip-server` and the Lambda worker) uses the same database through `DATABASE_URL`, so customers, cards, transactions and complaints are shared between phone and web. A deployed worker needs a PostgreSQL it can reach; it does not create demo customers.
+The voice channel (`dispute-sip-server` and the Lambda worker) uses the same database through `DATABASE_URL`, so customers, cards, transactions, complaints and call-center telemetry are shared between phone and web. In AWS, the database bootstrap Lambda imports the synthetic demo sample; runtime web/voice Lambdas never create seed customers.
+
+### Database bootstrap and Izzy service-agent record
+
+Alembic migration `0002` creates `service_agents`, `call_center_interactions`, `call_transcripts` and `satisfaction_surveys`. It inserts the canonical synthetic agent with `agent_id=AGENT-IZZY`, employee code `IZZY-AI-001`, type `Hybrid`, specialty `Card Disputes`, status `Active` and support for English, Portuguese and Spanish.
+
+The same creation is enforced by `seed_izzy_agent()` during every AWS database bootstrap and when call telemetry is initialized. The operation is idempotent: an existing Izzy row is preserved so accumulated `avg_csat` and `total_monthly_interactions` are not reset; a missing row is recreated. Interaction, transcript and satisfaction rows reference `AGENT-IZZY`, allowing ratings and workload counters to update the same service-agent record.
+
+The deployed AWS database was verified on 4 October 2026 with 100 customers, 159 cards, 1,925 transactions and 56 complaints after the lakehouse seed. The bootstrap returned `status=ready` and `service_agent_id=AGENT-IZZY`. These counts describe the current synthetic sample and will grow when Shady Business purchases or new complaints are created.
 
 Limitations: the data is synthetic, and the parody shop catalog is static copy. Purchases and complaints written by the app or by calls exist only in PostgreSQL; they are not synchronized back to the lakehouse yet.
+
+## Izzy web chat (`/agent`)
+
+Signed-in customers can chat with Izzy from the Izzy tab, or from **Report** on a transaction (`/agent?transaction_id=…`). The chat is mobile-first and streams Izzy's replies. The page also shows Izzy's phone line (`IZZY_PHONE_NUMBER`, served by `GET /api/izzy/contact`) as the alternative channel.
+
+How it works:
+
+- **Customer context:** the customer comes from the web session cookie, so Izzy greets them by name and never asks for the Factored ID, phone, or document again. The session id is bound to that customer; any other customer gets `404`.
+- **Same workflow as calls:** `dispute_agent/web_chat` contains the chat's own LangGraph graph (`guard_input → interpret → screen_abuse → global_controls → workflow → compose_reply`). It runs on `WebChatDisputeService`, a subclass of `VoiceCallService`, so it reuses the call stages unchanged: transaction search and confirmation, Visa classification, card blocking, complaint filing, and CSAT. The voice module is untouched. Interactions, transcripts, surveys, and complaints are recorded with the `Web Chat` channel.
+- **Decisions:** each turn goes first through Jev, with the same bounded questions and thresholds as calls. Then a schema-constrained LLM classifier (`ChatTurnInterpretation`) handles what a call's Realtime model handles: search filters and stage intents. State changes only for an allowed, non-`other` intent above the confidence gate. Prompt abuse is blocked on the single ingress before any branch runs. Human, restart, and cancel are handled before stage decisions.
+- **Suggested problem:** after the purchase is chosen, Izzy proposes the problem the data suggests. A purchase flagged by the fraud model (`is_fraud`, or `fraud_score` of 0.8 or more) is proposed as unauthorized. Another charge at the same merchant for the same amount within three days is proposed as duplicate processing. A "yes" classifies it; a "no" asks the open question. Follow-up answers such as "online" keep the allegation the customer already gave. Classification, filing and closing messages are fixed texts, not paraphrased by the model.
+- **Leaving and coming back:** while a chat is open, opening `/agent` again resumes it with everything shown so far. Opening Izzy from a purchase starts a new chat for that purchase.
+- **Card block and filing:** when an unrecognized charge is classified (Visa 10.3 or 10.4), Izzy blocks the card right away, exactly like a call. It then summarizes the Visa code and asks whether to file the dispute. Only after the customer says yes does the server insert the complaint into PostgreSQL (`complaints`, with a parameterized INSERT through `ComplaintRepository`; the model never writes SQL). The complaint appears in `/complaints` with channel `Web Chat`. If the customer says no, nothing is filed and the chat ends. After the 1-5 rating, Izzy says the chat has ended and the session closes.
+- **Replies:** the greeting is deterministic. After that, each reply is generated in streaming from authoritative facts (the transaction, Visa code, complaint number) and a reference message: the voice templates or web-specific texts. If the model fails, or drops a required identifier such as the complaint number, the reference text replaces it.
+- **Finding the transaction:** Izzy searches only the authenticated customer's **card purchases** (credit or debit card, type `Purchase`). It reads them from two places:
+  - the synthetic lakehouse (`silver`, read-only, the seeded customers' history);
+  - PostgreSQL (live activity, such as shop purchases).
+
+  Results are deduplicated by `transaction_id`; when a purchase is in both, the PostgreSQL copy wins. Only the card's last four digits are ever read. If the lakehouse is slow, fails, or `MOTHERDUCK_TOKEN` is not set, Izzy uses PostgreSQL alone. Lakehouse results are cached per customer for five minutes.
+- **Choosing among options:** Izzy ranks purchases with the same explainable ranker as calls, using the details the customer gave: date, amount, currency, merchant, category, channel, country, and city. It then shows **at most three options** in the chat, each with its card ending. When one match is clearly better than the rest, it shows only that one. The customer can:
+  - tap an option, or type its number or a description;
+  - choose "None of these", which excludes the options and asks for one more detail.
+
+  The server accepts only an option it offered to that customer. The chosen purchase becomes the agent's selected transaction for classification and filing.
+- **One database:** the web app, the chat, and the voice agent use the same PostgreSQL. A card blocked during a call is shown as blocked in the app. If the customer picks a purchase that exists only in the lakehouse, it is copied into PostgreSQL first, so the complaint and any card block refer to rows the app shows.
+- **Transaction context:** opening the chat from a purchase (`transaction_id`) is an explicit choice. The purchase is selected directly and shown as the chat's context, and Izzy goes straight to asking what the problem is. The id is used only when it is a card purchase of the customer; otherwise it is ignored without revealing whether it exists.
+- **Dates:** typed years and periods ("in 2025", "yesterday", "last month") become date ranges for the search. Dates the customer never wrote are dropped. The reply model gets today's date and may not reject a date.
+- **API:**
+  - `POST /api/izzy/sessions` with `{transaction_id?, locale?}` opens a chat.
+  - `POST /api/izzy/sessions/{id}/messages` with `{message}`, `{selected_transaction_id}`, or `{reject_options: true}` returns `text/event-stream`, with `delta`, `replace`, `options`, `selected`, `error`, `state`, and `done` events.
+
+Conversation checkpoints are saved in PostgreSQL with LangGraph's `AsyncPostgresSaver`. `dispute-db-migrate` creates the tables with the owner role, and the app role can only read and write rows. Async psycopg cannot run on uvicorn's default Windows event loop; hence `--loop asyncio:SelectorEventLoop`. Without it, or without a migrated database, the chat logs a warning and keeps checkpoints in memory.
+
+Limitations: the live workflow state of an open chat (stage, options) is in process memory. It expires after `IZZY_CHAT_SESSION_TTL_MINUTES`, so an open chat cannot resume after a restart, and the app needs a single server process; finished conversations remain in the checkpoints and in `call_transcripts`. There is no live human handoff in the web chat; Izzy offers the phone line instead. Complaints are demo records and are never sent to Visa. Without `OPENAI_API_KEY`, the chat answers with an "unavailable" message that includes the phone number.
 
 ## Demo web login
 
@@ -324,7 +396,7 @@ This shortcut is controlled impersonation for the hackathon demo, not production
 
 Authenticated demo customers can open `/shop`, browse a humorous synthetic catalog, manage a browser-session cart, and pay with one of their active mock credit cards. The server resolves authoritative catalog prices, validates card ownership and status, and writes the approved purchase to the same PostgreSQL transactions table used by Factored Bank.
 
-Every checkout also injects exactly one randomly selected training scenario: either a duplicate Shady Business charge or an unrelated high-value electronics transaction in a configured South Asian location. The receipt does not reveal the selected scenario; the judge discovers it in `/transactions` and can continue into the dispute journey. No real card network, merchant processor, money movement, inventory service, or production database is used; the PostgreSQL database is a local Docker container with synthetic data.
+Every checkout also injects exactly one randomly selected training scenario: either a duplicate Shady Business charge or an unrelated high-value electronics transaction in a configured South Asian location. The receipt does not reveal the selected scenario; the judge discovers it in `/transactions` and can continue into the dispute journey. No real card network, merchant processor, money movement or inventory service is used. Locally PostgreSQL runs in Docker; the deployed demonstration uses private Aurora with the same synthetic schema and repository contracts.
 
 ## Mock customer identification
 

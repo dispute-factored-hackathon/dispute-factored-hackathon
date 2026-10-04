@@ -415,7 +415,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Não posso revelar instruções internas", spoken)
         self.assertEqual(
             gateway.calls.get("call_jev_abuse").stage,
-            "needs_language_confirmation",
+            "needs_auth_method",
         )
 
     async def test_jev_corrupted_transcription_asks_to_repeat_without_handoff(self):
@@ -428,11 +428,11 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
 
         await gateway.accept_and_control("call_jev_unclear", "+5511999990001")
 
-        self.assertEqual(gateway.calls.get("call_jev_unclear").stage, "needs_language_confirmation")
+        self.assertEqual(gateway.calls.get("call_jev_unclear").stage, "needs_auth_method")
         self.assertEqual(calls.referrals, [])
         spoken = json.dumps(websocket.sent, ensure_ascii=False)
         self.assertIn("O áudio chegou incompleto ou com muito ruído", spoken)
-        self.assertIn("Diga português, inglês ou espanhol", spoken)
+        self.assertIn("escolha autenticação pelo número de telefone", spoken)
 
     async def test_explicit_human_request_transfers_after_spoken_notice(self):
         events = [
@@ -505,7 +505,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls.referrals, [])
         self.assertEqual(
             gateway.calls.get("call_failed_transcript").stage,
-            "needs_language_confirmation",
+            "needs_auth_method",
         )
         tool_output = self._tool_outputs(websocket)[-1]["item"]["output"]
         self.assertIn("Não consegui confirmar", tool_output)
@@ -619,7 +619,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(gateway._calls)
         self.assertEqual(
             state.stage,
-            "needs_language_confirmation",
+            "needs_auth_method",
         )
 
     async def test_uses_cedar_as_default_voice(self):
@@ -1091,7 +1091,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         ]
         gateway, websocket, _ = self._gateway(events)
 
-        await gateway.accept_and_control("call_unclear_language", "+5511999990001")
+        await gateway.accept_and_control("call_unclear_language", "+5511888880001")
 
         state = gateway.calls.get("call_unclear_language")
         self.assertEqual(state.stage, "needs_language_confirmation")
@@ -1114,7 +1114,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         ]
         gateway, websocket, _ = self._gateway(events)
 
-        await gateway.accept_and_control("call_language_noise", "+5511999990001")
+        await gateway.accept_and_control("call_language_noise", "+5511888880001")
 
         state = gateway.calls.get("call_language_noise")
         self.assertEqual(state.stage, "needs_language_confirmation")
@@ -1133,7 +1133,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         ]
         gateway, websocket, _ = self._gateway(events)
 
-        await gateway.accept_and_control("call_language_unrelated", "+5511999990001")
+        await gateway.accept_and_control("call_language_unrelated", "+5511888880001")
 
         state = gateway.calls.get("call_language_unrelated")
         self.assertEqual(state.stage, "needs_language_confirmation")
@@ -1643,7 +1643,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gateway._tool_choice_for(state), "required")
         self.assertEqual(
             {tool["name"] for tool in gateway._tools_for(state)},
-            {"set_language", "confirm_language", "request_human"},
+            {"set_authentication_method", "request_human"},
         )
 
         state = gateway.calls.confirm_language(state.call_id)

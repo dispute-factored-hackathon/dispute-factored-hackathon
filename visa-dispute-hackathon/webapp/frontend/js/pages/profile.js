@@ -53,11 +53,17 @@ function renderProfile(profile) {
     dateOfBirth.value = profile.date_of_birth;
     gender.value = profile.gender;
     mobilePhone.value = profile.mobile_phone || "";
-    preferredLocale.value = profile.preferred_locale.startsWith("pt")
-        ? "pt-BR"
-        : profile.preferred_locale.startsWith("es")
-            ? "es-419"
-            : "en-US";
+    const localeByAccent = {
+        english: "en-US",
+        portuguese: "pt-BR",
+        argentine_spanish: "es-AR",
+        colombian_spanish: "es-CO",
+        mexican_spanish: "es-MX",
+    };
+    const supportedLocales = new Set(["en-US", "pt-BR", "es-AR", "es-CO", "es-MX"]);
+    preferredLocale.value = supportedLocales.has(profile.preferred_locale)
+        ? profile.preferred_locale
+        : localeByAccent[profile.preferred_accent] || "en-US";
     accountStatus.textContent = translateValue(profile.customer_status);
 }
 
@@ -71,7 +77,9 @@ function requestBody() {
         preferred_accent: {
             "en-US": "english",
             "pt-BR": "portuguese",
-            "es-419": "mexican_spanish",
+            "es-AR": "argentine_spanish",
+            "es-CO": "colombian_spanish",
+            "es-MX": "mexican_spanish",
         }[preferredLocale.value],
         preferred_locale: preferredLocale.value,
     };

@@ -46,7 +46,7 @@ Read the detailed [solution architecture and technology stack](https://github.co
 
 ### Current deployment boundary
 
-The web and voice Lambdas, Function URLs, ECR image, server-side secrets and CloudWatch groups are deployed. The voice Function URL targets a stable published-version alias so Lambda SnapStart can reduce initialization latency without paying for continuously provisioned instances. The current `dev` architecture uses PostgreSQL as its operational store and MotherDuck as its synthetic source, but the PostgreSQL and DuckDB CloudFormation stacks were not deployed when this documentation was last verified on 3 October 2026. The next application release must connect the Lambda runtime to PostgreSQL and remove obsolete mock-backend environment settings.
+The web and voice Lambdas, Function URLs, ECR image, server-side secrets, CloudWatch groups and private Aurora PostgreSQL database are deployed in `sa-east-1`. Both channels use the same least-privilege `factored_app` role; the mock-backend Lambda settings have been removed. An isolated deployment Lambda owns Alembic migrations, grants and the idempotent 100-customer synthetic lakehouse seed. The voice Function URL targets a stable published-version alias so Lambda SnapStart can reduce initialization latency without paying for continuously provisioned instances.
 
 ## What the prototype demonstrates
 

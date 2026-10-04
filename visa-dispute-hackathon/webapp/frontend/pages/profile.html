@@ -16,7 +16,7 @@
 <body>
     <main id="profile-page" class="profile-page" hidden>
         <header class="app-header">
-            <a class="back-link" href="/home" aria-label="Back to menu">
+            <a class="back-link" href="/home" aria-label="Back to menu" data-history-back>
                 ←
             </a>
 
@@ -105,13 +105,15 @@
                         </label>
 
                         <label class="field" for="preferred-locale">
-                            <span>Preferred language</span>
+                            <span>Preferred language and accent</span>
                             <select id="preferred-locale" name="preferred_locale" required>
-                                <option value="en-US">English</option>
-                                <option value="pt-BR">Portuguese</option>
-                                <option value="es-419">Spanish</option>
+                                <option value="en-US">American English</option>
+                                <option value="pt-BR">Brazilian Portuguese</option>
+                                <option value="es-AR">Argentine Spanish</option>
+                                <option value="es-CO">Colombian Spanish</option>
+                                <option value="es-MX">Mexican Spanish</option>
                             </select>
-                            <small>The interface changes immediately and Izzy will use this preference in future conversations.</small>
+                            <small>The interface changes immediately and Izzy will use this language and regional accent in future conversations.</small>
                         </label>
                     </div>
                 </section>
@@ -128,6 +130,7 @@
         <nav id="bottom-nav" class="bottom-nav" aria-label="Primary navigation"></nav>
     </main>
 
+    <script type="module" src="/static/js/components/history-back.js?v=1"></script>
     <script type="module" src="/static/js/pages/profile.js?v=20261001-i18n1"></script>
 </body>
 </html>

@@ -19,6 +19,7 @@ from webapp.backend.api.routes.complaints import (
 from webapp.backend.api.routes.customers import (
     router as customers_router,
 )
+from webapp.backend.api.routes.izzy import router as izzy_router
 from webapp.backend.api.routes.localization import (
     router as localization_router,
 )
@@ -33,7 +34,7 @@ from webapp.backend.api.routes.transactions import (
     router as transactions_router,
 )
 from webapp.backend.config import get_settings
-from webapp.backend.repositories.postgres import open_repositories
+from webapp.backend.services.runtime import application_runtime
 
 settings = get_settings()
 
@@ -44,14 +45,10 @@ PAGES_DIR = FRONTEND_DIR / "pages"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    # PostgreSQL is the only data store; customer data comes from `dispute-db-seed-lakehouse`.
-    repositories = open_repositories(settings)
-    app.state.repositories = repositories
-    try:
+    # HTML and static assets do not wait for PostgreSQL, LangGraph, or model imports. Data-backed
+    # APIs initialize the shared repositories once; Izzy initializes separately on first use.
+    async with application_runtime(app):
         yield
-    finally:
-        del app.state.repositories
-        repositories.close()
 
 
 app = FastAPI(
@@ -68,6 +65,7 @@ app.include_router(transactions_router)
 app.include_router(complaints_router)
 app.include_router(onboarding_router)
 app.include_router(store_router)
+app.include_router(izzy_router)
 
 
 app.mount(
@@ -82,7 +80,9 @@ app.mount(
 def page(
     filename: str,
 ) -> FileResponse:
-    return FileResponse(PAGES_DIR / filename)
+    # Pages are small HTML shells: always revalidate so a browser never keeps an outdated page
+    # (for example the old "coming soon" placeholder at /agent?intent=new_complaint).
+    return FileResponse(PAGES_DIR / filename, headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/health")
@@ -153,7 +153,7 @@ def profile_page() -> FileResponse:
 
 @app.get("/agent")
 def agent_page() -> FileResponse:
-    return page("coming-soon.html")
+    return page("agent.html")
 
 
 @app.get("/shop")

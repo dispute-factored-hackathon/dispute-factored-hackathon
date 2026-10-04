@@ -482,3 +482,29 @@ def test_session_lifecycle(backend: Backend):
     assert sessions.get("opaque-session-id") is None
     sessions.delete("opaque-session-id")  # deleting twice is harmless
     sessions.delete("never-existed")
+
+
+# ----------------------------------------------------------------------------- card purchases
+
+
+def test_card_purchases_join_the_card_and_keep_only_the_customers_purchases(backend: Backend):
+    backend.repos.customers.create(make_customer("C1"))
+    backend.repos.customers.create(make_customer("C2"))
+    backend.repos.products.create(make_product("P1", "C1", product_number="4111222233334444"))
+    backend.repos.products.create(make_product("P2", "C2"))
+    backend.repos.transactions.create(make_transaction("T-buy", transaction_type="Purchase"))
+    backend.repos.transactions.create(
+        make_transaction("T-cash", transaction_type="Withdrawal", transaction_date=NOW)
+    )
+    backend.repos.transactions.create(
+        make_transaction("T-other", "C2", "P2", transaction_type="Purchase")
+    )
+    purchases = backend.repos.card_purchases
+
+    found = purchases.list_by_customer("C1")
+
+    assert [item.transaction.transaction_id for item in found] == ["T-buy"]
+    assert (found[0].card_type, found[0].card_last_four) == ("Credit Card", "4444")
+    assert purchases.get_for_customer("C1", "T-buy") is not None
+    assert purchases.get_for_customer("C1", "T-other") is None
+    assert purchases.get_for_customer("C1", "T-cash") is None

@@ -10,6 +10,7 @@ import os
 import time
 from typing import Any
 
+from webapp.backend.aws_runtime import configure_application_runtime
 from webapp.backend.config import get_settings
 from webapp.backend.repositories.postgres import open_repositories
 
@@ -38,6 +39,7 @@ WORKER_MODE = "control_realtime_call"
 MAX_CALL_SECONDS = 840
 
 _gateway: SipRealtimeGateway | None = None
+_repositories: Any | None = None
 
 
 def _load_json_secret(
@@ -86,13 +88,14 @@ def _load_json_secret(
 def _load_openai_secret() -> dict[str, str]:
     """Load OpenAI API and webhook signing credentials."""
 
+    names = {"JEV_API_KEY", "OPENAI_API_KEY", "OPENAI_WEBHOOK_SECRET"}
+    configured = {name: os.environ.get(name, "").strip() for name in names}
+    if all(configured.values()):
+        return configured
+
     return _load_json_secret(
         "OPENAI_SECRET_ARN",
-        required_keys={
-            "JEV_API_KEY",
-            "OPENAI_API_KEY",
-            "OPENAI_WEBHOOK_SECRET",
-        },
+        required_keys=names,
         secret_name="openai",
     )
 
@@ -128,10 +131,13 @@ def _configure_langsmith() -> None:
 def _get_gateway() -> SipRealtimeGateway:
     """Create one gateway per warm Lambda execution environment."""
 
-    global _gateway
+    global _gateway, _repositories
 
     if _gateway is None:
         started = time.monotonic()
+
+        configure_application_runtime()
+        get_settings.cache_clear()
 
         # Configure LangSmith before application code begins creating traced runs.
         _configure_langsmith()
@@ -140,6 +146,7 @@ def _get_gateway() -> SipRealtimeGateway:
 
         # Shared PostgreSQL configured with DATABASE_URL; customer data comes from the lakehouse seed.
         repositories = open_repositories(get_settings())
+        _repositories = repositories
         _gateway = SipRealtimeGateway(
             repositories.customers,
             **voice_repository_arguments(repositories),
@@ -162,6 +169,15 @@ def _get_gateway() -> SipRealtimeGateway:
         )
 
     return _gateway
+
+
+def _close_gateway() -> None:
+    """Release database pools so warm Lambdas do not prevent Aurora auto-pause."""
+    global _gateway, _repositories
+    if _repositories is not None:
+        _repositories.close()
+    _repositories = None
+    _gateway = None
 
 
 def _response(
@@ -332,7 +348,7 @@ def _safe_reject(
         )
 
 
-def lambda_handler(
+def _dispatch_event(
     event: dict[str, Any],
     context: Any,
 ) -> dict[str, Any]:
@@ -530,3 +546,11 @@ def lambda_handler(
             "status": "worker_started",
         },
     )
+
+
+def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
+    """Dispatch one ingress/worker invocation and always release its database pool."""
+    try:
+        return _dispatch_event(event, context)
+    finally:
+        _close_gateway()

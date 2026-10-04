@@ -329,7 +329,9 @@ function buildSignupRequest() {
     const preferredAccent = {
         "en-US": "english",
         "pt-BR": "portuguese",
-        "es-419": "mexican_spanish",
+        "es-AR": "argentine_spanish",
+        "es-CO": "colombian_spanish",
+        "es-MX": "mexican_spanish",
     }[preferredLocale];
 
     return {
