@@ -522,6 +522,15 @@ def _rank_transaction(
             )
             date_score = 1 / (1 + distance_days)
         weighted_scores.append(("date", 3.0, date_score))
+    # Only the web chat's criteria carry a category; voice criteria have no such field.
+    category = getattr(criteria, "category", None)
+    if category:
+        category_text = " ".join(
+            value
+            for value in (transaction.transaction_category, transaction.merchant_category)
+            if value
+        )
+        weighted_scores.append(("category", 2.5, _text_similarity(category, category_text)))
 
     for field_name, expected, actual, weight in (
         ("country", criteria.country, transaction.transaction_country, 2.5),

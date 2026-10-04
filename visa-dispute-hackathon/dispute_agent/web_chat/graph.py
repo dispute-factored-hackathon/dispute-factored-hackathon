@@ -24,17 +24,18 @@ import os
 import secrets
 import time
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Annotated, Any, TypedDict
 
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 
+from webapp.backend.models.card_transaction import CardTransaction
 from webapp.backend.models.customer import Customer
 
 from ..dispute_classification import DisputeAllegation
-from ..sip_realtime import SipRealtimeGateway, _guard_extracted_numeric_filters
+from ..sip_realtime import _guard_extracted_numeric_filters
 from ..voice_call import (
     DisputeClassificationOutcome,
     TransactionSelectionOutcome,
@@ -59,6 +60,7 @@ from .replies import (
     selected_transaction_message,
     web_text,
 )
+from .search import CardPurchaseCriteria, option_payload, typed_date_evidence
 from .service import WebChatDisputeService
 
 LOGGER = logging.getLogger(__name__)
@@ -70,7 +72,7 @@ REPLY_NODE = "compose_reply"
 SELECTION_OUTCOMES = {
     TransactionSelectionOutcome.NEEDS_CLARIFICATION: "transaction_clarification",
     TransactionSelectionOutcome.NO_MATCH: "transaction_no_match",
-    TransactionSelectionOutcome.CANDIDATE: "transaction_candidate",
+    TransactionSelectionOutcome.CANDIDATE: "transaction_options",
     TransactionSelectionOutcome.CONFIRMED: "classification_question",
     TransactionSelectionOutcome.EXHAUSTED: "transaction_handoff",
 }
@@ -78,7 +80,7 @@ SELECTION_OUTCOMES = {
 CLARIFICATION_OUTCOMES = {
     VoiceCallStage.AUTHENTICATED: "transaction_clarification",
     VoiceCallStage.NEEDS_TRANSACTION_DETAILS: "transaction_clarification",
-    VoiceCallStage.CONFIRM_TRANSACTION: "transaction_confirmation_unclear",
+    VoiceCallStage.CONFIRM_TRANSACTION: "options_unclear",
     VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION: "classification_clarification",
     VoiceCallStage.DISPUTE_CLASSIFIED: "csat_unclear",
 }
@@ -94,6 +96,9 @@ def _keep_recent(
 class ChatGraphState(TypedDict, total=False):
     session_id: str
     message: str
+    # Explicit UI actions on the offered purchases (tapping an option or "None of these").
+    selected_transaction_id: str | None
+    reject_options: bool
     turns: int
     history: Annotated[list[dict[str, str]], _keep_recent]
     intent: str | None
@@ -180,13 +185,14 @@ class IzzyChatGraph:
     def guard_input(self, state: ChatGraphState) -> dict[str, Any]:
         turns = state.get("turns", 0) + 1
         text = state.get("message", "").strip()
+        ui_action = bool(state.get("selected_transaction_id") or state.get("reject_options"))
         workflow_state = self.service.get(state["session_id"])
         outcome = ""
         if workflow_state.stage in CLOSED_STAGES:
             outcome = "conversation_closed"
         elif turns > self.max_turns:
             outcome = "rate_limited"
-        elif not text:
+        elif not text and not ui_action:
             outcome = "empty"
         elif len(text) > self.max_message_chars:
             outcome = "too_long"
@@ -194,6 +200,19 @@ class IzzyChatGraph:
 
     async def interpret(self, state: ChatGraphState) -> dict[str, Any]:
         workflow_state = self.service.get(state["session_id"])
+        if state.get("selected_transaction_id") or state.get("reject_options"):
+            # A tap on an offered option is an explicit choice: no model interprets it, and the
+            # service still accepts only an option it offered to this customer.
+            return {
+                "intent": (
+                    ChatIntent.SELECT_OPTION.value
+                    if state.get("selected_transaction_id")
+                    else ChatIntent.DENY_TRANSACTION.value
+                ),
+                "confidence": 1.0,
+                "decision_source": "ui",
+                "interpretation": None,
+            }
         try:
             decision = await self.interpreter.interpret(
                 stage=workflow_state.stage.value,
@@ -270,6 +289,23 @@ class IzzyChatGraph:
         outcome = state.get("outcome") or "question"
         reference = reference_message(workflow_state, outcome, phone=self.phone_number)
         writer = get_stream_writer()
+        if outcome == "transaction_options":
+            writer(
+                {
+                    "type": "options",
+                    "options": [option_payload(item) for item in self.service.options(session_id)],
+                }
+            )
+        if (
+            workflow_state.confirmed_transaction is not None
+            and outcome == "classification_question"
+        ):
+            writer(
+                {
+                    "type": "selected",
+                    "transaction_id": workflow_state.confirmed_transaction.transaction_id,
+                }
+            )
         reply = reference
         model = None if outcome in DETERMINISTIC_OUTCOMES else self._reply_model_or_none()
         if model is None:
@@ -318,26 +354,34 @@ class IzzyChatGraph:
         )
         if intent is ChatIntent.DESCRIBE_TRANSACTION and interpretation is not None:
             return self._search(session_id, workflow_state, interpretation, state["message"])
-        if stage is VoiceCallStage.CONFIRM_TRANSACTION and intent in {
-            ChatIntent.CONFIRM_TRANSACTION,
-            ChatIntent.DENY_TRANSACTION,
-        }:
-            confirmed = intent is ChatIntent.CONFIRM_TRANSACTION
-            selection = self.service.resolve_transaction_candidate(session_id, confirmed=confirmed)
-            if (
-                not confirmed
-                and interpretation is not None
-                and selection.outcome is not TransactionSelectionOutcome.EXHAUSTED
-            ):
-                arguments = interpretation.search_arguments()
-                criteria, _replace, clear_filters, remove_filters = (
-                    SipRealtimeGateway._transaction_search_arguments(arguments)
+        if stage is VoiceCallStage.CONFIRM_TRANSACTION:
+            options = self.service.options(session_id)
+            if intent is ChatIntent.SELECT_OPTION:
+                transaction_id = state.get("selected_transaction_id") or self._option_by_number(
+                    options, interpretation
                 )
-                if criteria.has_any_filter or clear_filters or remove_filters:
+                if transaction_id is None:
+                    return "options_unclear"
+                selection = self.service.select_option(session_id, transaction_id)
+                return SELECTION_OUTCOMES[selection.outcome]
+            if intent is ChatIntent.CONFIRM_TRANSACTION:
+                if len(options) != 1:
+                    return "options_unclear"
+                selection = self.service.select_option(
+                    session_id, options[0].transaction.transaction_id
+                )
+                return SELECTION_OUTCOMES[selection.outcome]
+            if intent is ChatIntent.DENY_TRANSACTION:
+                rejected = self.service.reject_options(session_id)
+                if (
+                    interpretation is not None
+                    and rejected.outcome is not TransactionSelectionOutcome.EXHAUSTED
+                    and self._criteria(interpretation, state["message"], None).has_any_filter
+                ):
                     return self._search(
                         session_id, self.service.get(session_id), interpretation, state["message"]
                     )
-            return SELECTION_OUTCOMES[selection.outcome]
+                return SELECTION_OUTCOMES[rejected.outcome]
         if stage is VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION and (
             intent is ChatIntent.REPORT_PROBLEM
         ):
@@ -365,22 +409,45 @@ class IzzyChatGraph:
         interpretation: ChatTurnInterpretation,
         message: str,
     ) -> str:
-        criteria, replace_existing, clear_filters, remove_filters = (
-            SipRealtimeGateway._transaction_search_arguments(interpretation.search_arguments())
+        criteria = self._criteria(
+            interpretation, message, workflow_state.pending_transaction_detail
         )
-        criteria, dropped = _guard_extracted_numeric_filters(
-            criteria, message, expected_field=workflow_state.pending_transaction_detail
-        )
-        if dropped:
-            _log("web_chat.transaction.unsupported_filters_dropped", filters=dropped)
-        selection = self.service.search_transactions(
+        result = self.service.search_options(
             session_id,
             criteria,
-            replace_existing=replace_existing,
-            clear_filters=clear_filters,
-            remove_filters=remove_filters,
+            clear_filters=interpretation.clear_filters,
+            remove_filters=tuple(interpretation.remove_filters),
         )
-        return SELECTION_OUTCOMES[selection.outcome]
+        return SELECTION_OUTCOMES[result.outcome]
+
+    @staticmethod
+    def _criteria(
+        interpretation: ChatTurnInterpretation, message: str, expected_field: str | None
+    ) -> CardPurchaseCriteria:
+        """Validate extracted filters and drop numbers the customer never wrote (as in calls)."""
+
+        criteria = CardPurchaseCriteria.from_mapping(interpretation.search_arguments())
+        guarded, dropped = _guard_extracted_numeric_filters(
+            criteria, message, expected_field=expected_field
+        )
+        result = CardPurchaseCriteria.upgrade(guarded, category=criteria.category)
+        if {"date_from", "date_to"} & set(dropped) and typed_date_evidence(message):
+            # The voice guard needs a number next to a date word; typed years and periods
+            # ("in 2025", "yesterday", "last month") are real dates the customer wrote.
+            result = replace(result, date_from=criteria.date_from, date_to=criteria.date_to)
+            dropped = tuple(name for name in dropped if name not in {"date_from", "date_to"})
+        if dropped:
+            _log("web_chat.transaction.unsupported_filters_dropped", filters=dropped)
+        return result
+
+    @staticmethod
+    def _option_by_number(
+        options: tuple[CardTransaction, ...], interpretation: ChatTurnInterpretation | None
+    ) -> str | None:
+        number = interpretation.option_number if interpretation is not None else None
+        if isinstance(number, int) and 1 <= number <= len(options):
+            return options[number - 1].transaction.transaction_id
+        return None
 
     @staticmethod
     def _classification_evidence(
@@ -417,18 +484,29 @@ class IzzyChatGraph:
             return rating
         return None
 
-    def _candidate_summary(self, workflow_state: VoiceCallState) -> dict[str, Any] | None:
-        transaction = workflow_state.current_transaction
-        if transaction is None:
+    def _candidate_summary(self, workflow_state: VoiceCallState) -> list[dict[str, Any]] | None:
+        """The offered purchases, numbered as the customer sees them."""
+
+        options = self.service.options(workflow_state.call_id)
+        if not options:
             return None
-        return {
-            "merchant": transaction.merchant_name,
-            "date": transaction.transaction_date.date().isoformat(),
-            "amount": transaction.amount,
-            "currency": transaction.currency,
-        }
+        return [
+            {
+                "number": number,
+                "merchant": item.transaction.merchant_name,
+                "date": item.transaction.transaction_date.date().isoformat(),
+                "amount": item.transaction.amount,
+                "currency": item.transaction.currency,
+                "category": item.transaction.transaction_category,
+                "card_last_four": item.card_last_four,
+            }
+            for number, item in enumerate(options, start=1)
+        ]
 
     def _card_last_four(self, workflow_state: VoiceCallState) -> str | None:
+        selected = self.service.selected_purchase(workflow_state.call_id)
+        if selected is not None:
+            return selected.card_last_four
         transaction = workflow_state.current_transaction or workflow_state.confirmed_transaction
         if transaction is None:
             return None
@@ -506,6 +584,8 @@ class ChatOpening:
     stage: str
     language: str
     transaction_context: bool
+    options: tuple[dict[str, Any], ...] = ()
+    selected_transaction_id: str | None = None
 
 
 class IzzyWebChat:
@@ -577,11 +657,17 @@ class IzzyWebChat:
         language = state.locale.language
         message = web_text(language, "greeting", name=customer.first_name)
         transaction_context = False
+        options: tuple[dict[str, Any], ...] = ()
+        selected_transaction_id: str | None = None
         if transaction_id:
-            proposed = self.service.propose_known_transaction(session_id, transaction_id)
-            if proposed is not None:
+            # Opening the chat from a purchase is an explicit choice: it is selected directly.
+            selected = self.service.select_known_transaction(session_id, transaction_id)
+            purchase = self.service.selected_purchase(session_id) if selected else None
+            if selected is not None and purchase is not None:
                 transaction_context = True
-                candidate = selected_transaction_message(proposed.state)
+                options = (option_payload(purchase),)
+                selected_transaction_id = purchase.transaction.transaction_id
+                candidate = selected_transaction_message(selected.state)
                 greeting = web_text(language, "greeting_with_transaction", name=customer.first_name)
                 message = f"{greeting} {candidate}"
         self._sessions[session_id] = ChatSession(session_id, customer.customer_id, self._clock())
@@ -592,15 +678,23 @@ class IzzyWebChat:
             stage=self.service.get(session_id).stage.value,
             language=language,
             transaction_context=transaction_context,
+            options=options,
+            selected_transaction_id=selected_transaction_id,
         )
 
     def ensure_owned(self, session_id: str, customer_id: str) -> None:
         self._owned(session_id, customer_id)
 
     async def stream_turn(
-        self, session_id: str, customer_id: str, message: str
+        self,
+        session_id: str,
+        customer_id: str,
+        message: str,
+        *,
+        selected_transaction_id: str | None = None,
+        reject_options: bool = False,
     ) -> AsyncIterator[dict[str, Any]]:
-        """Yield `delta`, `replace`, `state`, `done` (or `error`) events for one turn."""
+        """Yield `delta`, `replace`, `options`, `selected`, `state`, `done` (or `error`) events."""
 
         session = self._owned(session_id, customer_id)
         config = {
@@ -611,6 +705,8 @@ class IzzyWebChat:
         turn_input: ChatGraphState = {
             "session_id": session_id,
             "message": message,
+            "selected_transaction_id": selected_transaction_id,
+            "reject_options": reject_options,
             "intent": None,
             "confidence": 0.0,
             "prompt_abuse": False,
@@ -635,8 +731,8 @@ class IzzyWebChat:
                         ):
                             yield {"event": "delta", "text": content}
                     elif part["type"] == "custom":
-                        data = part["data"]
-                        yield {"event": data["type"], "text": data["text"]}
+                        data = dict(part["data"])
+                        yield {"event": data.pop("type"), **data}
             except Exception as error:
                 _log("web_chat.turn.failed", error_type=type(error).__name__)
                 workflow_state = self.service.get(session_id)

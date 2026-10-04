@@ -32,6 +32,7 @@ DEFAULT_SAFETY_THRESHOLD = 0.80
 
 class ChatIntent(StrEnum):
     DESCRIBE_TRANSACTION = "describe_transaction"
+    SELECT_OPTION = "select_option"
     CONFIRM_TRANSACTION = "confirm_transaction"
     DENY_TRANSACTION = "deny_transaction"
     REPORT_PROBLEM = "report_problem"
@@ -65,6 +66,12 @@ class ChatTurnInterpretation(BaseModel):
     city: str | None
     channel: str | None = Field(description="online/e-commerce or in person/POS, if stated.")
     transaction_type: str | None
+    category: str | None = Field(
+        description="Purchase category the customer mentioned (groceries, travel, ...)."
+    )
+    option_number: int | None = Field(
+        description="1-based number of the offered purchase the customer chose, if any."
+    )
     clear_filters: bool
     remove_filters: list[
         Literal[
@@ -77,6 +84,7 @@ class ChatTurnInterpretation(BaseModel):
             "city",
             "channel",
             "transaction_type",
+            "category",
         ]
     ]
     allegation: Literal["UNAUTHORIZED_CARD", "DUPLICATE_PROCESSING", "INSUFFICIENT_INFO"] | None
@@ -102,6 +110,7 @@ class ChatTurnInterpretation(BaseModel):
             "city": self.city,
             "channel": self.channel,
             "transaction_type": self.transaction_type,
+            "category": self.category,
             "replace_existing": False,
             "clear_filters": self.clear_filters,
             "remove_filters": list(self.remove_filters),
@@ -113,20 +122,26 @@ class InterpreterUnavailableError(RuntimeError):
 
 
 INTERPRETER_PROMPT = """You classify one message typed by an authenticated Factored Bank customer \
-in the Izzy web chat. Izzy only helps customers find a card transaction and dispute it. Return \
+in the Izzy web chat. Izzy only helps customers find a card purchase and dispute it. Return \
 only the schema.
 
 Current workflow stage: {stage}
 Allowed intents now: {allowed}
 Today's date: {today}
-Transaction shown to the customer (if any): {candidate}
+Purchases currently offered to the customer, numbered (if any): {candidate}
 
 Rules:
 - Extract only details the customer actually wrote; never invent amounts, dates or merchants.
   Convert relative dates ("yesterday", "last Friday") to YYYY-MM-DD using today's date.
-- describe_transaction: the customer gives or corrects details to find a transaction.
-- confirm_transaction / deny_transaction: answer about the transaction shown. A denial that adds
-  details is deny_transaction with the new filters filled in.
+  A period is a range: "in 2025" -> date_from 2025-01-01, date_to 2025-12-31; "in September" or
+  "last month" -> the first and last day of that month. Past years are valid; never treat a date
+  as invalid, the search decides whether a purchase exists.
+- describe_transaction: the customer gives or corrects details to find a purchase (merchant,
+  amount, currency, date, category, channel, country or city).
+- select_option: the customer picks one of the offered purchases by number or description; set
+  option_number to its number. confirm_transaction: a plain "yes" when one purchase is offered.
+- deny_transaction: none of the offered purchases is the right one. If they add new details in the
+  same message, fill in the new filters too.
 - report_problem: the customer says whether they did not authorize the purchase
   (UNAUTHORIZED_CARD) or were charged more than once for one purchase (DUPLICATE_PROCESSING);
   use INSUFFICIENT_INFO when it is unclear. Set card_environment only if they said how it was paid.
@@ -142,6 +157,7 @@ ALLOWED_INTENTS: dict[str, tuple[ChatIntent, ...]] = {
     "authenticated": (ChatIntent.DESCRIBE_TRANSACTION,),
     "needs_transaction_details": (ChatIntent.DESCRIBE_TRANSACTION,),
     "confirm_transaction": (
+        ChatIntent.SELECT_OPTION,
         ChatIntent.CONFIRM_TRANSACTION,
         ChatIntent.DENY_TRANSACTION,
         ChatIntent.DESCRIBE_TRANSACTION,
@@ -231,7 +247,7 @@ class ChatTurnInterpreter:
         stage: str,
         message: str,
         language: str,
-        candidate: dict[str, Any] | None,
+        candidate: list[dict[str, Any]] | None,
         today: date | None = None,
     ) -> TurnDecision:
         jev_decision = await asyncio.to_thread(
@@ -294,7 +310,7 @@ class ChatTurnInterpreter:
         *,
         stage: str,
         message: str,
-        candidate: dict[str, Any] | None,
+        candidate: list[dict[str, Any]] | None,
         today: date,
     ) -> ChatTurnInterpretation:
         allowed = (*ALLOWED_INTENTS.get(stage, ()), *GLOBAL_INTENTS)

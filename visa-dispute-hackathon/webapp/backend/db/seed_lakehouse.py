@@ -16,22 +16,25 @@ reaches this process.
 """
 
 import argparse
-import re
 import sys
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol, TypeVar
 
-import certifi
 import psycopg
 from psycopg import sql
-from psycopg.conninfo import conninfo_to_dict, make_conninfo
+from psycopg.conninfo import conninfo_to_dict
 from pydantic import BaseModel, ValidationError
 
 from webapp.backend.config import Settings, get_settings
 from webapp.backend.db import lakehouse_mapping as mapping
 from webapp.backend.db.database import describe_target
+from webapp.backend.db.motherduck import (
+    LakehouseUnavailableError,
+    connect_lakehouse,
+    lakehouse_schema,
+)
 from webapp.backend.repositories.postgres import PostgresCustomerRepository, dump_model
 
 T = TypeVar("T")
@@ -42,7 +45,6 @@ DEFAULT_CUSTOMERS = 100
 MIN_DEMO_TRANSACTIONS = 1_000
 DEFAULT_CHUNK_SIZE = 200
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", ""}
-_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _CARD_TYPES_SQL = ", ".join(f"'{card_type}'" for card_type in mapping.CARD_TYPES)
 
 
@@ -99,33 +101,11 @@ class MotherDuckSource:
     """Read-only access to `lakehouse.silver` through MotherDuck's PostgreSQL endpoint."""
 
     def __init__(self, settings: Settings) -> None:
-        if settings.motherduck_token is None:
-            raise SeedError("MOTHERDUCK_TOKEN is not set. Add it to .env (see .env.example).")
-        if not _IDENTIFIER.match(settings.motherduck_schema):
-            raise SeedError("MOTHERDUCK_SCHEMA must be a plain identifier such as 'silver'.")
-        self.schema = settings.motherduck_schema
-        self._target = f"{settings.motherduck_pg_host}/{settings.motherduck_database}"
-        dsn = make_conninfo(
-            host=settings.motherduck_pg_host,
-            port=5432,
-            user="postgres",
-            password=settings.motherduck_token.get_secret_value(),
-            dbname=settings.motherduck_database,
-            sslmode="verify-full",
-            # certifi ships the ISRG Root X1 used by the endpoint; "system" is unreliable on Windows.
-            sslrootcert=certifi.where(),
-            connect_timeout=20,
-        )
         try:
-            # Client-side binding: the endpoint is a proxy, so plain SQL text is the safest protocol.
-            self._connection = psycopg.connect(
-                dsn, cursor_factory=psycopg.ClientCursor, autocommit=True
-            )
-        except psycopg.OperationalError as error:
-            raise SeedError(
-                f"Cannot connect to MotherDuck at {self._target} "
-                "(check MOTHERDUCK_TOKEN, MOTHERDUCK_PG_HOST and your network)."
-            ) from error
+            self.schema = lakehouse_schema(settings)
+            self._connection = connect_lakehouse(settings)
+        except LakehouseUnavailableError as error:
+            raise SeedError(str(error)) from error
 
     def close(self) -> None:
         self._connection.close()

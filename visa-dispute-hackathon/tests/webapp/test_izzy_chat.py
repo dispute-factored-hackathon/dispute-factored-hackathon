@@ -44,6 +44,8 @@ EMPTY_FIELDS = {
     "city": None,
     "channel": None,
     "transaction_type": None,
+    "category": None,
+    "option_number": None,
     "clear_filters": False,
     "remove_filters": [],
     "allegation": None,
@@ -146,17 +148,24 @@ def test_opening_follows_the_interface_language(chat_setup):
     assert chat.open_session(customer, locale="pt-BR").message.startswith("Olá, Gabriel.")
 
 
-def test_owned_transaction_context_goes_straight_to_confirmation(chat_setup):
+def test_owned_transaction_context_is_selected_without_asking_again(chat_setup):
+    """Regression: opening from a purchase asked "Is this the transaction? Answer yes or no"."""
+
     chat, _, customer, _, _ = chat_setup
 
     opening = chat.open_session(customer, locale="en-US", transaction_id="FRUIT-10-MANGO")
 
     assert opening.transaction_context is True
-    assert opening.stage == "confirm_transaction"
+    assert opening.stage == "needs_dispute_classification"
+    assert opening.selected_transaction_id == "FRUIT-10-MANGO"
+    assert [option["merchant"] for option in opening.options] == ["Mango Gold Store"]
+    assert chat.service.get(opening.session_id).confirmed_transaction.transaction_id == (
+        "FRUIT-10-MANGO"
+    )
     assert "Mango Gold Store" in opening.message
-    # Regression: the voice search wording ("no active filters", "one possibility") was reused.
+    assert "yes or no" not in opening.message
     assert "filters" not in opening.message
-    assert "You opened" in opening.message
+    assert "did you not make or authorize it" in opening.message
 
 
 def test_another_customers_transaction_is_ignored_without_revealing_it(chat_setup):
@@ -185,11 +194,13 @@ def test_full_dispute_journey_files_a_web_chat_complaint_and_records_csat(chat_s
     classifier.queue.append(
         turn("describe_transaction", merchant_query="mango gold", approximate_amount=125.3)
     )
-    replies.queue.append("Is it Mango Gold Store, 125.30 USD on 2026-09-29?")
     events, text = run_turn(chat, session, "A charge at Mango Gold for about 125.30")
     assert [event["event"] for event in events][-2:] == ["state", "done"]
     assert events[-2]["stage"] == "confirm_transaction"
-    assert "Mango Gold" in text
+    offered = next(event for event in events if event["event"] == "options")["options"]
+    assert [option["merchant"] for option in offered] == ["Mango Gold Store"]
+    assert offered[0]["card_last_four"] == "9999"
+    assert "Is it the one" in text
 
     classifier.queue.append(turn("confirm_transaction"))
     run_turn(chat, session, "Yes, that one")
@@ -226,9 +237,9 @@ def test_full_dispute_journey_files_a_web_chat_complaint_and_records_csat(chat_s
 
 def test_low_confidence_turn_does_not_change_state(chat_setup):
     chat, _, customer, classifier, _ = chat_setup
-    session = chat.open_session(
-        customer, locale="en-US", transaction_id="FRUIT-10-MANGO"
-    ).session_id
+    session = chat.open_session(customer, locale="en-US").session_id
+    classifier.queue.append(turn("describe_transaction", merchant_query="mango gold"))
+    run_turn(chat, session, "Mango Gold")
 
     classifier.queue.append(turn("confirm_transaction", confidence=0.4))
     run_turn(chat, session, "hmm maybe")
@@ -308,9 +319,9 @@ def test_classifier_failure_keeps_progress_and_offers_the_phone(chat_setup):
     ).session_id
 
     classifier.queue.append(RuntimeError("provider timeout"))
-    _, text = run_turn(chat, session, "yes")
+    _, text = run_turn(chat, session, "I never made it")
 
-    assert chat.service.get(session).stage.value == "confirm_transaction"
+    assert chat.service.get(session).stage.value == "needs_dispute_classification"
     assert "+1 661 577 9964" in text
 
 
@@ -463,3 +474,60 @@ def test_chat_reads_model_keys_from_settings_not_the_process_environment(monkeyp
     assert chat.chat.openai_api_key == "sk-test-only"
     assert chat.chat.interpreter.model == "m"
     assert chat.chat.interpreter.jev_router.enabled is False
+
+
+# ----------------------------------------------------------------------------- dates
+
+
+@pytest.mark.parametrize(
+    ("message", "date_from", "date_to"),
+    [
+        ("My last transaction was in 2025, can you help me?", "2025-01-01", "2025-12-31"),
+        ("Fue el mes pasado", "2026-09-01", "2026-09-30"),
+        ("Foi ontem", "2026-10-02", "2026-10-02"),
+    ],
+)
+def test_typed_years_and_periods_are_searched_not_rejected(chat_setup, message, date_from, date_to):
+    """Regression: "in 2025" was dropped and the reply called 2025 "the future"."""
+
+    chat, _, customer, classifier, _ = chat_setup
+    session = chat.open_session(customer, locale="en-US").session_id
+
+    classifier.queue.append(turn("describe_transaction", date_from=date_from, date_to=date_to))
+    run_turn(chat, session, message)
+
+    criteria = chat.service.get(session).transaction_criteria
+    assert (criteria.date_from.isoformat(), criteria.date_to.isoformat()) == (date_from, date_to)
+
+
+def test_dates_the_customer_never_wrote_are_still_dropped(chat_setup):
+    chat, _, customer, classifier, _ = chat_setup
+    session = chat.open_session(customer, locale="en-US").session_id
+
+    classifier.queue.append(
+        turn("describe_transaction", merchant_query="mango gold", date_from="2025-03-01")
+    )
+    run_turn(chat, session, "A charge at Mango Gold")
+
+    criteria = chat.service.get(session).transaction_criteria
+    assert criteria.date_from is None
+    assert criteria.merchant_query is not None
+
+
+def test_the_reply_model_receives_today_and_the_no_date_judgement_rule():
+    from datetime import date
+
+    from dispute_agent.web_chat.replies import REPLY_PROMPT, reply_facts
+    from dispute_agent.web_chat.service import WebChatDisputeService
+
+    repositories = new_repositories()
+    seed_demo_customers(repositories.customers)
+    service = WebChatDisputeService.from_repositories(repositories)
+    state = service.start_session("s", repositories.customers.get_by_id(GABRIEL))
+
+    facts = reply_facts(
+        state, "question", phone=PHONE, card_last_four=None, today=date(2026, 10, 3)
+    )
+
+    assert facts["today"] == "2026-10-03"
+    assert "never refuse to help because of a date" in REPLY_PROMPT

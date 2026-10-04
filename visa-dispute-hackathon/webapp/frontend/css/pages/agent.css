@@ -357,3 +357,121 @@
         border-radius: var(--radius-lg);
     }
 }
+
+/* Purchase options Izzy offers (at most three) plus "None of these". */
+.agent-options {
+    display: grid;
+    gap: var(--space-2);
+
+    width: 100%;
+    max-width: 30rem;
+}
+
+.agent-option {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+
+    width: 100%;
+    padding: var(--space-3) var(--space-4);
+
+    color: var(--color-text);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.agent-option:hover:not(:disabled) {
+    border-color: var(--color-primary);
+}
+
+.agent-option:focus-visible,
+.agent-option-none:focus-visible {
+    outline: 3px solid var(--color-accent);
+    outline-offset: 2px;
+}
+
+.agent-option:disabled {
+    cursor: default;
+    opacity: 0.6;
+}
+
+.agent-option-selected,
+.agent-option-selected:disabled {
+    border-color: var(--color-success);
+    box-shadow: inset 0 0 0 1px var(--color-success);
+    opacity: 1;
+}
+
+.agent-option-number {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+
+    width: 1.6rem;
+    height: 1.6rem;
+
+    color: var(--color-surface);
+    background: var(--color-primary);
+    border-radius: 50%;
+
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.agent-option-body {
+    display: grid;
+    flex: 1;
+    grid-template-columns: 1fr auto;
+    gap: 0.15rem var(--space-2);
+
+    min-width: 0;
+}
+
+.agent-option-title {
+    overflow: hidden;
+
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.agent-option-amount {
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.agent-option-meta,
+.agent-option-card {
+    grid-column: 1 / -1;
+
+    color: var(--color-text-secondary);
+
+    font-size: 0.8rem;
+}
+
+.agent-option-none {
+    justify-self: start;
+
+    padding: var(--space-2) var(--space-4);
+
+    color: var(--color-primary);
+    background: transparent;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+
+    font: inherit;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.agent-option-none:disabled {
+    cursor: default;
+    opacity: 0.6;
+}

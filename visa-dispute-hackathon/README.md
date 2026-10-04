@@ -293,10 +293,22 @@ How it works:
 - **Same workflow as calls:** `dispute_agent/web_chat` contains the chat's own LangGraph graph (`guard_input → interpret → screen_abuse → global_controls → workflow → compose_reply`). It runs on `WebChatDisputeService`, a subclass of `VoiceCallService`, so it reuses the call stages unchanged: transaction search and confirmation, Visa classification, card blocking, complaint filing, and CSAT. The voice module is untouched. Interactions, transcripts, surveys, and complaints are recorded with the `Web Chat` channel.
 - **Decisions:** each turn goes first through Jev, with the same bounded questions and thresholds as calls. Then a schema-constrained LLM classifier (`ChatTurnInterpretation`) handles what a call's Realtime model handles: search filters and stage intents. State changes only for an allowed, non-`other` intent above the confidence gate. Prompt abuse is blocked on the single ingress before any branch runs. Human, restart, and cancel are handled before stage decisions.
 - **Replies:** the greeting is deterministic. After that, each reply is generated in streaming from authoritative facts (the transaction, Visa code, complaint number) and a reference message: the voice templates or web-specific texts. If the model fails, or drops a required identifier such as the complaint number, the reference text replaces it.
-- **Transaction context:** a `transaction_id` is used only when it belongs to the customer. Otherwise it is ignored without revealing whether it exists.
+- **Finding the transaction:** Izzy searches only the authenticated customer's **card purchases** (credit or debit card, type `Purchase`). It reads them from two places:
+  - the synthetic lakehouse (`silver`, read-only, the seeded customers' history);
+  - PostgreSQL (live activity, such as shop purchases).
+
+  Results are deduplicated by `transaction_id`; when a purchase is in both, the PostgreSQL copy wins. Only the card's last four digits are ever read. If the lakehouse is slow, fails, or `MOTHERDUCK_TOKEN` is not set, Izzy uses PostgreSQL alone. Lakehouse results are cached per customer for five minutes.
+- **Choosing among options:** Izzy ranks purchases with the same explainable ranker as calls, using the details the customer gave: date, amount, currency, merchant, category, channel, country, and city. It then shows **at most three options** in the chat, each with its card ending. When one match is clearly better than the rest, it shows only that one. The customer can:
+  - tap an option, or type its number or a description;
+  - choose "None of these", which excludes the options and asks for one more detail.
+
+  The server accepts only an option it offered to that customer. The chosen purchase becomes the agent's selected transaction for classification and filing.
+- **One database:** the web app, the chat, and the voice agent use the same PostgreSQL. A card blocked during a call is shown as blocked in the app. If the customer picks a purchase that exists only in the lakehouse, it is copied into PostgreSQL first, so the complaint and any card block refer to rows the app shows.
+- **Transaction context:** opening the chat from a purchase (`transaction_id`) is an explicit choice. The purchase is selected directly and shown as the chat's context, and Izzy goes straight to asking what the problem is. The id is used only when it is a card purchase of the customer; otherwise it is ignored without revealing whether it exists.
+- **Dates:** typed years and periods ("in 2025", "yesterday", "last month") become date ranges for the search. Dates the customer never wrote are dropped. The reply model gets today's date and may not reject a date.
 - **API:**
   - `POST /api/izzy/sessions` with `{transaction_id?, locale?}` opens a chat.
-  - `POST /api/izzy/sessions/{id}/messages` with `{message}` returns `text/event-stream`, with `delta`, `replace`, `error`, `state`, and `done` events.
+  - `POST /api/izzy/sessions/{id}/messages` with `{message}`, `{selected_transaction_id}`, or `{reject_options: true}` returns `text/event-stream`, with `delta`, `replace`, `options`, `selected`, `error`, `state`, and `done` events.
 
 Limitations: chat sessions and LangGraph checkpoints live in process memory (`InMemorySaver`). They expire after `IZZY_CHAT_SESSION_TTL_MINUTES`, are lost on restart, and require a single server process. There is no live human handoff in the web chat; Izzy offers the phone line instead. Complaints are demo records and are never sent to Visa. Without `OPENAI_API_KEY`, the chat answers with an "unavailable" message that includes the phone number.
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from webapp.backend.config import Settings
+from webapp.backend.repositories.card_purchases import CombinedCardPurchaseRepository
 from webapp.backend.repositories.interfaces import Repositories
 
 from ..jev_decision import JevVoiceRouter
@@ -16,8 +17,10 @@ def build_izzy_web_chat(repositories: Repositories, settings: Settings) -> IzzyW
 
     openai_api_key = settings.openai_api_key.get_secret_value() if settings.openai_api_key else None
     jev_api_key = settings.jev_api_key.get_secret_value() if settings.jev_api_key else None
+    # Card purchases from the lakehouse (seeded history) and PostgreSQL (live activity).
+    purchases = CombinedCardPurchaseRepository.from_settings(repositories.card_purchases, settings)
     return IzzyWebChat(
-        WebChatDisputeService.from_repositories(repositories),
+        WebChatDisputeService.from_repositories(repositories, purchases=purchases),
         ChatTurnInterpreter(
             jev_router=JevVoiceRouter(api_key=jev_api_key),
             openai_api_key=openai_api_key,

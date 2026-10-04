@@ -382,5 +382,9 @@
   "izzy.typing": "Izzy está escribiendo",
   "izzy.session_expired": "Este chat expiró. Inicia un chat nuevo para continuar.",
   "izzy.unavailable": "No puedo comunicarme con Izzy ahora. Inténtalo de nuevo en un momento o llama a Izzy.",
-  "izzy.page_description": "Chatea con Izzy, el asistente virtual de Factored Bank para reclamos de tarjeta."
+  "izzy.page_description": "Chatea con Izzy, el asistente virtual de Factored Bank para reclamos de tarjeta.",
+  "izzy.options_label": "Compras que podrían coincidir",
+  "izzy.none_of_these": "Ninguna de estas",
+  "izzy.card_ending": "{card} terminada en {digits}",
+  "izzy.unknown_merchant": "Comercio desconocido"
 }

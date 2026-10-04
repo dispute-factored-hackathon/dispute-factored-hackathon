@@ -14,6 +14,11 @@ from typing import Any
 
 from webapp.backend.models.call_center_interaction import CallCenterInteraction
 from webapp.backend.models.call_transcript import CallTranscript
+from webapp.backend.models.card_transaction import (
+    CARD_PRODUCT_TYPES,
+    CARD_PURCHASE_TYPE,
+    CardTransaction,
+)
 from webapp.backend.models.complaint import Complaint
 from webapp.backend.models.customer import Accent, Customer, Gender
 from webapp.backend.models.product import Product
@@ -348,17 +353,66 @@ class InMemorySatisfactionSurveyRepository:
         return [item for item in self._surveys.values() if item.agent_id == agent_id]
 
 
+class InMemoryCardPurchaseRepository:
+    """Joins the in-memory transactions with their card products, like the SQL version."""
+
+    def __init__(
+        self,
+        transactions: InMemoryTransactionRepository,
+        products: InMemoryProductRepository,
+        *,
+        source: str = "postgres",
+    ) -> None:
+        self.transactions = transactions
+        self.products = products
+        self.source = source
+
+    def _card_purchase(self, transaction: Transaction) -> CardTransaction | None:
+        product = self.products.get_by_id(transaction.product_id)
+        if (
+            product is None
+            or product.customer_id != transaction.customer_id
+            or product.product_type not in CARD_PRODUCT_TYPES
+            or transaction.transaction_type != CARD_PURCHASE_TYPE
+        ):
+            return None
+        return CardTransaction(
+            transaction=transaction,
+            card_type=product.product_type,
+            card_last_four=product.product_number[-4:],
+            card_status=product.product_status,
+            source=self.source,
+        )
+
+    def list_by_customer(self, customer_id: str, *, limit: int = 500) -> list[CardTransaction]:
+        purchases = [
+            purchase
+            for transaction in self.transactions.list_by_customer(customer_id)
+            if (purchase := self._card_purchase(transaction)) is not None
+        ]
+        return purchases[:limit]
+
+    def get_for_customer(self, customer_id: str, transaction_id: str) -> CardTransaction | None:
+        transaction = self.transactions.get_by_id(transaction_id)
+        if transaction is None or transaction.customer_id != customer_id:
+            return None
+        return self._card_purchase(transaction)
+
+
 def new_repositories() -> Repositories:
+    products = InMemoryProductRepository()
+    transactions = InMemoryTransactionRepository()
     return Repositories(
         customers=InMemoryCustomerRepository(),
-        products=InMemoryProductRepository(),
-        transactions=InMemoryTransactionRepository(),
+        products=products,
+        transactions=transactions,
         complaints=InMemoryComplaintRepository(),
         sessions=InMemorySessionRepository(),
         service_agents=InMemoryServiceAgentRepository(),
         call_center_interactions=InMemoryCallCenterInteractionRepository(),
         call_transcripts=InMemoryCallTranscriptRepository(),
         satisfaction_surveys=InMemorySatisfactionSurveyRepository(),
+        card_purchases=InMemoryCardPurchaseRepository(transactions, products),
     )
 
 
@@ -567,7 +621,7 @@ def demo_fruit_transactions(customer_id: str, location_seed: int = 19) -> tuple[
                 process_date=transaction_time.date(),
                 product_id=demo_card_product_id(customer_id),
                 customer_id=customer_id,
-                transaction_type="Card Purchase",
+                transaction_type="Purchase",
                 transaction_category="Fruit purchase",
                 amount=amount,
                 currency="USD",

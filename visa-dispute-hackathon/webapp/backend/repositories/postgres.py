@@ -18,6 +18,11 @@ from webapp.backend.db.database import Database
 from webapp.backend.db.migrate import expected_revision
 from webapp.backend.models.call_center_interaction import CallCenterInteraction
 from webapp.backend.models.call_transcript import CallTranscript
+from webapp.backend.models.card_transaction import (
+    CARD_PRODUCT_TYPES,
+    CARD_PURCHASE_TYPE,
+    CardTransaction,
+)
 from webapp.backend.models.complaint import Complaint
 from webapp.backend.models.customer import Customer
 from webapp.backend.models.product import Product
@@ -458,6 +463,65 @@ class PostgresSessionRepository:
             )
 
 
+class PostgresCardPurchaseRepository:
+    """Card purchases joined with their card product, scoped to one customer (SQL join)."""
+
+    _COLUMNS = sql.SQL(", ").join(
+        sql.SQL("t.{}").format(sql.Identifier(name)) for name in Transaction.model_fields
+    )
+
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def _query(self, extra: str = "") -> sql.Composed:
+        return sql.SQL(
+            "SELECT {columns}, p.product_type AS card_type, "
+            "right(p.product_number, 4) AS card_last_four, p.product_status AS card_status "
+            "FROM transactions t "
+            "JOIN products p ON p.product_id = t.product_id AND p.customer_id = t.customer_id "
+            "WHERE t.customer_id = %(customer_id)s AND t.transaction_type = %(purchase)s "
+            "AND p.product_type = ANY(%(card_types)s)" + extra
+        ).format(columns=self._COLUMNS)
+
+    def _rows(self, query: sql.Composed, params: dict[str, Any]) -> list[CardTransaction]:
+        params = {
+            **params,
+            "purchase": CARD_PURCHASE_TYPE,
+            "card_types": list(CARD_PRODUCT_TYPES),
+        }
+        with self.database.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+        card_fields = ("card_type", "card_last_four", "card_status")
+        return [
+            CardTransaction(
+                transaction=Transaction.model_validate(
+                    {key: value for key, value in row.items() if key not in card_fields}
+                ),
+                card_type=row["card_type"],
+                card_last_four=row["card_last_four"],
+                card_status=row["card_status"],
+                source="postgres",
+            )
+            for row in rows
+        ]
+
+    def list_by_customer(self, customer_id: str, *, limit: int = 500) -> list[CardTransaction]:
+        return self._rows(
+            self._query(" ORDER BY t.transaction_date DESC, t.transaction_id DESC LIMIT %(limit)s"),
+            {"customer_id": customer_id, "limit": max(limit, 0)},
+        )
+
+    def get_for_customer(self, customer_id: str, transaction_id: str) -> CardTransaction | None:
+        if "\x00" in transaction_id:
+            return None
+        rows = self._rows(
+            self._query(" AND t.transaction_id = %(transaction_id)s"),
+            {"customer_id": customer_id, "transaction_id": transaction_id},
+        )
+        return rows[0] if rows else None
+
+
 def open_repositories(settings: Settings) -> Repositories:
     """Open the connection pool, verify the schema revision and build every repository."""
 
@@ -484,5 +548,6 @@ def open_repositories(settings: Settings) -> Repositories:
         call_center_interactions=PostgresCallCenterInteractionRepository(database),
         call_transcripts=PostgresCallTranscriptRepository(database),
         satisfaction_surveys=PostgresSatisfactionSurveyRepository(database),
+        card_purchases=PostgresCardPurchaseRepository(database),
         close=database.close,
     )

@@ -1,6 +1,6 @@
 import { ApiError, apiRequest } from "../api.js";
 import { requireCustomer } from "../auth.js";
-import { getLocale, i18nReady, t } from "../i18n.js?v=1";
+import { formatCurrency, formatDate, getLocale, i18nReady, t, translateValue } from "../i18n.js?v=1";
 
 await i18nReady;
 
@@ -21,6 +21,7 @@ const bottomNav = document.querySelector("#bottom-nav");
 
 let sessionId = null;
 let busy = false;
+let activeOptions = null;
 
 
 function scrollToLatest() {
@@ -70,6 +71,105 @@ function autoResize() {
 }
 
 
+// ----------------------------------------------------------------- purchase options
+
+function optionSummary(option) {
+    const amount = formatCurrency(option.amount, option.currency);
+    return `${option.merchant || t("izzy.unknown_merchant")} · ${amount}`;
+}
+
+function disableOptions(selectedId = null) {
+    if (!activeOptions) return;
+    for (const button of activeOptions.querySelectorAll("button")) {
+        button.disabled = true;
+        if (selectedId && button.dataset.transactionId === selectedId) {
+            button.classList.add("agent-option-selected");
+            button.setAttribute("aria-pressed", "true");
+        }
+    }
+    activeOptions = null;
+}
+
+function renderOptions(options, { selectedId = null } = {}) {
+    disableOptions();
+    if (!options?.length) return;
+
+    const group = document.createElement("div");
+    group.className = "agent-options";
+    group.setAttribute("role", "group");
+    group.setAttribute("aria-label", t("izzy.options_label"));
+
+    options.forEach((option, index) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "agent-option";
+        button.dataset.transactionId = option.transaction_id;
+
+        const number = document.createElement("span");
+        number.className = "agent-option-number";
+        number.textContent = String(index + 1);
+
+        const body = document.createElement("span");
+        body.className = "agent-option-body";
+
+        const title = document.createElement("span");
+        title.className = "agent-option-title";
+        title.textContent = option.merchant || t("izzy.unknown_merchant");
+
+        const amount = document.createElement("span");
+        amount.className = "agent-option-amount";
+        amount.textContent = formatCurrency(option.amount, option.currency);
+
+        const place = [option.city, option.country].filter(Boolean).join(", ");
+        const meta = document.createElement("span");
+        meta.className = "agent-option-meta";
+        meta.textContent = [formatDate(option.date), place, translateValue(option.category)]
+            .filter(Boolean)
+            .join(" · ");
+
+        const card = document.createElement("span");
+        card.className = "agent-option-card";
+        card.textContent = t("izzy.card_ending", {
+            card: translateValue(option.card_type),
+            digits: option.card_last_four,
+        });
+
+        body.append(title, amount, meta, card);
+        button.append(number, body);
+        button.addEventListener("click", () => {
+            if (busy) return;
+            disableOptions(option.transaction_id);
+            sendTurn({ selectedTransactionId: option.transaction_id, label: optionSummary(option) });
+        });
+        group.append(button);
+    });
+
+    messages.append(group);
+    activeOptions = group;
+
+    if (selectedId) {
+        // Opened from a purchase: it is already the selected transaction, shown as context.
+        disableOptions(selectedId);
+        scrollToLatest();
+        return;
+    }
+
+    const none = document.createElement("button");
+    none.type = "button";
+    none.className = "agent-option-none";
+    none.textContent = t("izzy.none_of_these");
+    none.addEventListener("click", () => {
+        if (busy) return;
+        disableOptions();
+        sendTurn({ rejectOptions: true, label: t("izzy.none_of_these") });
+    });
+    group.append(none);
+    scrollToLatest();
+}
+
+
+// ----------------------------------------------------------------- streaming
+
 function parseEventBlock(block) {
     let name = "message";
     const data = [];
@@ -104,13 +204,14 @@ async function readEvents(response, onEvent) {
 }
 
 
-async function sendMessage(text) {
+async function sendTurn({ text = "", selectedTransactionId = null, rejectOptions = false, label }) {
     busy = true;
     setComposerEnabled(false);
-    addBubble("customer", text);
+    addBubble("customer", label || text);
     const reply = addTypingBubble();
     let replyText = "";
     let closed = false;
+    let pendingOptions = null;
 
     const render = (value) => {
         reply.classList.remove("agent-bubble-typing");
@@ -124,7 +225,11 @@ async function sendMessage(text) {
             method: "POST",
             credentials: "same-origin",
             headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-            body: JSON.stringify({ message: text }),
+            body: JSON.stringify({
+                message: text,
+                selected_transaction_id: selectedTransactionId,
+                reject_options: rejectOptions,
+            }),
         });
 
         if (response.status === 401) {
@@ -148,12 +253,19 @@ async function sendMessage(text) {
                 replyText = payload.text;
                 render(replyText);
                 if (name === "error") reply.classList.add("agent-bubble-error");
+            } else if (name === "options") {
+                pendingOptions = payload.options;
+            } else if (name === "selected") {
+                disableOptions(payload.transaction_id);
             } else if (name === "state") {
                 closed = Boolean(payload.closed);
+                if (payload.stage !== "confirm_transaction") disableOptions();
             }
         });
 
         if (!replyText) render(t("izzy.unavailable"));
+        // Options appear under Izzy's message so the question comes first.
+        if (pendingOptions) renderOptions(pendingOptions);
         if (closed) showClosed();
     } catch (error) {
         console.error("Unable to reach Izzy:", error);
@@ -168,6 +280,7 @@ async function sendMessage(text) {
 
 async function openSession() {
     messages.replaceChildren();
+    activeOptions = null;
     closedPanel.hidden = true;
     composer.hidden = false;
     const transactionId = new URLSearchParams(window.location.search).get("transaction_id");
@@ -184,6 +297,7 @@ async function openSession() {
         setPhone(opening.phone_number, opening.phone_display);
         typing.remove();
         addBubble("izzy", opening.message);
+        renderOptions(opening.options, { selectedId: opening.selected_transaction_id });
         setComposerEnabled(true);
     } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
@@ -203,7 +317,7 @@ composer.addEventListener("submit", (event) => {
     if (!text || busy || !sessionId) return;
     input.value = "";
     autoResize();
-    sendMessage(text);
+    sendTurn({ text });
 });
 
 input.addEventListener("input", () => {

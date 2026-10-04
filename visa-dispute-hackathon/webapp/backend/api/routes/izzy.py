@@ -13,6 +13,7 @@ from webapp.backend.models.customer import Customer
 from webapp.backend.schemas.izzy import (
     IzzyContactResponse,
     IzzyMessageRequest,
+    IzzyPurchaseOption,
     IzzySessionRequest,
     IzzySessionResponse,
 )
@@ -62,6 +63,8 @@ def open_session(
         stage=opening.stage,
         language=opening.language,
         transaction_context=opening.transaction_context,
+        options=[IzzyPurchaseOption(**option) for option in opening.options],
+        selected_transaction_id=opening.selected_transaction_id,
         phone_number=chat.phone_number,
         phone_display=chat.phone_display,
     )
@@ -90,7 +93,13 @@ def send_message(
 
     async def events() -> AsyncIterator[str]:
         try:
-            async for event in chat.stream_turn(session_id, customer.customer_id, request.message):
+            async for event in chat.stream_turn(
+                session_id,
+                customer.customer_id,
+                request.message,
+                selected_transaction_id=request.selected_transaction_id,
+                reject_options=request.reject_options,
+            ):
                 yield _sse(event)
         except ChatSessionNotFoundError:
             yield _sse({"event": "error", "text": "Chat session not found. Start a new chat."})
