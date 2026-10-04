@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     # Read-only source for dispute-db-seed-lakehouse (MotherDuck's Postgres endpoint).
     motherduck_token: SecretStr | None = None
     motherduck_pg_host: str = "pg.us-east-1-aws.motherduck.com"
+    motherduck_pg_port: int = Field(default=5432, ge=1, le=65535)
     motherduck_database: str = "lakehouse"
     motherduck_schema: str = "silver"
 

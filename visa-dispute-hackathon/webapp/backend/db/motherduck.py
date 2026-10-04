@@ -28,7 +28,10 @@ def lakehouse_schema(settings: Settings) -> str:
 
 
 def lakehouse_target(settings: Settings) -> str:
-    return f"{settings.motherduck_pg_host}/{settings.motherduck_database}"
+    return (
+        f"{settings.motherduck_pg_host}:{settings.motherduck_pg_port}/"
+        f"{settings.motherduck_database}"
+    )
 
 
 def connect_lakehouse(settings: Settings, *, connect_timeout: int = 20) -> psycopg.Connection:
@@ -38,7 +41,7 @@ def connect_lakehouse(settings: Settings, *, connect_timeout: int = 20) -> psyco
         raise LakehouseUnavailableError("MOTHERDUCK_TOKEN is not set. See .env.example.")
     dsn = make_conninfo(
         host=settings.motherduck_pg_host,
-        port=5432,
+        port=settings.motherduck_pg_port,
         user="postgres",
         password=settings.motherduck_token.get_secret_value(),
         dbname=settings.motherduck_database,
@@ -52,5 +55,5 @@ def connect_lakehouse(settings: Settings, *, connect_timeout: int = 20) -> psyco
     except psycopg.OperationalError as error:
         raise LakehouseUnavailableError(
             f"Cannot connect to MotherDuck at {lakehouse_target(settings)} "
-            "(check MOTHERDUCK_TOKEN, MOTHERDUCK_PG_HOST and your network)."
+            "(check MOTHERDUCK_TOKEN, MOTHERDUCK_PG_HOST, MOTHERDUCK_PG_PORT and your network)."
         ) from error
