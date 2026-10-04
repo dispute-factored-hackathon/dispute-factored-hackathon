@@ -24,6 +24,24 @@ Parameters:
     Type: String
     Description: ARN of the JSON secret containing LANGSMITH_API_KEY.
 
+  DatabaseHost:
+    Type: String
+  DatabasePort:
+    Type: Number
+    Default: 5432
+  DatabaseName:
+    Type: String
+  DatabaseOwnerSecretArn:
+    Type: String
+  DatabaseAppSecretArn:
+    Type: String
+  MotherDuckSecretArn:
+    Type: String
+  PrivateSubnetIds:
+    Type: CommaDelimitedList
+  LambdaSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+
   LangSmithProject:
     Type: String
     Default: dispute-factored
@@ -66,6 +84,7 @@ Resources:
 
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
 
       Policies:
         - PolicyName: ReadObservabilitySecrets
@@ -77,6 +96,8 @@ Resources:
                 Resource:
                   - !Ref OpenAISecretArn
                   - !Ref LangSmithSecretArn
+                  - !Ref DatabaseAppSecretArn
+                  - !Ref MotherDuckSecretArn
 
         - PolicyName: InvokeCallWorker
           PolicyDocument:
@@ -102,6 +123,44 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: ReadApplicationSecrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref DatabaseAppSecretArn
+                  - !Ref MotherDuckSecretArn
+                  - !Ref OpenAISecretArn
+                  - !Ref LangSmithSecretArn
+
+  DatabaseBootstrapExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: ReadDatabaseBootstrapSecrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref DatabaseOwnerSecretArn
+                  - !Ref DatabaseAppSecretArn
+                  - !Ref MotherDuckSecretArn
 
   SipFunction:
     Type: AWS::Lambda::Function
@@ -120,10 +179,19 @@ Resources:
       SnapStart:
         ApplyOn: !Ref VoiceSnapStartApplyOn
 
+      VpcConfig:
+        SecurityGroupIds: [!Ref LambdaSecurityGroupId]
+        SubnetIds: !Ref PrivateSubnetIds
+
       Environment:
         Variables:
           OPENAI_SECRET_ARN: !Ref OpenAISecretArn
           LANGSMITH_SECRET_ARN: !Ref LangSmithSecretArn
+          DATABASE_APP_SECRET_ARN: !Ref DatabaseAppSecretArn
+          MOTHERDUCK_SECRET_ARN: !Ref MotherDuckSecretArn
+          DATABASE_HOST: !Ref DatabaseHost
+          DATABASE_PORT: !Ref DatabasePort
+          DATABASE_NAME: !Ref DatabaseName
 
 
           OPENAI_REALTIME_MODEL: gpt-realtime-2.1
@@ -180,14 +248,23 @@ Resources:
       Architectures: [x86_64]
       MemorySize: 512
       Timeout: 30
+      VpcConfig:
+        SecurityGroupIds: [!Ref LambdaSecurityGroupId]
+        SubnetIds: !Ref PrivateSubnetIds
       Environment:
         Variables:
           APP_ENV: !Ref EnvironmentName
-          REPOSITORY_BACKEND: mock
-          SEED_DEMO_CUSTOMERS: "true"
           SESSION_COOKIE_SECURE: "true"
           SESSION_DURATION_HOURS: "24"
-          DEMO_SELECTOR_SECRET: "factored-hackathon-demo-selector-v1"
+          DATABASE_APP_SECRET_ARN: !Ref DatabaseAppSecretArn
+          MOTHERDUCK_SECRET_ARN: !Ref MotherDuckSecretArn
+          OPENAI_SECRET_ARN: !Ref OpenAISecretArn
+          LANGSMITH_SECRET_ARN: !Ref LangSmithSecretArn
+          DATABASE_HOST: !Ref DatabaseHost
+          DATABASE_PORT: !Ref DatabasePort
+          DATABASE_NAME: !Ref DatabaseName
+          LANGSMITH_TRACING: "true"
+          LANGSMITH_PROJECT: !Ref LangSmithProject
       LoggingConfig:
         LogFormat: JSON
         ApplicationLogLevel: INFO
@@ -199,6 +276,40 @@ Resources:
       TargetFunctionArn: !GetAtt WebFunction.Arn
       AuthType: NONE
       InvokeMode: BUFFERED
+
+  DatabaseBootstrapFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${EnvironmentName}-database-bootstrap"
+      Description: Idempotent schema migration, grants, and synthetic lakehouse seed.
+      PackageType: Image
+      Code:
+        ImageUri: !Ref ContainerImageUri
+      ImageConfig:
+        Command: ["webapp.backend.db.aws_bootstrap.lambda_handler"]
+      Role: !GetAtt DatabaseBootstrapExecutionRole.Arn
+      Architectures: [x86_64]
+      MemorySize: 1024
+      Timeout: 900
+      VpcConfig:
+        SecurityGroupIds: [!Ref LambdaSecurityGroupId]
+        SubnetIds: !Ref PrivateSubnetIds
+      Environment:
+        Variables:
+          DATABASE_OWNER_SECRET_ARN: !Ref DatabaseOwnerSecretArn
+          DATABASE_APP_SECRET_ARN: !Ref DatabaseAppSecretArn
+          MOTHERDUCK_SECRET_ARN: !Ref MotherDuckSecretArn
+          DATABASE_HOST: !Ref DatabaseHost
+          DATABASE_PORT: !Ref DatabasePort
+          DATABASE_NAME: !Ref DatabaseName
+          MOTHERDUCK_PG_HOST: pg.us-east-1-aws.motherduck.com
+          MOTHERDUCK_PG_PORT: "5432"
+          MOTHERDUCK_DATABASE: lakehouse
+          MOTHERDUCK_SCHEMA: silver
+      LoggingConfig:
+        LogFormat: JSON
+        ApplicationLogLevel: INFO
+        SystemLogLevel: WARN
 
   PublicWebFunctionUrlPermission:
     Type: AWS::Lambda::Permission
@@ -253,6 +364,12 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/${ProjectName}-${EnvironmentName}-web"
       RetentionInDays: !Ref LogRetentionDays
 
+  DatabaseBootstrapLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ProjectName}-${EnvironmentName}-database-bootstrap"
+      RetentionInDays: !Ref LogRetentionDays
+
 Outputs:
   FunctionUrl:
     Value: !GetAtt SipFunctionUrl.FunctionUrl
@@ -262,6 +379,9 @@ Outputs:
 
   WebFunctionName:
     Value: !Ref WebFunction
+
+  DatabaseBootstrapFunctionName:
+    Value: !Ref DatabaseBootstrapFunction
 
   OpenAIWebhookUrl:
     Value: !Sub "${SipFunctionUrl.FunctionUrl}webhooks/openai"

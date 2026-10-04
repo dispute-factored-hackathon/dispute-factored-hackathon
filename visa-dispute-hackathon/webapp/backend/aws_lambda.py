@@ -5,11 +5,20 @@ from typing import Any
 
 from mangum import Mangum
 
-from webapp.backend.main import app
+from webapp.backend.aws_runtime import configure_application_runtime
 
-# Repositories and demo data are process-scoped in the hackathon build. Keeping
-# ASGI lifespan handling off avoids closing them after every Lambda invocation.
-_adapter = Mangum(app, lifespan="off")
+_adapter: Mangum | None = None
+
+
+def _get_adapter() -> Mangum:
+    global _adapter
+    if _adapter is None:
+        configure_application_runtime()
+        # Settings and the FastAPI app must only be imported after secrets configure the process.
+        from webapp.backend.main import app
+
+        _adapter = Mangum(app, lifespan="auto")
+    return _adapter
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -18,4 +27,4 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         asyncio.get_event_loop()
     except RuntimeError:
         asyncio.set_event_loop(asyncio.new_event_loop())
-    return _adapter(event, context)
+    return _get_adapter()(event, context)

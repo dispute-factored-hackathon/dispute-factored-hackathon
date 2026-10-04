@@ -83,6 +83,7 @@ class AwsLambdaTests(unittest.TestCase):
         gateway = object()
         repositories = new_repositories()
         with (
+            patch.object(aws_lambda, "configure_application_runtime"),
             patch.object(aws_lambda, "_configure_langsmith"),
             patch.object(aws_lambda, "open_repositories", return_value=repositories),
             patch.object(

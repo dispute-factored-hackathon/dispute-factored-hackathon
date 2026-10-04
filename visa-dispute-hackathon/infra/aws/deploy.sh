@@ -6,6 +6,7 @@ AWS_REGION="${AWS_REGION:-sa-east-1}"
 PROJECT_NAME="${PROJECT_NAME:-dispute-factored}"
 BOOTSTRAP_STACK="${PROJECT_NAME}-bootstrap"
 APPLICATION_STACK="${PROJECT_NAME}-demo"
+DATABASE_STACK="${PROJECT_NAME}-database"
 GIT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo local)"
 IMAGE_TAG="${IMAGE_TAG:-${GIT_SHA}-$(date +%Y%m%d%H%M%S)}"
 LANGSMITH_SECRET_ID="${LANGSMITH_SECRET_ID:-${PROJECT_NAME}/langsmith}"
@@ -21,6 +22,20 @@ stack_output() {
     --output text
 }
 
+deploy_database() {
+  aws cloudformation deploy \
+    --region "${AWS_REGION}" \
+    --stack-name "${DATABASE_STACK}" \
+    --template-file infra/aws/database.yaml \
+    --parameter-overrides ProjectName="${PROJECT_NAME}"
+
+  MOTHERDUCK_SECRET_ARN="$(stack_output "${DATABASE_STACK}" MotherDuckSecretArn)"
+  uv run python infra/aws/sync_runtime_secrets.py \
+    --region "${AWS_REGION}" \
+    --motherduck-secret-arn "${MOTHERDUCK_SECRET_ARN}"
+  echo "Database: $(stack_output "${DATABASE_STACK}" DatabaseHost)"
+}
+
 if [[ "${ACTION}" == "bootstrap" ]]; then
   aws cloudformation deploy \
     --region "${AWS_REGION}" \
@@ -30,7 +45,13 @@ if [[ "${ACTION}" == "bootstrap" ]]; then
   echo "Repository: $(stack_output "${BOOTSTRAP_STACK}" RepositoryUri)"
   echo "Secret ARN: $(stack_output "${BOOTSTRAP_STACK}" OpenAISecretArn)"
   echo "Update that secret before deploying the application."
-elif [[ "${ACTION}" == "application" ]]; then
+elif [[ "${ACTION}" == "database" ]]; then
+  deploy_database
+elif [[ "${ACTION}" == "application" || "${ACTION}" == "all" ]]; then
+  if ! aws cloudformation describe-stacks \
+    --region "${AWS_REGION}" --stack-name "${DATABASE_STACK}" >/dev/null 2>&1; then
+    deploy_database
+  fi
   REPOSITORY_URI="$(stack_output "${BOOTSTRAP_STACK}" RepositoryUri)"
   OPENAI_SECRET_ARN="$(stack_output "${BOOTSTRAP_STACK}" OpenAISecretArn)"
 
@@ -49,6 +70,16 @@ elif [[ "${ACTION}" == "application" ]]; then
     --secret-id "${LANGSMITH_SECRET_ID}" \
     --query ARN \
     --output text)"
+
+  DATABASE_HOST="$(stack_output "${DATABASE_STACK}" DatabaseHost)"
+  DATABASE_PORT="$(stack_output "${DATABASE_STACK}" DatabasePort)"
+  DATABASE_NAME="$(stack_output "${DATABASE_STACK}" DatabaseName)"
+  DATABASE_OWNER_SECRET_ARN="$(stack_output "${DATABASE_STACK}" DatabaseOwnerSecretArn)"
+  DATABASE_APP_SECRET_ARN="$(stack_output "${DATABASE_STACK}" DatabaseAppSecretArn)"
+  MOTHERDUCK_SECRET_ARN="$(stack_output "${DATABASE_STACK}" MotherDuckSecretArn)"
+  uv run python infra/aws/sync_runtime_secrets.py \
+    --region "${AWS_REGION}" \
+    --motherduck-secret-arn "${MOTHERDUCK_SECRET_ARN}"
 
   if [[ -z "${LANGSMITH_SECRET_ARN}" || "${LANGSMITH_SECRET_ARN}" == "None" ]]; then
     echo "Unable to resolve LangSmith secret: ${LANGSMITH_SECRET_ID}" >&2
@@ -88,9 +119,32 @@ elif [[ "${ACTION}" == "application" ]]; then
       ContainerImageUri="${IMAGE_URI}" \
       OpenAISecretArn="${OPENAI_SECRET_ARN}" \
       LangSmithSecretArn="${LANGSMITH_SECRET_ARN}" \
+      DatabaseHost="${DATABASE_HOST}" \
+      DatabasePort="${DATABASE_PORT}" \
+      DatabaseName="${DATABASE_NAME}" \
+      DatabaseOwnerSecretArn="${DATABASE_OWNER_SECRET_ARN}" \
+      DatabaseAppSecretArn="${DATABASE_APP_SECRET_ARN}" \
+      MotherDuckSecretArn="${MOTHERDUCK_SECRET_ARN}" \
+      PrivateSubnetIds="$(stack_output "${DATABASE_STACK}" PrivateSubnetIds)" \
+      LambdaSecurityGroupId="$(stack_output "${DATABASE_STACK}" LambdaSecurityGroupId)" \
       LangSmithProject="${LANGSMITH_PROJECT}" \
       HumanHandoffNumber="${HUMAN_HANDOFF_NUMBER}" \
       VoiceSnapStartApplyOn="${VOICE_SNAPSTART_APPLY_ON}"
+
+  DATABASE_BOOTSTRAP_FUNCTION="$(stack_output "${APPLICATION_STACK}" DatabaseBootstrapFunctionName)"
+  BOOTSTRAP_RESULT="$(mktemp "${TMPDIR:-/tmp}/dispute-db-bootstrap.XXXXXX")"
+  aws --cli-read-timeout 900 lambda invoke \
+    --region "${AWS_REGION}" \
+    --function-name "${DATABASE_BOOTSTRAP_FUNCTION}" \
+    --cli-binary-format raw-in-base64-out \
+    --payload '{}' \
+    "${BOOTSTRAP_RESULT}" >/dev/null
+  if ! grep -q '"status"[[:space:]]*:[[:space:]]*"ready"' "${BOOTSTRAP_RESULT}"; then
+    echo "Database bootstrap failed. Inspect /aws/lambda/${DATABASE_BOOTSTRAP_FUNCTION}." >&2
+    rm -f -- "${BOOTSTRAP_RESULT}"
+    exit 1
+  fi
+  rm -f -- "${BOOTSTRAP_RESULT}"
 
   SIP_FUNCTION_NAME="$(stack_output "${APPLICATION_STACK}" FunctionName)"
   SIP_PUBLISHED_VERSION="$(stack_output "${APPLICATION_STACK}" SipPublishedVersion)"
@@ -113,6 +167,6 @@ elif [[ "${ACTION}" == "application" ]]; then
   echo "Application: $(stack_output "${APPLICATION_STACK}" ApplicationUrl)"
   echo "Webhook: $(stack_output "${APPLICATION_STACK}" OpenAIWebhookUrl)"
 else
-  echo "Usage: $0 bootstrap|application" >&2
+  echo "Usage: $0 bootstrap|database|application|all" >&2
   exit 2
 fi

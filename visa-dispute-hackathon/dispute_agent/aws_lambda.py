@@ -10,6 +10,7 @@ import os
 import time
 from typing import Any
 
+from webapp.backend.aws_runtime import configure_application_runtime
 from webapp.backend.config import get_settings
 from webapp.backend.repositories.postgres import open_repositories
 
@@ -86,13 +87,14 @@ def _load_json_secret(
 def _load_openai_secret() -> dict[str, str]:
     """Load OpenAI API and webhook signing credentials."""
 
+    names = {"JEV_API_KEY", "OPENAI_API_KEY", "OPENAI_WEBHOOK_SECRET"}
+    configured = {name: os.environ.get(name, "").strip() for name in names}
+    if all(configured.values()):
+        return configured
+
     return _load_json_secret(
         "OPENAI_SECRET_ARN",
-        required_keys={
-            "JEV_API_KEY",
-            "OPENAI_API_KEY",
-            "OPENAI_WEBHOOK_SECRET",
-        },
+        required_keys=names,
         secret_name="openai",
     )
 
@@ -132,6 +134,9 @@ def _get_gateway() -> SipRealtimeGateway:
 
     if _gateway is None:
         started = time.monotonic()
+
+        configure_application_runtime()
+        get_settings.cache_clear()
 
         # Configure LangSmith before application code begins creating traced runs.
         _configure_langsmith()

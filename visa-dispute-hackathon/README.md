@@ -148,7 +148,7 @@ Check `http://127.0.0.1:8001/health`. A local HTTPS tunnel remains useful for sh
 
 ### Cost-conscious AWS deployment
 
-The hackathon deployment intentionally avoids always-on or redundant services. It does **not** create App Runner, ECS/Fargate, EC2, an Application Load Balancer, API Gateway, a NAT Gateway, Route 53, ACM, DynamoDB, or a VPC.
+The hackathon deployment avoids redundant services. It does **not** create App Runner, ECS/Fargate, an Application Load Balancer, API Gateway, a NAT Gateway, Route 53, ACM or DynamoDB. PostgreSQL is private, so the stack creates a small VPC and one `t4g.micro` egress instance; this is materially cheaper than a managed NAT Gateway and has no inbound rule.
 
 The components are:
 
@@ -160,6 +160,9 @@ The components are:
 - **ECR:** stores the immutable Docker image and retains only the three newest images.
 - **One Secrets Manager secret:** stores `OPENAI_API_KEY`, `OPENAI_WEBHOOK_SECRET`, and `JEV_API_KEY`. It is fetched once per Lambda execution environment rather than on every message or keypad event.
 - **CloudWatch Logs:** keeps JSON logs for three days. The application never logs document digits.
+- **Aurora PostgreSQL Serverless v2:** one encrypted private PostgreSQL 16.8 instance, limited to 0–1 ACU and configured to auto-pause after five idle minutes. It stores shared web/voice state.
+- **Database bootstrap Lambda:** alone can read the owner credential; it runs Alembic, refreshes the restricted `factored_app` grants and imports 100 synthetic customers idempotently.
+- **Low-cost egress instance:** provides outbound-only access from private Lambdas to OpenAI, MotherDuck and AWS APIs. It replaces the much more expensive NAT Gateway.
 - **Concurrency:** uses the account's unreserved Lambda capacity. The demo account currently has a total concurrency quota of 10, so the stack does not reserve concurrency; AWS requires all 10 executions to remain unreserved at that quota. Use account quotas and OpenAI-side limits as the cost and abuse boundary until the Lambda quota is increased.
 
 #### Low-cost voice cold-start control
@@ -181,7 +184,7 @@ Caller → SIP provider → OpenAI Realtime
 Browser → GitHub Pages redirect → Web Lambda Function URL → FastAPI + static frontend
 ```
 
-This arrangement has no continuously running compute. Lambda is billed only while the short webhook and active call worker execute. The Function URL has no separate endpoint charge. One Secrets Manager secret currently has a small recurring charge, and ECR and CloudWatch are usage-based. OpenAI Realtime and the SIP provider are billed separately.
+Lambda and Aurora application compute are on demand; Aurora pauses when idle. The egress EC2 instance and its public IPv4 address remain running, and encrypted storage, Secrets Manager, ECR and CloudWatch are billed separately. The fixed AWS baseline is expected to be roughly USD 10–15/month in São Paulo before Aurora active time and traffic; verify the current AWS price list before budgeting. OpenAI Realtime, MotherDuck and the SIP provider are billed separately.
 
 Prerequisites are an AWS account, an AWS CLI profile with deployment permissions, and Docker Buildx. From `visa-dispute-hackathon/`, create the persistent ECR repository and secret:
 
@@ -202,15 +205,19 @@ Open **AWS Secrets Manager → dispute-factored/openai-realtime** and replace `O
 Do not commit this value or pass it as a CloudFormation parameter. Then build the Lambda container for Linux, push it to ECR, and deploy the function:
 
 ```bash
+AWS_REGION=sa-east-1 ./infra/aws/deploy.sh database
 AWS_REGION=sa-east-1 ./infra/aws/deploy.sh application
 ```
+
+The one-time `database` action creates the private cluster/network and copies `MOTHERDUCK_TOKEN` from the local ignored `.env` into its retained runtime secret without printing it. The `application` action builds the image, wires web/voice to the database, invokes the idempotent migration/seed function, and fails if it does not return `ready`. Later CI releases update only the application stack and invoke the same safe migration; the GitHub OIDC role cannot create or delete database/network resources.
 
 The command prints both `Application` and `Webhook` addresses. The application address serves the browser experience. Use the exact webhook address to create the OpenAI project webhook, copy its new signing secret, and replace `OPENAI_WEBHOOK_SECRET` in the same AWS secret **before placing the first call**. No voice Lambda environment has started yet, so the first call reads the correct value. After a later secret rotation, deploy a new image tag to replace any warm environments.
 
 The infrastructure definitions are split because ECR must exist before Docker can push the image:
 
 - `infra/aws/bootstrap.yaml`: ECR and the retained secret.
-- `infra/aws/application.yaml`: IAM with least-privilege policies, Lambda, Function URL, bounded asynchronous invocation, and log retention.
+- `infra/aws/database.yaml`: private auto-pausing Aurora, restricted credentials, subnets/security groups and low-cost outbound routing.
+- `infra/aws/application.yaml`: least-privilege IAM, web/voice/bootstrap Lambdas, database wiring, Function URLs, bounded asynchronous invocation and log retention.
 - `Dockerfile.aws`: reproducible Python 3.12 Lambda image using the locked `uv` dependencies. BuildKit adds only `data/raw/customers.csv` from the supplied 150,000-row synthetic dataset; it does not upload the other raw tables to Docker.
 - `infra/aws/deploy.sh`: repeatable bootstrap/build/deploy commands.
 
@@ -226,7 +233,7 @@ The workflow uses GitHub OIDC to obtain short-lived AWS credentials. It does not
 
 The complete synthetic customer table is intentionally not committed. On GitHub-hosted runners, the deploy script extracts `customers.csv` from the newest immutable image already present in the project's ECR repository, then embeds it in the new image. Consequently, the first deployment must still be performed locally with `CUSTOMERS_BUILD_CONTEXT` pointing to a directory containing `customers.csv`. Subsequent automated deployments need no additional data service or paid storage.
 
-Each deployment uses the full Git commit SHA as its immutable image tag, runs Ruff and the complete unit-test suite, validates both CloudFormation templates, updates the application stack, verifies the web health and login pages, and confirms that an unsigned webhook request is rejected with `invalid_webhook_signature`.
+Each deployment uses the full Git commit SHA as its immutable image tag, runs Ruff and the complete unit-test suite, validates all CloudFormation templates, updates the application stack, migrates/seeds the existing private database, verifies the web health and login pages, and confirms that an unsigned webhook request is rejected with `invalid_webhook_signature`.
 
 To remove active compute and the public endpoint after the demonstration while deliberately retaining the image repository and secret:
 
@@ -310,7 +317,7 @@ New sign-ups get one demo credit card and no history. Their transactions come fr
 
 Tests: `uv run pytest -q`. Web and voice tests use the in-memory test doubles and synthetic fixtures in `tests/fakes.py`. The PostgreSQL integration tests run only when `TEST_POSTGRES_URL` points at a disposable server (`postgresql://postgres:<password>@127.0.0.1:<port>/postgres`). Otherwise they are skipped.
 
-The voice channel (`dispute-sip-server` and the Lambda worker) uses the same database through `DATABASE_URL`, so customers, cards, transactions and complaints are shared between phone and web. A deployed worker needs a PostgreSQL it can reach; it does not create demo customers.
+The voice channel (`dispute-sip-server` and the Lambda worker) uses the same database through `DATABASE_URL`, so customers, cards, transactions and complaints are shared between phone and web. In AWS, the deployment Lambda imports the synthetic demo sample; runtime Lambdas never create seed customers.
 
 Limitations: the data is synthetic, and the parody shop catalog is static copy. Purchases and complaints written by the app or by calls exist only in PostgreSQL; they are not synchronized back to the lakehouse yet.
 
@@ -358,7 +365,7 @@ This shortcut is controlled impersonation for the hackathon demo, not production
 
 Authenticated demo customers can open `/shop`, browse a humorous synthetic catalog, manage a browser-session cart, and pay with one of their active mock credit cards. The server resolves authoritative catalog prices, validates card ownership and status, and writes the approved purchase to the same PostgreSQL transactions table used by Factored Bank.
 
-Every checkout also injects exactly one randomly selected training scenario: either a duplicate Shady Business charge or an unrelated high-value electronics transaction in a configured South Asian location. The receipt does not reveal the selected scenario; the judge discovers it in `/transactions` and can continue into the dispute journey. No real card network, merchant processor, money movement, inventory service, or production database is used; the PostgreSQL database is a local Docker container with synthetic data.
+Every checkout also injects exactly one randomly selected training scenario: either a duplicate Shady Business charge or an unrelated high-value electronics transaction in a configured South Asian location. The receipt does not reveal the selected scenario; the judge discovers it in `/transactions` and can continue into the dispute journey. No real card network, merchant processor, money movement or inventory service is used. Locally PostgreSQL runs in Docker; the deployed demonstration uses private Aurora with the same synthetic schema and repository contracts.
 
 ## Mock customer identification
 
