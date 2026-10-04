@@ -2409,6 +2409,8 @@ General behavior:
         required_stages = {
             VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION,
             VoiceCallStage.NEEDS_AUTH_METHOD,
+            VoiceCallStage.AUTHENTICATED,
+            VoiceCallStage.NEEDS_TRANSACTION_DETAILS,
             VoiceCallStage.CONFIRM_TRANSACTION,
             VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION,
             VoiceCallStage.DISPUTE_CLASSIFIED,
