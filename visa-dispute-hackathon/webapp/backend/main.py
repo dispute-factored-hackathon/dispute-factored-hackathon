@@ -6,7 +6,10 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from webapp.backend.api.dependencies import SESSION_COOKIE_NAME, authentication_service
+from webapp.backend.api.dependencies import (
+    SESSION_COOKIE_NAME,
+    AuthenticationServiceDependency,
+)
 from webapp.backend.api.routes.auth import (
     router as auth_router,
 )
@@ -16,6 +19,7 @@ from webapp.backend.api.routes.complaints import (
 from webapp.backend.api.routes.customers import (
     router as customers_router,
 )
+from webapp.backend.api.routes.izzy import router as izzy_router
 from webapp.backend.api.routes.localization import (
     router as localization_router,
 )
@@ -30,12 +34,7 @@ from webapp.backend.api.routes.transactions import (
     router as transactions_router,
 )
 from webapp.backend.config import get_settings
-from webapp.backend.demo_seed import seed_demo_customers
-from webapp.backend.repositories.registry import (
-    close_repositories,
-    customer_repository,
-    product_repository,
-)
+from webapp.backend.services.runtime import application_runtime
 
 settings = get_settings()
 
@@ -43,14 +42,13 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 FRONTEND_DIR = BASE_DIR / "frontend"
 PAGES_DIR = FRONTEND_DIR / "pages"
 
-if settings.seed_demo_customers:
-    seed_demo_customers(customer_repository, product_repository)
-
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    yield
-    close_repositories()
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # HTML and static assets do not wait for PostgreSQL, LangGraph, or model imports. Data-backed
+    # APIs initialize the shared repositories once; Izzy initializes separately on first use.
+    async with application_runtime(app):
+        yield
 
 
 app = FastAPI(
@@ -67,6 +65,7 @@ app.include_router(transactions_router)
 app.include_router(complaints_router)
 app.include_router(onboarding_router)
 app.include_router(store_router)
+app.include_router(izzy_router)
 
 
 app.mount(
@@ -81,7 +80,9 @@ app.mount(
 def page(
     filename: str,
 ) -> FileResponse:
-    return FileResponse(PAGES_DIR / filename)
+    # Pages are small HTML shells: always revalidate so a browser never keeps an outdated page
+    # (for example the old "coming soon" placeholder at /agent?intent=new_complaint).
+    return FileResponse(PAGES_DIR / filename, headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/health")
@@ -152,7 +153,7 @@ def profile_page() -> FileResponse:
 
 @app.get("/agent")
 def agent_page() -> FileResponse:
-    return page("coming-soon.html")
+    return page("agent.html")
 
 
 @app.get("/shop")
@@ -179,6 +180,7 @@ def shop_cart_page() -> FileResponse:
 def redirect_unknown_page(
     unknown_path: str,
     request: Request,
+    authentication_service: AuthenticationServiceDependency,
 ) -> RedirectResponse:
     if request.method != "GET" or unknown_path == "api" or unknown_path.startswith("api/"):
         raise HTTPException(

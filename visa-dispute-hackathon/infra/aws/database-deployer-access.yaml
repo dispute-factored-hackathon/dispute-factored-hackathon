@@ -1,0 +1,263 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Restricted IAM access for the Factored database stacks and read-only application logs.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: dispute-factored
+    AllowedPattern: "[a-z0-9-]+"
+  PostgresStackName:
+    Type: String
+    Default: dispute-factored-postgres
+    AllowedPattern: "[a-z0-9-]+"
+  DuckDBStackName:
+    Type: String
+    Default: dispute-factored-duckdb
+    AllowedPattern: "[a-z0-9-]+"
+  ApplicationEnvironment:
+    Type: String
+    Default: demo
+    AllowedPattern: "[a-z0-9-]+"
+
+Resources:
+  PostgresExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-database-cfn-execution"
+      Description: CloudFormation execution role limited to the demo PostgreSQL and DuckDB resources.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ManageOnlyDemoPostgresResources
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadRegionalNetworkMetadata
+                Effect: Allow
+                Action:
+                  - ec2:DescribeAvailabilityZones
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeVpcs
+                  - rds:DescribeDBInstances
+                  - rds:DescribeDBParameterGroups
+                  - rds:DescribeDBSubnetGroups
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: sa-east-1
+              - Sid: ManageNamedPostgresInstances
+                Effect: Allow
+                Action:
+                  - rds:AddTagsToResource
+                  - rds:CreateDBInstance
+                  - rds:DeleteDBInstance
+                  - rds:ListTagsForResource
+                  - rds:ModifyDBInstance
+                  - rds:RebootDBInstance
+                  - rds:RemoveTagsFromResource
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:rds:sa-east-1:${AWS::AccountId}:db:${PostgresStackName}*
+              - Sid: ManageNamedSubnetAndParameterGroups
+                Effect: Allow
+                Action:
+                  - rds:AddTagsToResource
+                  - rds:CreateDBParameterGroup
+                  - rds:CreateDBSubnetGroup
+                  - rds:DeleteDBParameterGroup
+                  - rds:DeleteDBSubnetGroup
+                  - rds:ListTagsForResource
+                  - rds:ModifyDBParameterGroup
+                  - rds:ModifyDBSubnetGroup
+                  - rds:RemoveTagsFromResource
+                  - rds:ResetDBParameterGroup
+                Resource:
+                  - !Sub >-
+                    arn:${AWS::Partition}:rds:sa-east-1:${AWS::AccountId}:pg:${PostgresStackName}*
+                  - !Sub >-
+                    arn:${AWS::Partition}:rds:sa-east-1:${AWS::AccountId}:subgrp:${PostgresStackName}*
+              - Sid: CreateTaggedDatabaseSecurityGroups
+                Effect: Allow
+                Action:
+                  - ec2:CreateSecurityGroup
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: sa-east-1
+                    aws:RequestTag/Project: !Ref ProjectName
+              - Sid: ManageTaggedDatabaseSecurityGroups
+                Effect: Allow
+                Action:
+                  - ec2:AuthorizeSecurityGroupEgress
+                  - ec2:AuthorizeSecurityGroupIngress
+                  - ec2:CreateTags
+                  - ec2:DeleteSecurityGroup
+                  - ec2:DeleteTags
+                  - ec2:RevokeSecurityGroupEgress
+                  - ec2:RevokeSecurityGroupIngress
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:ec2:sa-east-1:${AWS::AccountId}:security-group/*
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: sa-east-1
+                    ec2:ResourceTag/Project: !Ref ProjectName
+              - Sid: ManageNamedDatabaseSecrets
+                Effect: Allow
+                Action:
+                  - secretsmanager:CreateSecret
+                  - secretsmanager:DeleteSecret
+                  - secretsmanager:DescribeSecret
+                  - secretsmanager:GetRandomPassword
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:PutSecretValue
+                  - secretsmanager:TagResource
+                  - secretsmanager:UntagResource
+                  - secretsmanager:UpdateSecret
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:secretsmanager:sa-east-1:${AWS::AccountId}:secret:${ProjectName}/postgres/*
+              - Sid: ManageOnlyDuckDBArtifactBucket
+                Effect: Allow
+                Action:
+                  - s3:CreateBucket
+                  - s3:DeleteBucket
+                  - s3:GetBucketEncryption
+                  - s3:GetBucketLocation
+                  - s3:GetBucketPublicAccessBlock
+                  - s3:GetBucketTagging
+                  - s3:GetBucketVersioning
+                  - s3:ListBucket
+                  - s3:PutBucketEncryption
+                  - s3:PutBucketPublicAccessBlock
+                  - s3:PutBucketTagging
+                  - s3:PutBucketVersioning
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:s3:::${ProjectName}-duckdb-${AWS::AccountId}-sa-east-1
+              - Sid: ManageOnlyDuckDBObjects
+                Effect: Allow
+                Action:
+                  - s3:DeleteObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:s3:::${ProjectName}-duckdb-${AWS::AccountId}-sa-east-1/*
+
+  PostgresDeployer:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: !Sub "${ProjectName}-database-deployer"
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+      Policies:
+        - PolicyName: DeployOnlyDatabaseStacks
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ValidateLocalTemplate
+                Effect: Allow
+                Action:
+                  - cloudformation:GetTemplateSummary
+                  - cloudformation:ValidateTemplate
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: sa-east-1
+              - Sid: DeployOnlyNamedDatabaseStacks
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeStacks
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:GetTemplate
+                  - cloudformation:ListChangeSets
+                  - cloudformation:UpdateTerminationProtection
+                Resource:
+                  - !Sub >-
+                    arn:${AWS::Partition}:cloudformation:sa-east-1:${AWS::AccountId}:stack/${PostgresStackName}/*
+                  - !Sub >-
+                    arn:${AWS::Partition}:cloudformation:sa-east-1:${AWS::AccountId}:stack/${DuckDBStackName}/*
+              - Sid: PassOnlyPostgresExecutionRoleToCloudFormation
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt PostgresExecutionRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: cloudformation.amazonaws.com
+              - Sid: UploadOnlyDuckDBArtifacts
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:s3:::${ProjectName}-duckdb-${AWS::AccountId}-sa-east-1
+              - Sid: ManageOnlyDuckDBArtifactObjects
+                Effect: Allow
+                Action:
+                  - s3:DeleteObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:s3:::${ProjectName}-duckdb-${AWS::AccountId}-sa-east-1/duckdb/*
+
+  ApplicationLogsReadPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${ProjectName}-application-logs-read"
+      Description: Read-only access to the demo web and SIP CloudWatch log groups.
+      Users:
+        - !Ref PostgresDeployer
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ListRegionalApplicationLogGroups
+            Effect: Allow
+            Action:
+              - logs:DescribeLogGroups
+              - logs:DescribeQueries
+            Resource: "*"
+            Condition:
+              StringEquals:
+                aws:RequestedRegion: sa-east-1
+          - Sid: ReadOnlyApplicationLogs
+            Effect: Allow
+            Action:
+              - logs:DescribeLogStreams
+              - logs:FilterLogEvents
+              - logs:GetLogEvents
+              - logs:GetLogGroupFields
+              - logs:GetLogRecord
+              - logs:GetQueryResults
+              - logs:StartQuery
+              - logs:StopQuery
+            Resource:
+              - !Sub >-
+                arn:${AWS::Partition}:logs:sa-east-1:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-${ApplicationEnvironment}-sip:*
+              - !Sub >-
+                arn:${AWS::Partition}:logs:sa-east-1:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-${ApplicationEnvironment}-web:*
+
+Outputs:
+  DeployerUserName:
+    Value: !Ref PostgresDeployer
+  ExecutionRoleArn:
+    Value: !GetAtt PostgresExecutionRole.Arn
+  AllowedPostgresStackName:
+    Value: !Ref PostgresStackName
+  AllowedDuckDBStackName:
+    Value: !Ref DuckDBStackName
+  DuckDBBucketName:
+    Value: !Sub "${ProjectName}-duckdb-${AWS::AccountId}-sa-east-1"
+  AllowedRegion:
+    Value: sa-east-1
+  AllowedSipLogGroup:
+    Value: !Sub "/aws/lambda/${ProjectName}-${ApplicationEnvironment}-sip"
+  AllowedWebLogGroup:
+    Value: !Sub "/aws/lambda/${ProjectName}-${ApplicationEnvironment}-web"

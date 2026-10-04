@@ -1,13 +1,13 @@
-from fastapi.testclient import TestClient
-
-from webapp.backend.main import app
-from webapp.backend.repositories.mock import (
+from fakes import (
     complaint_repository,
     customer_repository,
     product_repository,
     session_repository,
     transaction_repository,
 )
+from fastapi.testclient import TestClient
+
+from webapp.backend.main import app
 
 
 def clear_repositories() -> None:
@@ -268,13 +268,15 @@ def test_signup_supports_ios_name_autofill_and_valid_gender_values() -> None:
     assert "normalizeAutofilledNames();" in script
 
 
-def test_agent_placeholder_route_is_available() -> None:
+def test_agent_route_serves_the_izzy_chat() -> None:
     client = TestClient(app)
 
     response = client.get("/agent")
 
     assert response.status_code == 200
-    assert "Coming soon" in response.text
+    assert "agent.js" in response.text
+    assert "Coming soon" not in response.text
+    assert 'href="tel:+16615779964"' in response.text
 
 
 def test_api_me_remains_protected() -> None:
@@ -283,3 +285,25 @@ def test_api_me_remains_protected() -> None:
     response = client.get("/api/auth/me")
 
     assert response.status_code == 401
+
+
+def test_agent_pages_are_always_revalidated_by_the_browser() -> None:
+    """Regression: /agent?intent=new_complaint kept showing a cached "coming soon" page."""
+
+    client = TestClient(app)
+
+    for url in ("/agent", "/agent?intent=new_complaint", "/home"):
+        response = client.get(url)
+        assert response.headers["cache-control"] == "no-cache"
+        if url.startswith("/agent"):
+            assert "agent.js" in response.text
+
+
+def test_agent_hidden_panels_stay_hidden_despite_display_rules() -> None:
+    """Regression: the "conversation has ended" panel showed on every open chat."""
+
+    styles = TestClient(app).get("/static/css/pages/agent.css").text
+
+    assert ".agent-page[hidden]," in styles
+    assert ".agent-page [hidden] {" in styles
+    assert "display: none !important;" in styles

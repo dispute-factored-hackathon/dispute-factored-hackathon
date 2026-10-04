@@ -46,7 +46,9 @@ When practical, exercise the repaired flow through the actual command-line inter
 
 ## Documentation changes
 
-The `docs/` directory is an Obsidian-compatible vault. Preserve relative links and keep [`docs/Home.md`](docs/Home.md) and [`docs/Navigation.md`](docs/Navigation.md) consistent when adding or renaming major pages.
+Project documentation is maintained in the [GitHub Wiki](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki). Update the Wiki home, navigation, and sidebar when adding or renaming major pages.
+
+The Wiki's [solution architecture and technology stack](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki/Solution-Architecture-and-Technology-Stack) is the canonical architecture inventory. When a change affects runtime boundaries, cloud resources, backend/frontend technologies, observability, AI engineering or data engineering, update that page and the compact implementation summaries in the root and application READMEs. Do not recreate a duplicate `docs` directory.
 
 Research claims must include a traceable source. Clearly distinguish external evidence, synthetic-dataset analysis, assumptions, and mocked behavior.
 

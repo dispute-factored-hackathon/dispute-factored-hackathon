@@ -1,3 +1,5 @@
+from fakes import InMemoryCustomerRepository, seed_demo_customers, voice_repositories
+
 from dispute_agent.sip_realtime import SipRealtimeGateway
 from dispute_agent.voice_call import (
     VoiceAuthenticationMethod,
@@ -5,18 +7,18 @@ from dispute_agent.voice_call import (
     VoiceCallStage,
     VoiceCallState,
 )
-from webapp.backend.demo_seed import seed_demo_customers
-from webapp.backend.repositories.mock import MockCustomerRepository
+
+GABRIEL_ID = "DEMO-BR-GABRIEL-123456"
 
 
-def gabriel_repository() -> MockCustomerRepository:
-    repository = MockCustomerRepository()
+def gabriel_repository() -> InMemoryCustomerRepository:
+    repository = InMemoryCustomerRepository()
     seed_demo_customers(repository)
     return repository
 
 
 def authenticate_by_phone() -> tuple[VoiceCallService, VoiceCallState]:
-    calls = VoiceCallService(gabriel_repository())
+    calls = VoiceCallService(gabriel_repository(), **voice_repositories(GABRIEL_ID))
     state = calls.start("5511981020050", call_id="gabriel-phone")
     state = calls.confirm_language(state.call_id)
     state = calls.choose_authentication_method(state.call_id, method="phone")
@@ -38,8 +40,27 @@ def test_phone_authentication_uses_shared_backend_profile() -> None:
     assert state.identity.detected_accent == "portuguese"
 
 
+def test_known_phone_uses_profile_locale_and_skips_language_question() -> None:
+    calls = VoiceCallService(gabriel_repository(), **voice_repositories(GABRIEL_ID))
+    state = calls.start("5511981020050", call_id="gabriel-locale-only")
+
+    assert state.stage is VoiceCallStage.NEEDS_AUTH_METHOD
+    assert state.identity is None
+    assert state.authentication_method is None
+    assert (state.locale.language, state.locale.locale, state.locale.accent) == (
+        "pt",
+        "pt-BR",
+        "brazilian",
+    )
+    opening = SipRealtimeGateway._message_for(state, "opening")
+    assert "português brasileiro" in opening
+    assert "prefere mudar" not in opening
+    assert "número desta ligação ou seu documento" in opening
+    assert "atendente humano a qualquer momento" in opening
+
+
 def test_document_authentication_uses_same_shared_backend_profile() -> None:
-    calls = VoiceCallService(gabriel_repository())
+    calls = VoiceCallService(gabriel_repository(), **voice_repositories(GABRIEL_ID))
     state = calls.start("+551100000000", call_id="gabriel-document")
     state = calls.confirm_language(state.call_id)
     state = calls.choose_authentication_method(state.call_id, method="document")
@@ -70,10 +91,10 @@ def test_authenticated_greeting_uses_first_name_naturally() -> None:
 
 
 def test_language_confirmation_only_offers_other_languages() -> None:
-    calls = VoiceCallService(gabriel_repository())
+    calls = VoiceCallService(gabriel_repository(), **voice_repositories(GABRIEL_ID))
     scenarios = (
         (
-            "+5511981020050",
+            "+551100000001",
             "continuar neste idioma ou prefere mudar para inglês ou espanhol",
             "switch to English or Spanish",
         ),
@@ -96,3 +117,21 @@ def test_language_confirmation_only_offers_other_languages() -> None:
 
         assert expected_opening in opening
         assert expected_instruction in instructions
+
+
+def test_registered_phones_use_each_profiles_regional_accent() -> None:
+    calls = VoiceCallService(gabriel_repository(), **voice_repositories(GABRIEL_ID))
+    scenarios = (
+        ("+5511981020050", "pt-BR", "brazilian"),
+        ("+573009000001", "es-CO", "colombian"),
+        ("+525590000001", "es-MX", "mexican"),
+        ("+15129000001", "en-US", "american"),
+    )
+
+    for index, (phone, locale, accent) in enumerate(scenarios):
+        state = calls.start(phone, call_id=f"registered-accent-{index}")
+
+        assert state.stage is VoiceCallStage.NEEDS_AUTH_METHOD
+        assert state.identity is None
+        assert (state.locale.locale, state.locale.accent) == (locale, accent)
+        assert "human" in SipRealtimeGateway._system_instructions(state).lower()

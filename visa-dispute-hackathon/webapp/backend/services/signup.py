@@ -1,15 +1,11 @@
 import secrets
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
-from webapp.backend.models.complaint import Complaint
 from webapp.backend.models.customer import Customer
 from webapp.backend.models.product import Product
-from webapp.backend.models.transaction import Transaction
 from webapp.backend.repositories.interfaces import (
-    ComplaintRepository,
     CustomerRepository,
     ProductRepository,
-    TransactionRepository,
 )
 from webapp.backend.schemas.customer import (
     CustomerSignupRequest,
@@ -19,17 +15,15 @@ from webapp.backend.schemas.customer import (
 
 
 class SignupService:
+    """Opens an account with one card and no history; activity comes from using the shop."""
+
     def __init__(
         self,
         customers: CustomerRepository,
         products: ProductRepository,
-        transactions: TransactionRepository,
-        complaints: ComplaintRepository,
     ) -> None:
         self.customers = customers
         self.products = products
-        self.transactions = transactions
-        self.complaints = complaints
 
     def signup(
         self,
@@ -88,18 +82,6 @@ class SignupService:
 
         self.products.create(product)
 
-        self._create_demo_transactions(
-            customer=customer,
-            product=product,
-            now=now,
-        )
-
-        self._create_demo_complaints(
-            customer=customer,
-            product=product,
-            now=now,
-        )
-
         return CustomerSignupResponse(
             customer_id=customer.customer_id,
             first_name=customer.first_name,
@@ -117,169 +99,6 @@ class SignupService:
                 product_status=product.product_status,
             ),
         )
-
-    def _create_demo_transactions(
-        self,
-        *,
-        customer: Customer,
-        product: Product,
-        now: datetime,
-    ) -> None:
-        demo_transactions = (
-            {
-                "days_ago": 1,
-                "merchant_name": "Factored Coffee",
-                "merchant_category": "Coffee Shop",
-                "transaction_category": "Food & Drink",
-                "amount": 8.75,
-                "channel": "POS",
-                "country": "Factoredland",
-                "city": "Factored Village",
-                "is_fraud": False,
-                "fraud_score": 0.03,
-            },
-            {
-                "days_ago": 3,
-                "merchant_name": "StreamBox",
-                "merchant_category": "Digital Services",
-                "transaction_category": "Entertainment",
-                "amount": 14.99,
-                "channel": "Web",
-                "country": "Factoredland",
-                "city": "Factored Village",
-                "is_fraud": False,
-                "fraud_score": 0.08,
-            },
-            {
-                "days_ago": 5,
-                "merchant_name": "Mercado Central",
-                "merchant_category": "Grocery Store",
-                "transaction_category": "Groceries",
-                "amount": 73.42,
-                "channel": "POS",
-                "country": "Factoredland",
-                "city": "Factored Village",
-                "is_fraud": False,
-                "fraud_score": 0.05,
-            },
-            {
-                "days_ago": 7,
-                "merchant_name": "Shady Business",
-                "merchant_category": "Online Retail",
-                "transaction_category": "Suspicious Purchase",
-                "amount": 129.90,
-                "channel": "Web",
-                "country": "Unknown",
-                "city": "Unknown",
-                "is_fraud": True,
-                "fraud_score": 0.94,
-            },
-        )
-
-        for data in demo_transactions:
-            transaction_date = now - timedelta(days=data["days_ago"])
-
-            transaction = Transaction(
-                transaction_id=("TRX-DEMO-" + secrets.token_hex(6).upper()),
-                transaction_date=transaction_date,
-                process_date=transaction_date.date(),
-                product_id=product.product_id,
-                customer_id=customer.customer_id,
-                transaction_type="Purchase",
-                transaction_category=(data["transaction_category"]),
-                amount=data["amount"],
-                currency="USD",
-                amount_usd=data["amount"],
-                channel=data["channel"],
-                branch_id=None,
-                merchant_name=data["merchant_name"],
-                merchant_category=(data["merchant_category"]),
-                transaction_country=data["country"],
-                transaction_city=data["city"],
-                transaction_status="Approved",
-                response_code="00",
-                is_fraud=data["is_fraud"],
-                fraud_score=data["fraud_score"],
-                latitude=None,
-                longitude=None,
-            )
-
-            self.transactions.create(transaction)
-
-    def _create_demo_complaints(
-        self,
-        *,
-        customer: Customer,
-        product: Product,
-        now: datetime,
-    ) -> None:
-        resolved_creation = now - timedelta(days=45)
-
-        resolved_complaint = Complaint(
-            complaint_id=("CMP-DEMO-" + secrets.token_hex(6).upper()),
-            creation_date=resolved_creation,
-            process_date=resolved_creation.date(),
-            customer_id=customer.customer_id,
-            case_type="Claim",
-            category="Card Purchase",
-            subcategory="Duplicate Charge",
-            reception_channel="Web",
-            affected_product_id=product.product_id,
-            related_branch_id=None,
-            origin_interaction_id=None,
-            description=("Customer reported a duplicate charge from Factored Coffee."),
-            claimed_amount=8.75,
-            currency="USD",
-            priority="Medium",
-            status="Resolved",
-            assigned_agent_id="IZZY",
-            assignment_date=(resolved_creation + timedelta(hours=1)),
-            first_response_date=(resolved_creation + timedelta(hours=2)),
-            resolution_date=(resolved_creation + timedelta(days=2)),
-            closing_date=(resolved_creation + timedelta(days=3)),
-            sla_breached=False,
-            resolution_days=2,
-            resolution=("Duplicate charge confirmed. The disputed amount was refunded."),
-            compensation_granted=8.75,
-            resolution_satisfaction=5.0,
-            is_repeat_complainer=False,
-        )
-
-        open_creation = now - timedelta(days=4)
-
-        open_complaint = Complaint(
-            complaint_id=("CMP-DEMO-" + secrets.token_hex(6).upper()),
-            creation_date=open_creation,
-            process_date=open_creation.date(),
-            customer_id=customer.customer_id,
-            case_type="Claim",
-            category="Card Purchase",
-            subcategory="Unrecognized Transaction",
-            reception_channel="Call Center",
-            affected_product_id=product.product_id,
-            related_branch_id=None,
-            origin_interaction_id=None,
-            description=("Customer reported an unrecognized online purchase and requested review."),
-            claimed_amount=129.90,
-            currency="USD",
-            priority="High",
-            status="In Review",
-            assigned_agent_id="IZZY",
-            assignment_date=(open_creation + timedelta(minutes=10)),
-            first_response_date=(open_creation + timedelta(minutes=15)),
-            resolution_date=None,
-            closing_date=None,
-            sla_breached=False,
-            resolution_days=None,
-            resolution=None,
-            compensation_granted=None,
-            resolution_satisfaction=None,
-            is_repeat_complainer=True,
-        )
-
-        self.complaints.create(resolved_complaint)
-
-        self.complaints.create(open_complaint)
 
     @staticmethod
     def _generate_card_number() -> str:

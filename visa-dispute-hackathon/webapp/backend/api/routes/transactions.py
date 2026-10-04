@@ -8,14 +8,11 @@ from fastapi import (
 )
 
 from webapp.backend.api.dependencies import (
+    RepositoriesDependency,
     require_customer,
 )
 from webapp.backend.models.customer import Customer
 from webapp.backend.models.transaction import Transaction
-from webapp.backend.repositories.registry import (
-    product_repository,
-    transaction_repository,
-)
 from webapp.backend.schemas.transaction import (
     TransactionDetailResponse,
     TransactionListItemResponse,
@@ -32,14 +29,16 @@ router = APIRouter(
 )
 
 
-transaction_service = TransactionService(
-    transaction_repository,
-    product_repository,
-)
+def get_transaction_service(repositories: RepositoriesDependency) -> TransactionService:
+    return TransactionService(repositories.transactions, repositories.products)
+
+
+TransactionServiceDependency = Annotated[TransactionService, Depends(get_transaction_service)]
 
 
 def card_last_four(
     transaction: Transaction,
+    transaction_service: TransactionService,
 ) -> str:
     product = transaction_service.get_product(transaction.product_id)
 
@@ -51,12 +50,13 @@ def card_last_four(
 
 def list_response(
     transaction: Transaction,
+    transaction_service: TransactionService,
 ) -> TransactionListItemResponse:
     return TransactionListItemResponse(
         transaction_id=(transaction.transaction_id),
         transaction_date=(transaction.transaction_date),
         product_id=transaction.product_id,
-        card_last_four=card_last_four(transaction),
+        card_last_four=card_last_four(transaction, transaction_service),
         merchant_name=(transaction.merchant_name),
         transaction_category=(transaction.transaction_category),
         amount=transaction.amount,
@@ -69,12 +69,13 @@ def list_response(
 
 def detail_response(
     transaction: Transaction,
+    transaction_service: TransactionService,
 ) -> TransactionDetailResponse:
     return TransactionDetailResponse(
         transaction_id=(transaction.transaction_id),
         transaction_date=(transaction.transaction_date),
         product_id=transaction.product_id,
-        card_last_four=card_last_four(transaction),
+        card_last_four=card_last_four(transaction, transaction_service),
         transaction_type=(transaction.transaction_type),
         transaction_category=(transaction.transaction_category),
         amount=transaction.amount,
@@ -99,10 +100,11 @@ def list_transactions(
         Customer,
         Depends(require_customer),
     ],
+    transaction_service: TransactionServiceDependency,
 ) -> list[TransactionListItemResponse]:
     transactions = transaction_service.list_customer_transactions(customer.customer_id)
 
-    return [list_response(transaction) for transaction in transactions]
+    return [list_response(transaction, transaction_service) for transaction in transactions]
 
 
 @router.get(
@@ -115,6 +117,7 @@ def get_transaction(
         Customer,
         Depends(require_customer),
     ],
+    transaction_service: TransactionServiceDependency,
 ) -> TransactionDetailResponse:
     try:
         transaction = transaction_service.get_customer_transaction(
@@ -131,4 +134,4 @@ def get_transaction(
             detail="Transaction not found.",
         ) from error
 
-    return detail_response(transaction)
+    return detail_response(transaction, transaction_service)

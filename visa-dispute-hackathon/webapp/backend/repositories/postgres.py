@@ -1,8 +1,7 @@
 """PostgreSQL implementations of the repository contracts in `interfaces.py`.
 
-They are drop-in replacements for the in-memory mocks: same method names, same semantics, same
-errors. Every statement is parameterised (identifiers come from fixed model field names), so
-customer input can never change a query.
+This is the web app's only data store. Every statement is parameterised (identifiers come from
+fixed model field names), so customer input can never change a query.
 """
 
 import hashlib
@@ -14,9 +13,16 @@ from typing import Any, Generic, TypeVar
 from psycopg import errors, sql
 from pydantic import BaseModel
 
+from webapp.backend.config import Settings
 from webapp.backend.db.database import Database
+from webapp.backend.db.schema_version import LATEST_SCHEMA_REVISION
 from webapp.backend.models.call_center_interaction import CallCenterInteraction
 from webapp.backend.models.call_transcript import CallTranscript
+from webapp.backend.models.card_transaction import (
+    CARD_PRODUCT_TYPES,
+    CARD_PURCHASE_TYPE,
+    CardTransaction,
+)
 from webapp.backend.models.complaint import Complaint
 from webapp.backend.models.customer import Customer
 from webapp.backend.models.product import Product
@@ -24,12 +30,17 @@ from webapp.backend.models.satisfaction_survey import SatisfactionSurvey
 from webapp.backend.models.service_agent import ServiceAgent
 from webapp.backend.models.session import CustomerSession
 from webapp.backend.models.transaction import Transaction
+from webapp.backend.repositories.interfaces import Repositories
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
+class BackendConfigurationError(RuntimeError):
+    """The database settings are incomplete. Messages never include credentials."""
+
+
 def normalize_search_name(value: str) -> str:
-    """Case- and accent-insensitive form used for name search (same rules as the mock)."""
+    """Case- and accent-insensitive form used for name search."""
 
     decomposed = unicodedata.normalize("NFKD", value.casefold())
     without_marks = "".join(
@@ -450,3 +461,93 @@ class PostgresSessionRepository:
             cursor.execute(
                 "DELETE FROM sessions WHERE session_hash = %s", (hash_session_id(session_id),)
             )
+
+
+class PostgresCardPurchaseRepository:
+    """Card purchases joined with their card product, scoped to one customer (SQL join)."""
+
+    _COLUMNS = sql.SQL(", ").join(
+        sql.SQL("t.{}").format(sql.Identifier(name)) for name in Transaction.model_fields
+    )
+
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def _query(self, extra: str = "") -> sql.Composed:
+        return sql.SQL(
+            "SELECT {columns}, p.product_type AS card_type, "
+            "right(p.product_number, 4) AS card_last_four, p.product_status AS card_status "
+            "FROM transactions t "
+            "JOIN products p ON p.product_id = t.product_id AND p.customer_id = t.customer_id "
+            "WHERE t.customer_id = %(customer_id)s AND t.transaction_type = %(purchase)s "
+            "AND p.product_type = ANY(%(card_types)s)" + extra
+        ).format(columns=self._COLUMNS)
+
+    def _rows(self, query: sql.Composed, params: dict[str, Any]) -> list[CardTransaction]:
+        params = {
+            **params,
+            "purchase": CARD_PURCHASE_TYPE,
+            "card_types": list(CARD_PRODUCT_TYPES),
+        }
+        with self.database.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+        card_fields = ("card_type", "card_last_four", "card_status")
+        return [
+            CardTransaction(
+                transaction=Transaction.model_validate(
+                    {key: value for key, value in row.items() if key not in card_fields}
+                ),
+                card_type=row["card_type"],
+                card_last_four=row["card_last_four"],
+                card_status=row["card_status"],
+                source="postgres",
+            )
+            for row in rows
+        ]
+
+    def list_by_customer(self, customer_id: str, *, limit: int = 500) -> list[CardTransaction]:
+        return self._rows(
+            self._query(" ORDER BY t.transaction_date DESC, t.transaction_id DESC LIMIT %(limit)s"),
+            {"customer_id": customer_id, "limit": max(limit, 0)},
+        )
+
+    def get_for_customer(self, customer_id: str, transaction_id: str) -> CardTransaction | None:
+        if "\x00" in transaction_id:
+            return None
+        rows = self._rows(
+            self._query(" AND t.transaction_id = %(transaction_id)s"),
+            {"customer_id": customer_id, "transaction_id": transaction_id},
+        )
+        return rows[0] if rows else None
+
+
+def open_repositories(settings: Settings) -> Repositories:
+    """Open the connection pool, verify the schema revision and build every repository."""
+
+    if settings.database_url is None:
+        raise BackendConfigurationError(
+            "DATABASE_URL (the factored_app role) is not set. See .env.example."
+        )
+    database = Database(
+        settings.database_url.get_secret_value(), max_size=settings.database_pool_max_size
+    )
+    database.open()
+    try:
+        database.check_migrated(LATEST_SCHEMA_REVISION)
+    except Exception:
+        database.close()
+        raise
+    return Repositories(
+        customers=PostgresCustomerRepository(database),
+        products=PostgresProductRepository(database),
+        transactions=PostgresTransactionRepository(database),
+        complaints=PostgresComplaintRepository(database),
+        sessions=PostgresSessionRepository(database),
+        service_agents=PostgresServiceAgentRepository(database),
+        call_center_interactions=PostgresCallCenterInteractionRepository(database),
+        call_transcripts=PostgresCallTranscriptRepository(database),
+        satisfaction_surveys=PostgresSatisfactionSurveyRepository(database),
+        card_purchases=PostgresCardPurchaseRepository(database),
+        close=database.close,
+    )

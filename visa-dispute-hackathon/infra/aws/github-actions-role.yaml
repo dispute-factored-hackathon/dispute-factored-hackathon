@@ -92,30 +92,50 @@ Resources:
               - Sid: ResolveDeploymentSecrets
                 Effect: Allow
                 Action: secretsmanager:DescribeSecret
-                Resource: !Sub >-
-                  arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ProjectName}/langsmith-*
+                Resource:
+                  - !Sub >-
+                    arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ProjectName}/langsmith-*
               - Sid: ManageDemoLambda
                 Effect: Allow
                 Action:
                   - lambda:AddPermission
+                  - lambda:CreateAlias
                   - lambda:CreateFunction
                   - lambda:CreateFunctionUrlConfig
+                  - lambda:DeleteAlias
                   - lambda:DeleteFunction
                   - lambda:DeleteFunctionUrlConfig
+                  - lambda:GetAlias
                   - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
                   - lambda:GetFunctionUrlConfig
                   - lambda:GetPolicy
+                  - lambda:ListVersionsByFunction
                   - lambda:ListTags
+                  - lambda:PublishVersion
                   - lambda:PutFunctionEventInvokeConfig
                   - lambda:RemovePermission
                   - lambda:TagResource
                   - lambda:UntagResource
+                  - lambda:UpdateAlias
                   - lambda:UpdateFunctionCode
                   - lambda:UpdateFunctionConfiguration
                   - lambda:UpdateFunctionEventInvokeConfig
                   - lambda:UpdateFunctionUrlConfig
+                Resource:
+                  - !Sub >-
+                    arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-demo-sip
+                  - !Sub >-
+                    arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-demo-sip:*
+                  - !Sub >-
+                    arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-demo-web
+                  - !Sub >-
+                    arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-demo-database-bootstrap
+              - Sid: InvokeDatabaseBootstrap
+                Effect: Allow
+                Action: lambda:InvokeFunction
                 Resource: !Sub >-
-                  arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-demo-sip
+                  arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-demo-database-bootstrap
               - Sid: ManageDemoExecutionRole
                 Effect: Allow
                 Action:
@@ -142,7 +162,7 @@ Resources:
                   - logs:TagResource
                   - logs:UntagResource
                 Resource: !Sub >-
-                  arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-demo-sip:*
+                  arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-demo-*:*
 
 Outputs:
   RoleArn:

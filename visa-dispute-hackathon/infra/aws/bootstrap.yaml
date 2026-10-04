@@ -55,9 +55,9 @@ Resources:
     UpdateReplacePolicy: Retain
     Properties:
       Name: !Sub "${ProjectName}/openai-realtime"
-      Description: OpenAI project key and webhook signing secret for the SIP demo.
+      Description: Server-side AI credentials for the SIP demo.
       SecretString: >-
-        {"OPENAI_API_KEY":"replace-me","OPENAI_WEBHOOK_SECRET":"replace-me"}
+        {"OPENAI_API_KEY":"replace-me","OPENAI_WEBHOOK_SECRET":"replace-me","JEV_API_KEY":"replace-me"}
 
 Outputs:
   RepositoryUri:

@@ -2,20 +2,26 @@ import json
 import unittest
 from datetime import date
 
+from fakes import (
+    demo_card_product_id,
+    demo_fruit_transactions,
+    fruit_search_repository,
+    new_repositories,
+)
+
 from dispute_agent.transaction_search import (
     TRANSACTION_COLUMNS,
     InsufficientTransactionCriteriaError,
-    SQLiteTransactionSearchRepository,
+    RepositoryTransactionSearch,
     TransactionSearchCriteria,
 )
-from webapp.backend.demo_card import demo_card_product_id
 
 CUSTOMER_ID = "SYNTHETIC-CUSTOMER-19"
 
 
 class SQLiteTransactionSearchTests(unittest.TestCase):
     def setUp(self):
-        self.repository = SQLiteTransactionSearchRepository(seed_customer_id=CUSTOMER_ID)
+        self.repository = fruit_search_repository(CUSTOMER_ID)
 
     def tearDown(self):
         self.repository.close()
@@ -216,3 +222,39 @@ class SQLiteTransactionSearchTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RepositoryTransactionSearchTests(unittest.TestCase):
+    """The production voice search reads the shared transaction repository (PostgreSQL)."""
+
+    def setUp(self):
+        self.repositories = new_repositories()
+        others = [
+            transaction.model_copy(update={"transaction_id": f"OTHER-{transaction.transaction_id}"})
+            for transaction in demo_fruit_transactions("ANOTHER-CUSTOMER")
+        ]
+        for transaction in (*demo_fruit_transactions(CUSTOMER_ID), *others):
+            self.repositories.transactions.create(transaction)
+        self.search = RepositoryTransactionSearch(self.repositories.transactions)
+
+    def test_finds_the_customers_transaction_by_merchant(self):
+        result = self.search.search(
+            CUSTOMER_ID, TransactionSearchCriteria(merchant_query="mango gold")
+        )
+
+        self.assertEqual(result.transactions[0].transaction_id, "FRUIT-10-MANGO")
+        self.assertEqual({t.customer_id for t in result.transactions}, {CUSTOMER_ID})
+
+    def test_never_returns_other_customers_or_excluded_transactions(self):
+        result = self.search.search(
+            CUSTOMER_ID,
+            TransactionSearchCriteria(merchant_query="mango gold"),
+            excluded_transaction_ids=("FRUIT-10-MANGO",),
+        )
+
+        self.assertNotIn("FRUIT-10-MANGO", [t.transaction_id for t in result.transactions])
+        self.assertEqual({t.customer_id for t in result.transactions} - {CUSTOMER_ID}, set())
+
+    def test_rejects_searches_that_are_too_broad(self):
+        with self.assertRaises(InsufficientTransactionCriteriaError):
+            self.search.search(CUSTOMER_ID, TransactionSearchCriteria())

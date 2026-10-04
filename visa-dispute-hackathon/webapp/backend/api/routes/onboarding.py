@@ -9,13 +9,11 @@ from fastapi import (
 
 from webapp.backend.api.dependencies import (
     AuthenticatedContext,
+    RepositoriesDependency,
     require_authenticated_context,
 )
 from webapp.backend.models.customer import TutorialStatus
 from webapp.backend.models.session import AuthenticationMethod
-from webapp.backend.repositories.registry import (
-    customer_repository,
-)
 from webapp.backend.schemas.onboarding import TutorialProgressRequest, TutorialStateResponse
 from webapp.backend.services.onboarding import InvalidTutorialStepError, OnboardingService
 
@@ -24,7 +22,12 @@ router = APIRouter(
     tags=["onboarding"],
 )
 
-onboarding_service = OnboardingService(customer_repository)
+
+def get_onboarding_service(repositories: RepositoriesDependency) -> OnboardingService:
+    return OnboardingService(repositories.customers)
+
+
+OnboardingServiceDependency = Annotated[OnboardingService, Depends(get_onboarding_service)]
 
 
 @router.get(
@@ -33,6 +36,7 @@ onboarding_service = OnboardingService(customer_repository)
 )
 def get_tutorial_state(
     context: Annotated[AuthenticatedContext, Depends(require_authenticated_context)],
+    onboarding_service: OnboardingServiceDependency,
 ) -> TutorialStateResponse:
     if (
         context.session.authentication_method is not AuthenticationMethod.FACTORED_ID
@@ -55,6 +59,7 @@ def get_tutorial_state(
 def update_tutorial_progress(
     request: TutorialProgressRequest,
     context: Annotated[AuthenticatedContext, Depends(require_authenticated_context)],
+    onboarding_service: OnboardingServiceDependency,
 ) -> TutorialStateResponse:
     if (
         context.session.authentication_method is not AuthenticationMethod.FACTORED_ID

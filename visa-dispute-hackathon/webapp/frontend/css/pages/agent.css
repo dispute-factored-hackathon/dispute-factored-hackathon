@@ -1,0 +1,489 @@
+/* Izzy chat: mobile-first, single column; the composer sits above the bottom navigation. */
+
+/* Elements toggled with the `hidden` attribute must stay hidden even when a rule sets `display`. */
+.agent-page[hidden],
+.agent-page [hidden] {
+    display: none !important;
+}
+
+.agent-page {
+    --agent-nav-height: calc(4.5rem + env(safe-area-inset-bottom));
+    --agent-composer-height: 4.25rem;
+
+    display: flex;
+    flex-direction: column;
+
+    min-height: 100vh;
+    min-height: 100dvh;
+
+    padding-bottom: calc(var(--agent-nav-height) + var(--agent-composer-height) + var(--space-4));
+
+    background: var(--color-background);
+}
+
+.agent-header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+
+    padding: var(--space-3) var(--space-4);
+    padding-top: max(var(--space-3), env(safe-area-inset-top));
+
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.agent-back {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    width: 2.5rem;
+    height: 2.5rem;
+
+    color: var(--color-text);
+    border-radius: 50%;
+
+    font-size: 1.25rem;
+    text-decoration: none;
+}
+
+.agent-back:focus-visible,
+.agent-call:focus-visible,
+.agent-send:focus-visible,
+.agent-phone-link:focus-visible {
+    outline: 3px solid var(--color-accent);
+    outline-offset: 2px;
+}
+
+.agent-identity {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: var(--space-3);
+
+    min-width: 0;
+}
+
+.agent-avatar {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+
+    width: 2.5rem;
+    height: 2.5rem;
+
+    color: var(--color-surface);
+    background: var(--color-primary);
+    border-radius: 50%;
+
+    font-size: 1.1rem;
+}
+
+.agent-name {
+    margin: 0;
+
+    font-family: var(--font-display);
+    font-size: 1.05rem;
+    letter-spacing: -0.02em;
+}
+
+.agent-role {
+    margin: 0;
+
+    overflow: hidden;
+
+    color: var(--color-text-secondary);
+
+    font-size: 0.78rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.agent-call {
+    flex: none;
+
+    padding: var(--space-2) var(--space-4);
+
+    color: var(--color-primary);
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+
+    font-size: 0.85rem;
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.agent-phone-banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+
+    margin: 0;
+    padding: var(--space-2) var(--space-4);
+
+    color: var(--color-text-secondary);
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+
+    font-size: 0.8rem;
+}
+
+.agent-phone-link {
+    color: var(--color-primary);
+
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.agent-messages {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--space-3);
+
+    width: 100%;
+    max-width: 36rem;
+
+    margin: 0 auto;
+    padding: var(--space-4);
+}
+
+.agent-bubble {
+    max-width: 85%;
+    margin: 0;
+    padding: var(--space-3) var(--space-4);
+
+    border-radius: var(--radius-lg);
+
+    font-size: 0.95rem;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+.agent-bubble-izzy {
+    align-self: flex-start;
+
+    color: var(--color-text);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-bottom-left-radius: var(--radius-sm);
+}
+
+.agent-bubble-izzy a {
+    color: var(--color-primary);
+    font-weight: 700;
+    text-decoration-thickness: 0.12em;
+    text-underline-offset: 0.16em;
+}
+
+.agent-bubble-izzy a:hover,
+.agent-bubble-izzy a:focus-visible {
+    color: var(--color-primary-hover);
+}
+
+.agent-bubble-customer {
+    align-self: flex-end;
+
+    color: var(--color-surface);
+    background: var(--color-primary);
+    border-bottom-right-radius: var(--radius-sm);
+}
+
+.agent-bubble-error {
+    border-color: var(--color-error);
+}
+
+.agent-bubble-typing {
+    display: inline-flex;
+    gap: 0.3rem;
+}
+
+.agent-bubble-typing span {
+    width: 0.45rem;
+    height: 0.45rem;
+
+    background: var(--color-text-secondary);
+    border-radius: 50%;
+
+    animation: agent-typing 1.2s infinite ease-in-out;
+}
+
+.agent-bubble-typing span:nth-child(2) {
+    animation-delay: 0.15s;
+}
+
+.agent-bubble-typing span:nth-child(3) {
+    animation-delay: 0.3s;
+}
+
+@keyframes agent-typing {
+    0%,
+    80%,
+    100% {
+        opacity: 0.3;
+        transform: translateY(0);
+    }
+
+    40% {
+        opacity: 1;
+        transform: translateY(-0.2rem);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .agent-bubble-typing span {
+        animation: none;
+    }
+}
+
+.agent-closed {
+    display: grid;
+    gap: var(--space-3);
+    justify-items: center;
+
+    width: 100%;
+    max-width: 36rem;
+
+    margin: 0 auto;
+    padding: var(--space-4);
+
+    color: var(--color-text-secondary);
+
+    text-align: center;
+}
+
+.agent-closed p {
+    margin: 0;
+}
+
+.agent-composer {
+    position: fixed;
+    right: 0;
+    bottom: var(--agent-nav-height);
+    left: 0;
+    z-index: 9;
+
+    display: flex;
+    align-items: flex-end;
+    gap: var(--space-2);
+
+    padding: var(--space-3) var(--space-4);
+
+    background: rgba(246, 247, 245, 0.97);
+    border-top: 1px solid var(--color-border);
+}
+
+.agent-input {
+    flex: 1;
+
+    min-height: 2.75rem;
+    max-height: 8rem;
+
+    padding: var(--space-3) var(--space-4);
+
+    color: var(--color-text);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+
+    font: inherit;
+    font-size: 1rem; /* 16px keeps iOS from zooming on focus */
+    line-height: 1.35;
+
+    resize: none;
+}
+
+.agent-input:focus {
+    border-color: var(--color-primary);
+    outline: none;
+}
+
+.agent-send {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+
+    width: 2.75rem;
+    height: 2.75rem;
+
+    color: var(--color-surface);
+    background: var(--color-primary);
+    border: 0;
+    border-radius: 50%;
+
+    font-size: 1.2rem;
+    cursor: pointer;
+}
+
+.agent-send:disabled {
+    background: var(--color-border);
+    cursor: not-allowed;
+}
+
+.agent-visually-hidden {
+    position: absolute;
+
+    width: 1px;
+    height: 1px;
+
+    overflow: hidden;
+
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+}
+
+@media (min-width: 800px) {
+    .agent-page {
+        --agent-nav-height: 6rem;
+    }
+
+    .agent-header,
+    .agent-phone-banner {
+        justify-content: center;
+    }
+
+    .agent-header > *,
+    .agent-phone-banner > * {
+        max-width: 36rem;
+    }
+
+    .agent-composer {
+        right: auto;
+        left: 50%;
+
+        width: min(36rem, calc(100% - 2rem));
+
+        transform: translateX(-50%);
+
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-lg);
+    }
+}
+
+/* Purchase options Izzy offers (at most three) plus "None of these". */
+.agent-options {
+    display: grid;
+    gap: var(--space-2);
+
+    width: 100%;
+    max-width: 30rem;
+}
+
+.agent-option {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+
+    width: 100%;
+    padding: var(--space-3) var(--space-4);
+
+    color: var(--color-text);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.agent-option:hover:not(:disabled) {
+    border-color: var(--color-primary);
+}
+
+.agent-option:focus-visible,
+.agent-option-none:focus-visible {
+    outline: 3px solid var(--color-accent);
+    outline-offset: 2px;
+}
+
+.agent-option:disabled {
+    cursor: default;
+    opacity: 0.6;
+}
+
+.agent-option-selected,
+.agent-option-selected:disabled {
+    border-color: var(--color-success);
+    box-shadow: inset 0 0 0 1px var(--color-success);
+    opacity: 1;
+}
+
+.agent-option-number {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+
+    width: 1.6rem;
+    height: 1.6rem;
+
+    color: var(--color-surface);
+    background: var(--color-primary);
+    border-radius: 50%;
+
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.agent-option-body {
+    display: grid;
+    flex: 1;
+    grid-template-columns: 1fr auto;
+    gap: 0.15rem var(--space-2);
+
+    min-width: 0;
+}
+
+.agent-option-title {
+    overflow: hidden;
+
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.agent-option-amount {
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.agent-option-meta,
+.agent-option-card {
+    grid-column: 1 / -1;
+
+    color: var(--color-text-secondary);
+
+    font-size: 0.8rem;
+}
+
+.agent-option-none {
+    justify-self: start;
+
+    padding: var(--space-2) var(--space-4);
+
+    color: var(--color-primary);
+    background: transparent;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+
+    font: inherit;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.agent-option-none:disabled {
+    cursor: default;
+    opacity: 0.6;
+}

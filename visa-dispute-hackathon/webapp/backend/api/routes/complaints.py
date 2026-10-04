@@ -8,13 +8,11 @@ from fastapi import (
 )
 
 from webapp.backend.api.dependencies import (
+    RepositoriesDependency,
     require_customer,
 )
 from webapp.backend.models.complaint import Complaint
 from webapp.backend.models.customer import Customer
-from webapp.backend.repositories.registry import (
-    complaint_repository,
-)
 from webapp.backend.schemas.complaint import (
     ComplaintDetailResponse,
     ComplaintListItemResponse,
@@ -31,9 +29,11 @@ router = APIRouter(
 )
 
 
-complaint_service = ComplaintService(
-    complaint_repository,
-)
+def get_complaint_service(repositories: RepositoriesDependency) -> ComplaintService:
+    return ComplaintService(repositories.complaints)
+
+
+ComplaintServiceDependency = Annotated[ComplaintService, Depends(get_complaint_service)]
 
 
 def list_response(
@@ -89,6 +89,7 @@ def list_complaints(
         Customer,
         Depends(require_customer),
     ],
+    complaint_service: ComplaintServiceDependency,
 ) -> list[ComplaintListItemResponse]:
     complaints = complaint_service.list_customer_complaints(customer.customer_id)
 
@@ -105,6 +106,7 @@ def get_complaint(
         Customer,
         Depends(require_customer),
     ],
+    complaint_service: ComplaintServiceDependency,
 ) -> ComplaintDetailResponse:
     try:
         complaint = complaint_service.get_customer_complaint(
