@@ -10,6 +10,8 @@ from webapp.backend.aws_runtime import configure_owner_runtime
 from webapp.backend.config import get_settings
 from webapp.backend.db.migrate import upgrade
 from webapp.backend.db.seed_lakehouse import main as seed_lakehouse
+from webapp.backend.repositories.postgres import open_repositories
+from webapp.backend.services.izzy_agent import IZZY_AGENT_ID, seed_izzy_agent
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -33,6 +35,11 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         )
         try:
             upgrade(owner_url, app_password, quiet=True)
+            repositories = open_repositories(settings)
+            try:
+                seed_izzy_agent(repositories.service_agents)
+            finally:
+                repositories.close()
             seed_status = seed_lakehouse(["--customers", "100", "--allow-remote"])
             if seed_status != 0:
                 raise RuntimeError("Lakehouse seed failed; inspect the migration Lambda logs")
@@ -40,4 +47,4 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             lock_connection.execute(
                 "SELECT pg_advisory_unlock(hashtext(%s))", ("factored-database-bootstrap",)
             )
-    return {"status": "ready"}
+    return {"status": "ready", "service_agent_id": IZZY_AGENT_ID}

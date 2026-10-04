@@ -52,15 +52,20 @@ def test_database_bootstrap_migrates_before_idempotent_remote_seed():
         patch.object(aws_bootstrap, "get_settings", return_value=settings),
         patch.object(aws_bootstrap.psycopg, "connect") as connect,
         patch.object(aws_bootstrap, "upgrade") as upgrade,
+        patch.object(aws_bootstrap, "open_repositories") as open_repositories,
+        patch.object(aws_bootstrap, "seed_izzy_agent") as seed_izzy_agent,
         patch.object(aws_bootstrap, "seed_lakehouse", return_value=0) as seed,
     ):
         result = aws_bootstrap.lambda_handler({}, object())
 
-    assert result == {"status": "ready"}
+    assert result == {"status": "ready", "service_agent_id": "AGENT-IZZY"}
     upgrade.assert_called_once_with(
         "postgresql://owner:secret@db/factored", "app-password", quiet=True
     )
     seed.assert_called_once_with(["--customers", "100", "--allow-remote"])
+    repositories = open_repositories.return_value
+    seed_izzy_agent.assert_called_once_with(repositories.service_agents)
+    repositories.close.assert_called_once_with()
     connection = connect.return_value.__enter__.return_value
     assert connection.execute.call_count == 2
 
