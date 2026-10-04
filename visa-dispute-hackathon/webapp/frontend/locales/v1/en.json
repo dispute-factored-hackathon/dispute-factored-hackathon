@@ -180,7 +180,7 @@
   "transaction.card_ending": "Card •••• {lastFour}",
   "transaction.details_label": "Transaction details",
   "transaction.help": "NEED HELP?",
-  "transaction.recognize": "Don't recognize this transaction?",
+  "transaction.recognize": "Something wrong with this transaction?",
   "transaction.report_help": "Start a conversation with Izzy. We'll pass this transaction into the conversation so you don't have to find it again.",
   "transaction.report": "Report this transaction",
   "transaction.load_error": "We could not load this transaction. Please try again.",

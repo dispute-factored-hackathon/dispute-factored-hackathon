@@ -180,7 +180,7 @@
   "transaction.card_ending": "Cartão •••• {lastFour}",
   "transaction.details_label": "Detalhes da transação",
   "transaction.help": "PRECISA DE AJUDA?",
-  "transaction.recognize": "Não reconhece esta transação?",
+  "transaction.recognize": "Algo de errado com esta transação?",
   "transaction.report_help": "Inicie uma conversa com a Izzy. Enviaremos esta transação como contexto para que você não precise procurá-la novamente.",
   "transaction.report": "Contestar esta transação",
   "transaction.load_error": "Não foi possível carregar esta transação. Tente novamente.",
