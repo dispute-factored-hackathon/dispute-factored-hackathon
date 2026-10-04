@@ -21,7 +21,7 @@ Project documentation is maintained in the [GitHub Wiki](https://github.com/disp
 
 The AI layer never receives authority to choose customer scope, execute arbitrary SQL, block cards, create complaints or select the transfer destination. It returns typed interpretations; server-owned services validate evidence and perform permitted actions.
 
-For diagrams, deployment status, design boundaries and the full technology inventory, read [Solution architecture and technology stack](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki/Solution-Architecture-and-Technology-Stack). For diagnostics, read the root [`APPLICATION_LOGS.md`](../APPLICATION_LOGS.md).
+For diagrams, deployment status, design boundaries and the full technology inventory, read [Solution architecture and technology stack](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki/Solution-Architecture-and-Technology-Stack). For diagnostics, read [Application logs and traces](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki/Application-Logs-and-Traces).
 
 ## Synthetic GUI login contract
 
@@ -158,10 +158,10 @@ The components are:
 - **Lambda ingress invocation:** verifies the signature and accepts the SIP call immediately.
 - **Lambda asynchronous worker invocation:** opens the private Realtime sideband WebSocket for the duration of the call. It stops at 14 minutes, before Lambda's 15-minute limit.
 - **ECR:** stores the immutable Docker image and retains only the three newest images.
-- **One Secrets Manager secret:** stores `OPENAI_API_KEY`, `OPENAI_WEBHOOK_SECRET`, and `JEV_API_KEY`. It is fetched once per Lambda execution environment rather than on every message or keypad event.
+- **Secrets Manager:** keeps the OpenAI/Jev/LangSmith runtime credentials, the Aurora owner credential, the generated least-privilege application credential and the MotherDuck token outside the image and browser.
 - **CloudWatch Logs:** keeps JSON logs for three days. The application never logs document digits.
 - **Aurora PostgreSQL Serverless v2:** one encrypted private PostgreSQL 16.8 instance, limited to 0–1 ACU and configured to auto-pause after five idle minutes. It stores shared web/voice state.
-- **Database bootstrap Lambda:** alone can read the owner credential; it runs Alembic, refreshes the restricted `factored_app` grants and imports 100 synthetic customers idempotently.
+- **Database bootstrap Lambda:** alone can read the owner credential; it serializes bootstrap runs with a PostgreSQL advisory lock, runs Alembic, refreshes the restricted `factored_app` grants, guarantees the canonical Izzy service-agent row and imports 100 synthetic customers idempotently.
 - **Low-cost egress instance:** provides outbound-only access from private Lambdas to OpenAI, MotherDuck and AWS APIs. It replaces the much more expensive NAT Gateway.
 - **Concurrency:** uses the account's unreserved Lambda capacity. The demo account currently has a total concurrency quota of 10, so the stack does not reserve concurrency; AWS requires all 10 executions to remain unreserved at that quota. Use account quotas and OpenAI-side limits as the cost and abuse boundary until the Lambda quota is increased.
 
@@ -171,7 +171,7 @@ The components are:
 
 The web Lambda stays fully on demand. The stack does not enable Provisioned Concurrency, scheduled warmers, Fargate, an Application Load Balancer or API Gateway. At the 512 MB configuration, the São Paulo SnapStart cache is approximately USD 2.57 for a continuously active 30-day version, plus a very small charge for each restored environment and normal Lambda execution. This estimate uses the São Paulo entries in the [AWS Lambda public price list](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSLambda/current/index.json); verify current prices before budgeting. Delete obsolete versions and set `VOICE_SNAPSTART_APPLY_ON=None` when running `deploy.sh` if the optimization is no longer required.
 
-SnapStart improves Lambda initialization, but it cannot remove Twilio routing, OpenAI call acceptance, model response or downstream database latency. AWS documents the supported runtimes and version/alias lifecycle in [Improving startup performance with Lambda SnapStart](https://docs.aws.amazon.com/lambda/latest/dg/snapstart.html). Diagnose the intervals independently with the structured events documented in the root `APPLICATION_LOGS.md`.
+SnapStart improves Lambda initialization, but it cannot remove Twilio routing, OpenAI call acceptance, model response or downstream database latency. AWS documents the supported runtimes and version/alias lifecycle in [Improving startup performance with Lambda SnapStart](https://docs.aws.amazon.com/lambda/latest/dg/snapstart.html). Diagnose the intervals independently with the structured events documented in [Application logs and traces](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki/Application-Logs-and-Traces).
 
 The call media does not pass through AWS. Browser traffic uses a separate Lambda so a website request cannot interfere with the long-running call worker:
 
@@ -298,9 +298,9 @@ The document digits are accumulated and checked only in backend memory. They are
 uv run python -m unittest tests.test_sip_realtime tests.test_voice_call -v
 ```
 
-## Run the web app (PostgreSQL + lakehouse seed)
+## Run the application data layer (PostgreSQL + lakehouse seed)
 
-The web app stores customers, cards (bank products), transactions, complaints and sessions only in a local PostgreSQL started with Docker. It does not start without that database, and it no longer creates customers or history in code. All customer data is copied from the synthetic hackathon lakehouse (`lakehouse.silver` on MotherDuck, read-only). Copy `.env.example` to `.env` and fill in the passwords and `MOTHERDUCK_TOKEN`. Then run, from this directory:
+The web app, web chat and telephone agent share one PostgreSQL operational store. Locally it runs in Docker; the deployed demo uses private Aurora PostgreSQL Serverless v2. The application does not start without PostgreSQL and no longer creates customer or transaction history in code. Customer data is copied from the read-only synthetic hackathon lakehouse (`lakehouse.silver` on MotherDuck). Copy `.env.example` to `.env`, fill in the passwords and `MOTHERDUCK_TOKEN`, then run from this directory:
 
 ```powershell
 docker compose up -d db
@@ -317,7 +317,15 @@ New sign-ups get one demo credit card and no history. Their transactions come fr
 
 Tests: `uv run pytest -q`. Web and voice tests use the in-memory test doubles and synthetic fixtures in `tests/fakes.py`. The PostgreSQL integration tests run only when `TEST_POSTGRES_URL` points at a disposable server (`postgresql://postgres:<password>@127.0.0.1:<port>/postgres`). Otherwise they are skipped.
 
-The voice channel (`dispute-sip-server` and the Lambda worker) uses the same database through `DATABASE_URL`, so customers, cards, transactions and complaints are shared between phone and web. In AWS, the deployment Lambda imports the synthetic demo sample; runtime Lambdas never create seed customers.
+The voice channel (`dispute-sip-server` and the Lambda worker) uses the same database through `DATABASE_URL`, so customers, cards, transactions, complaints and call-center telemetry are shared between phone and web. In AWS, the database bootstrap Lambda imports the synthetic demo sample; runtime web/voice Lambdas never create seed customers.
+
+### Database bootstrap and Izzy service-agent record
+
+Alembic migration `0002` creates `service_agents`, `call_center_interactions`, `call_transcripts` and `satisfaction_surveys`. It inserts the canonical synthetic agent with `agent_id=AGENT-IZZY`, employee code `IZZY-AI-001`, type `Hybrid`, specialty `Card Disputes`, status `Active` and support for English, Portuguese and Spanish.
+
+The same creation is enforced by `seed_izzy_agent()` during every AWS database bootstrap and when call telemetry is initialized. The operation is idempotent: an existing Izzy row is preserved so accumulated `avg_csat` and `total_monthly_interactions` are not reset; a missing row is recreated. Interaction, transcript and satisfaction rows reference `AGENT-IZZY`, allowing ratings and workload counters to update the same service-agent record.
+
+The deployed AWS database was verified on 4 October 2026 with 100 customers, 159 cards, 1,925 transactions and 56 complaints after the lakehouse seed. The bootstrap returned `status=ready` and `service_agent_id=AGENT-IZZY`. These counts describe the current synthetic sample and will grow when Shady Business purchases or new complaints are created.
 
 Limitations: the data is synthetic, and the parody shop catalog is static copy. Purchases and complaints written by the app or by calls exist only in PostgreSQL; they are not synchronized back to the lakehouse yet.
 
