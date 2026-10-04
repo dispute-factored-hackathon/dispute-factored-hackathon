@@ -24,7 +24,7 @@ dependencies = [
     "pydantic-settings>=2,<3",
     "python-dotenv>=1,<2",
     "uvicorn>=0.30,<1",
-    "websockets>=15,<17",
+    "websockets>=15,<18",
 ]
 
 
@@ -64,7 +64,7 @@ package = true
 [dependency-groups]
 dev = [
     "coverage>=7.16.2",
-    "ipykernel>=6,<7",
+    "ipykernel>=6,<8",
     "jupyterlab>=4,<5",
     "matplotlib-inline>=0.1,<1",
     "pytest>=9.1.1",
