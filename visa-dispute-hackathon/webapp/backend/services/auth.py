@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import hmac
+import json
 import secrets
 from datetime import UTC, datetime, timedelta
 
@@ -82,14 +83,36 @@ class AuthenticationService:
     ) -> CustomerSession:
         now = datetime.now(UTC)
         session = CustomerSession(
-            session_id=secrets.token_urlsafe(32),
+            session_id="",
             customer_id=customer.customer_id,
             authentication_method=authentication_method,
             created_at=now,
             expires_at=now + timedelta(hours=settings.session_duration_hours),
         )
+        session = session.model_copy(update={"session_id": self._signed_session_id(session)})
         self.sessions.create(session)
         return session
+
+    def _signed_session_id(self, session: CustomerSession) -> str:
+        """Create an integrity-protected demo session that survives Lambda cold starts."""
+        payload = {
+            "authentication_method": session.authentication_method.value,
+            "created_at": int(session.created_at.timestamp()),
+            "customer_id": session.customer_id,
+            "expires_at": int(session.expires_at.timestamp()),
+            "nonce": secrets.token_urlsafe(12),
+        }
+        encoded = (
+            base64.urlsafe_b64encode(
+                json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+            )
+            .decode()
+            .rstrip("=")
+        )
+        signature = hmac.new(
+            settings.demo_selector_secret.encode(), encoded.encode(), hashlib.sha256
+        ).hexdigest()
+        return f"v1.{encoded}.{signature}"
 
     def _selection_for(self, customer_id: str) -> str:
         encoded = base64.urlsafe_b64encode(customer_id.encode()).decode().rstrip("=")

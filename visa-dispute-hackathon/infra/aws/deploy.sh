@@ -11,6 +11,7 @@ IMAGE_TAG="${IMAGE_TAG:-${GIT_SHA}-$(date +%Y%m%d%H%M%S)}"
 LANGSMITH_SECRET_ID="${LANGSMITH_SECRET_ID:-${PROJECT_NAME}/langsmith}"
 LANGSMITH_PROJECT="${LANGSMITH_PROJECT:-${PROJECT_NAME}}"
 HUMAN_HANDOFF_NUMBER="${HUMAN_HANDOFF_NUMBER:-+5511981020050}"
+VOICE_SNAPSTART_APPLY_ON="${VOICE_SNAPSTART_APPLY_ON:-PublishedVersions}"
 
 stack_output() {
   aws cloudformation describe-stacks \
@@ -88,11 +89,28 @@ elif [[ "${ACTION}" == "application" ]]; then
       OpenAISecretArn="${OPENAI_SECRET_ARN}" \
       LangSmithSecretArn="${LANGSMITH_SECRET_ARN}" \
       LangSmithProject="${LANGSMITH_PROJECT}" \
-      HumanHandoffNumber="${HUMAN_HANDOFF_NUMBER}"
+      HumanHandoffNumber="${HUMAN_HANDOFF_NUMBER}" \
+      VoiceSnapStartApplyOn="${VOICE_SNAPSTART_APPLY_ON}"
+
+  SIP_FUNCTION_NAME="$(stack_output "${APPLICATION_STACK}" FunctionName)"
+  SIP_PUBLISHED_VERSION="$(stack_output "${APPLICATION_STACK}" SipPublishedVersion)"
+  SNAPSTART_STATUS="$(aws lambda get-function-configuration \
+    --region "${AWS_REGION}" \
+    --function-name "${SIP_FUNCTION_NAME}" \
+    --qualifier "${SIP_PUBLISHED_VERSION}" \
+    --query 'SnapStart.OptimizationStatus' \
+    --output text)"
+
+  if [[ "${VOICE_SNAPSTART_APPLY_ON}" == "PublishedVersions" && "${SNAPSTART_STATUS}" != "On" ]]; then
+    echo "SnapStart is not ready for ${SIP_FUNCTION_NAME}:${SIP_PUBLISHED_VERSION}." >&2
+    exit 1
+  fi
 
   echo "Image: ${IMAGE_URI}"
   echo "LangSmith project: ${LANGSMITH_PROJECT}"
   echo "Human handoff: configured"
+  echo "Voice SnapStart: ${SNAPSTART_STATUS} (version ${SIP_PUBLISHED_VERSION})"
+  echo "Application: $(stack_output "${APPLICATION_STACK}" ApplicationUrl)"
   echo "Webhook: $(stack_output "${APPLICATION_STACK}" OpenAIWebhookUrl)"
 else
   echo "Usage: $0 bootstrap|application" >&2

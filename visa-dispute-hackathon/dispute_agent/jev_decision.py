@@ -32,6 +32,7 @@ class JevDecisionError(RuntimeError):
 class JevAction(StrEnum):
     TOOL = "tool"
     REFUSE_ABUSE = "refuse_abuse"
+    CLARIFY = "clarify"
     FALLBACK = "fallback"
 
 
@@ -129,6 +130,7 @@ class JevVoiceRouter:
         confidence_threshold: float | None = None,
         safety_threshold: float | None = None,
         language_threshold: float | None = None,
+        csat_threshold: float | None = None,
     ) -> None:
         resolved_key = api_key if api_key is not None else os.getenv("JEV_API_KEY", "")
         self.client = client or (
@@ -153,6 +155,11 @@ class JevVoiceRouter:
             language_threshold
             if language_threshold is not None
             else float(os.getenv("JEV_LANGUAGE_THRESHOLD", "0.50"))
+        )
+        self.csat_threshold = (
+            csat_threshold
+            if csat_threshold is not None
+            else float(os.getenv("JEV_CSAT_THRESHOLD", "0.60"))
         )
 
     @property
@@ -217,20 +224,57 @@ class JevVoiceRouter:
                 )
 
         stage_answer = answers.get("stage_intent")
-        if not isinstance(stage_answer, dict) or stage_answer.get("type") != "choice":
-            return JevVoiceDecision(JevAction.FALLBACK, 0.0, model=model)
+        choice = ""
+        confidence = 0.0
+        mapped: tuple[str, dict[str, Any]] | None = None
+        if isinstance(stage_answer, dict) and stage_answer.get("type") == "choice":
+            choice = str(stage_answer.get("choice", ""))
+            confidence = float(stage_answer.get("confidence", 0.0))
+            mapped = self._map_stage_choice(stage, choice, answers)
 
-        choice = str(stage_answer.get("choice", ""))
-        confidence = float(stage_answer.get("confidence", 0.0))
         required_confidence = (
             self.language_threshold
             if stage == "needs_language_confirmation"
+            else self.csat_threshold
+            if stage == "dispute_classified"
             else self.confidence_threshold
         )
+
+        # A CSAT prompt explicitly expects a one-word number or refusal. Prefer
+        # a high-confidence valid rating over the generic clarity question,
+        # which can otherwise mistake a short answer such as "Um" for noise.
+        if (
+            stage == "dispute_classified"
+            and choice != "unclear"
+            and confidence >= required_confidence
+            and mapped is not None
+        ):
+            tool_name, arguments = mapped
+            return JevVoiceDecision(
+                JevAction.TOOL,
+                confidence,
+                tool_name=tool_name,
+                arguments=arguments,
+                model=model,
+            )
+
+        clarity_answer = answers.get("speech_clarity")
+        if isinstance(clarity_answer, dict) and clarity_answer.get("type") == "choice":
+            clarity = str(clarity_answer.get("choice", "clear"))
+            clarity_confidence = float(clarity_answer.get("confidence", 0.0))
+            if clarity == "unclear" and clarity_confidence >= self.confidence_threshold:
+                return JevVoiceDecision(
+                    JevAction.CLARIFY,
+                    clarity_confidence,
+                    model=model,
+                )
+
+        if not isinstance(stage_answer, dict) or stage_answer.get("type") != "choice":
+            return JevVoiceDecision(JevAction.FALLBACK, 0.0, model=model)
+
         if confidence < required_confidence:
             return JevVoiceDecision(JevAction.FALLBACK, confidence, model=model)
 
-        mapped = self._map_stage_choice(stage, choice, answers)
         if mapped is None:
             return JevVoiceDecision(JevAction.FALLBACK, confidence, model=model)
         tool_name, arguments = mapped
@@ -281,11 +325,30 @@ class JevVoiceRouter:
                     "none": "No explicit language selection or change request.",
                 },
             },
+            "speech_clarity": {
+                "type": "choice",
+                "instructions": (
+                    "Is the transcription understandable enough to identify words and intent? "
+                    "Mark unclear for gibberish, severe transcription corruption, isolated noise, "
+                    "or text in an unsupported language that does not convey a reliable request."
+                ),
+                "criteria": {
+                    "clear": (
+                        "Understandable speech, including an ordinary question, correction, or a "
+                        "single expected answer such as a language, yes/no, or a rating from 1 to 5."
+                    ),
+                    "unclear": "Gibberish, corrupted transcription, noise, or no reliable meaning.",
+                },
+            },
         }
 
     @classmethod
     def _questions_for(cls, stage: str) -> dict[str, dict[str, Any]]:
         questions = cls._base_questions()
+        if stage == "dispute_classified":
+            # The caller is answering a tightly scoped 1-to-5 survey. A bare
+            # number word is expected input, not evidence of corrupted speech.
+            questions.pop("speech_clarity", None)
         criteria_by_stage: dict[str, dict[str, str]] = {
             "needs_language_confirmation": {
                 "keep": "Explicitly wants to continue in the language Izzy is already speaking.",
@@ -318,11 +381,11 @@ class JevVoiceRouter:
                 "INSUFFICIENT_INFO": "Neither claim is explicit, both conflict, or input is unrelated.",
             },
             "dispute_classified": {
-                "rating_1": "Explicit satisfaction rating of 1.",
-                "rating_2": "Explicit satisfaction rating of 2.",
-                "rating_3": "Explicit satisfaction rating of 3.",
-                "rating_4": "Explicit satisfaction rating of 4.",
-                "rating_5": "Explicit satisfaction rating of 5.",
+                "rating_1": "Rating 1: 1, one, um/uma, or uno/una, including a bare answer.",
+                "rating_2": "Rating 2: 2, two, dois/duas, or dos, including a bare answer.",
+                "rating_3": "Rating 3: 3, three, três, or tres, including a bare answer.",
+                "rating_4": "Rating 4: 4, four, quatro, or cuatro, including a bare answer.",
+                "rating_5": "Rating 5: 5, five, cinco, including a bare answer.",
                 "decline": "Clearly declines to provide a satisfaction rating.",
                 "unclear": "No explicit 1-to-5 rating or clear refusal.",
             },
@@ -333,7 +396,9 @@ class JevVoiceRouter:
                 "type": "choice",
                 "instructions": (
                     "Classify the caller's utterance only for the current workflow stage. "
-                    "Do not infer facts that were not stated."
+                    "Do not infer facts that were not stated. At the satisfaction-rating stage, "
+                    "a bare digit or number word from 1 to 5 in English, Portuguese, or Spanish "
+                    "is a complete and explicit rating; choose that rating rather than unclear."
                 ),
                 "criteria": criteria,
             }
