@@ -232,10 +232,22 @@ async function sendTurn({ text = "", selectedTransactionId = null, rejectOptions
     let closed = false;
     let pendingOptions = null;
 
-    const render = (value) => {
+    const render = (value, links = []) => {
         reply.classList.remove("agent-bubble-typing");
         reply.removeAttribute("aria-label");
-        reply.textContent = value;
+        reply.replaceChildren();
+        let remaining = value;
+        for (const link of links) {
+            const index = remaining.indexOf(link.text);
+            if (index < 0) continue;
+            reply.append(document.createTextNode(remaining.slice(0, index)));
+            const anchor = document.createElement("a");
+            anchor.href = link.href;
+            anchor.textContent = link.text;
+            reply.append(anchor);
+            remaining = remaining.slice(index + link.text.length);
+        }
+        reply.append(document.createTextNode(remaining));
         scrollToLatest();
     };
 
@@ -290,6 +302,7 @@ async function sendTurn({ text = "", selectedTransactionId = null, rejectOptions
                 disableOptions(payload.transaction_id);
             } else if (name === "state") {
                 closed = Boolean(payload.closed);
+                if (payload.links?.length) render(replyText, payload.links);
                 if (payload.stage !== "confirm_transaction") disableOptions();
             }
         });

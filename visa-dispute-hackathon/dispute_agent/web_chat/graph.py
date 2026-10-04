@@ -903,12 +903,26 @@ class IzzyWebChat:
             session.messages.append({"role": "izzy", "text": snapshot.values.get("reply", "")})
             if offered:
                 session.messages.append({"role": "options", "options": offered, "selected": None})
+            outcome = snapshot.values.get("outcome")
             yield {
                 "event": "state",
                 "stage": workflow_state.stage.value,
-                "outcome": snapshot.values.get("outcome"),
+                "outcome": outcome,
                 "complaint_id": workflow_state.complaint_id,
                 "closed": workflow_state.stage in CLOSED_STAGES,
+                "links": (
+                    [
+                        {
+                            "text": web_text(
+                                workflow_state.locale.language, "complaints_link_label"
+                            ),
+                            "href": "/complaints",
+                        }
+                    ]
+                    if workflow_state.complaint_id
+                    and outcome in {"csat_thanks", "csat_declined"}
+                    else []
+                ),
             }
             if workflow_state.stage in CLOSED_STAGES:
                 # The workflow is finished: record the interaction and end the chat session.

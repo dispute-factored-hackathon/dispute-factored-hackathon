@@ -64,7 +64,8 @@ WEB_TEXTS: dict[str, dict[str, str]] = {
         "none_of_these": "None of these",
         "confirm_filing": "Do you want me to file this dispute now?",
         "complaint_declined": "Okay, I didn't file a dispute. This chat has ended; you can start a new one anytime.",
-        "chat_finished": "This chat has ended. You can follow your dispute in Complaints.",
+        "complaints_link_label": "Complaints",
+        "chat_finished": "This chat has ended. You can follow your dispute in {complaints}.",
         "transaction_options": "I found {count} purchases that could match. Tap the right one, or choose “None of these”.",
         "transaction_option_single": "I found this purchase. Is it the one you want to dispute? Tap it to confirm, or choose “None of these”.",
         "options_unclear": "Tap the purchase that matches, or tell me its number. If none matches, choose “None of these”.",
@@ -121,7 +122,8 @@ WEB_TEXTS: dict[str, dict[str, str]] = {
         "none_of_these": "Ninguna de estas",
         "confirm_filing": "¿Quieres que registre este reclamo ahora?",
         "complaint_declined": "Listo, no registré ningún reclamo. Este chat terminó; puedes iniciar uno nuevo cuando quieras.",
-        "chat_finished": "Este chat terminó. Puedes seguir tu reclamo en Reclamos.",
+        "complaints_link_label": "Reclamos",
+        "chat_finished": "Este chat terminó. Puedes seguir tu reclamo en {complaints}.",
         "transaction_options": "Encontré {count} compras que podrían coincidir. Toca la correcta o elige “Ninguna de estas”.",
         "transaction_option_single": "Encontré esta compra. ¿Es la que quieres reclamar? Tócala para confirmar o elige “Ninguna de estas”.",
         "options_unclear": "Toca la compra que coincide o dime su número. Si ninguna coincide, elige “Ninguna de estas”.",
@@ -182,7 +184,8 @@ WEB_TEXTS: dict[str, dict[str, str]] = {
         "none_of_these": "Nenhuma destas",
         "confirm_filing": "Quer que eu registre esta contestação agora?",
         "complaint_declined": "Certo, não registrei nenhuma contestação. Este chat foi encerrado; você pode iniciar um novo quando quiser.",
-        "chat_finished": "Este chat foi encerrado. Você pode acompanhar sua contestação em Reclamações.",
+        "complaints_link_label": "Contestações",
+        "chat_finished": "Este chat foi encerrado. Você pode acompanhar sua contestação em {complaints}.",
         "transaction_options": "Encontrei {count} compras que podem corresponder. Toque na certa ou escolha “Nenhuma destas”.",
         "transaction_option_single": "Encontrei esta compra. É a que você quer contestar? Toque nela para confirmar ou escolha “Nenhuma destas”.",
         "options_unclear": "Toque na compra que corresponde ou diga o número dela. Se nenhuma corresponder, escolha “Nenhuma destas”.",
@@ -254,6 +257,7 @@ def web_text(
     language: str, key: str, *, name: str = "", phone: str = "", count: int = 0, **values: str
 ) -> str:
     texts = WEB_TEXTS.get(language, WEB_TEXTS["en"])
+    values.setdefault("complaints", texts["complaints_link_label"])
     return texts[key].format(name=name, phone=format_phone(phone), count=count, **values)
 
 

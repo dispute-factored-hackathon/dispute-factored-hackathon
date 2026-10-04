@@ -178,6 +178,18 @@
     border-bottom-left-radius: var(--radius-sm);
 }
 
+.agent-bubble-izzy a {
+    color: var(--color-primary);
+    font-weight: 700;
+    text-decoration-thickness: 0.12em;
+    text-underline-offset: 0.16em;
+}
+
+.agent-bubble-izzy a:hover,
+.agent-bubble-izzy a:focus-visible {
+    color: var(--color-primary-hover);
+}
+
 .agent-bubble-customer {
     align-self: flex-end;
 

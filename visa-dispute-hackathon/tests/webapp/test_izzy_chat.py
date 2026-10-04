@@ -230,6 +230,7 @@ def test_full_dispute_journey_blocks_the_card_files_on_confirmation_and_ends(cha
     classifier.queue.append(turn("csat_rating", rating=5))
     events, text = run_turn(chat, session, "5")
     assert events[-2]["closed"] is True
+    assert events[-2]["links"] == [{"text": "Complaints", "href": "/complaints"}]
     assert "This chat has ended" in text
     interaction = repositories.call_center_interactions.list_by_customer(GABRIEL)[0]
     survey = repositories.satisfaction_surveys.get_by_interaction(interaction.interaction_id)
