@@ -256,7 +256,7 @@
   "profile.id_readonly": "This identifier cannot be edited.",
   "profile.personal": "Personal details",
   "profile.contact": "Contact and language",
-  "profile.phone_help": "Use international format, including the country code.",
+  "profile.phone_help": "Use international format, including the country code. Izzy compares the incoming caller ID with this saved number. When they match, you can choose phone authentication without typing anything.",
   "profile.language_help": "The interface changes immediately and Izzy will use this preference in future conversations.",
   "profile.save": "Save changes",
   "profile.saving": "Saving...",

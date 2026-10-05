@@ -40,6 +40,36 @@ def test_phone_authentication_uses_shared_backend_profile() -> None:
     assert state.identity.detected_accent == "portuguese"
 
 
+def test_phone_authentication_accepts_formatted_database_number() -> None:
+    repository = gabriel_repository()
+    customer = repository.get_by_id(GABRIEL_ID)
+    assert customer is not None
+    repository.update(customer.model_copy(update={"mobile_phone": "+55 (11) 98102-0050"}))
+
+    calls = VoiceCallService(repository, **voice_repositories(GABRIEL_ID))
+    state = calls.start("5511981020050", call_id="formatted-database-phone")
+    state = calls.choose_authentication_method(state.call_id, method="phone")
+
+    assert state.stage is VoiceCallStage.AUTHENTICATED
+    assert state.identity is not None
+    assert state.identity.customer_id == GABRIEL_ID
+
+
+def test_phone_authentication_rejects_inactive_database_customer() -> None:
+    repository = gabriel_repository()
+    customer = repository.get_by_id(GABRIEL_ID)
+    assert customer is not None
+    repository.update(customer.model_copy(update={"customer_status": "Inactive"}))
+
+    calls = VoiceCallService(repository, **voice_repositories(GABRIEL_ID))
+    state = calls.start("5511981020050", call_id="inactive-database-phone")
+    state = calls.confirm_language(state.call_id)
+    state = calls.choose_authentication_method(state.call_id, method="phone")
+
+    assert state.stage is VoiceCallStage.NEEDS_DOCUMENT
+    assert state.identity is None
+
+
 def test_known_phone_uses_profile_locale_and_skips_language_question() -> None:
     calls = VoiceCallService(gabriel_repository(), **voice_repositories(GABRIEL_ID))
     state = calls.start("5511981020050", call_id="gabriel-locale-only")
