@@ -434,6 +434,25 @@ def test_complaint_details_resume_the_contextual_tour() -> None:
     assert "await initializeGuidedTour();" in content
 
 
+def test_pages_load_the_cache_busted_empty_account_tour() -> None:
+    client = TestClient(app)
+    expected_version = "v=20261005-onboarding-empty1"
+
+    for page in (
+        "home",
+        "cards",
+        "transactions",
+        "agent",
+        "complaints",
+        "profile",
+        "transaction-detail",
+        "complaint-detail",
+        "coming-soon",
+    ):
+        html = client.get(f"/static/pages/{page}.html").text
+        assert expected_version in html
+
+
 def test_contextual_tour_keeps_targets_visible_clickable_and_non_overlapping() -> None:
     client = TestClient(app)
     css = client.get("/static/css/components.css").text
