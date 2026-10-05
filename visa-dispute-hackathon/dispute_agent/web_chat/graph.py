@@ -106,6 +106,7 @@ def _keep_recent(
 class ChatGraphState(TypedDict, total=False):
     session_id: str
     message: str
+    agent_question: str
     # Explicit UI actions on the offered purchases (tapping an option or "None of these").
     selected_transaction_id: str | None
     reject_options: bool
@@ -230,6 +231,7 @@ class IzzyChatGraph:
                 message=state["message"],
                 language=workflow_state.locale.language,
                 candidate=self._candidate_summary(workflow_state),
+                agent_question=state.get("agent_question", ""),
             )
         except InterpreterUnavailableError as error:
             _log("web_chat.interpret.unavailable", reason=str(error))
@@ -850,6 +852,14 @@ class IzzyWebChat:
         turn_input: ChatGraphState = {
             "session_id": session_id,
             "message": message,
+            "agent_question": next(
+                (
+                    str(entry.get("text", ""))
+                    for entry in reversed(session.messages)
+                    if entry.get("role") == "izzy"
+                ),
+                "",
+            ),
             "selected_transaction_id": selected_transaction_id,
             "reject_options": reject_options,
             "intent": None,

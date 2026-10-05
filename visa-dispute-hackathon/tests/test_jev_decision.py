@@ -67,6 +67,32 @@ class JevVoiceRouterTests(unittest.TestCase):
         self.assertEqual(decision.arguments, {"language": "pt"})
         self.assertIn("prompt_abuse", client.requests[0]["questions"])
 
+    def test_immediately_preceding_agent_question_is_sent_as_context(self):
+        client = FakeClient(
+            {
+                "prompt_abuse": noul(0.01),
+                "explicit_human_request": noul(0.01),
+                "speech_clarity": choice("clear"),
+                "stage_intent": choice("CONFIRM"),
+            }
+        )
+        router = JevVoiceRouter(client=client)
+
+        router.route(
+            stage="confirm_suggested_problem",
+            transcript="sim",
+            language="pt",
+            agent_question="Esta compra parece duplicada. É esse o problema?",
+        )
+
+        assert client.requests[0]["state"] == {
+            "customer_utterance": "sim",
+            "agent_question": "Esta compra parece duplicada. É esse o problema?",
+            "workflow_stage": "confirm_suggested_problem",
+            "conversation_language": "pt",
+            "expected_response": None,
+        }
+
     def test_grounded_language_choice_uses_dedicated_threshold(self):
         decision, _ = self._route(
             "needs_language_confirmation",

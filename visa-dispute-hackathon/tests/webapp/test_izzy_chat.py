@@ -99,10 +99,12 @@ class ConfirmingJevRouter:
 
     def __init__(self) -> None:
         self.stages: list[str] = []
+        self.agent_questions: list[str] = []
 
-    def route(self, *, stage, transcript, language):
+    def route(self, *, stage, transcript, language, agent_question=""):
         del transcript, language
         self.stages.append(stage)
+        self.agent_questions.append(agent_question)
         return JevVoiceDecision(
             JevAction.TOOL,
             0.99,
@@ -733,6 +735,7 @@ def test_jev_understands_plain_yes_for_suggested_problem(chat_setup, kind, expec
     _, text = run_turn(chat, opening.session_id, "sim")
 
     assert router.stages == ["confirm_suggested_problem"]
+    assert router.agent_questions == [opening.message]
     assert expected_code in text
     assert "registre esta contestação" in text.casefold()
 

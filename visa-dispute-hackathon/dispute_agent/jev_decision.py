@@ -174,6 +174,7 @@ class JevVoiceRouter:
         stage: str,
         transcript: str,
         language: str,
+        agent_question: str = "",
     ) -> JevVoiceDecision:
         """Choose a bounded action or explicitly defer to the Realtime model."""
 
@@ -184,6 +185,7 @@ class JevVoiceRouter:
         payload = self.client.decide(
             state={
                 "customer_utterance": transcript,
+                "agent_question": agent_question,
                 "workflow_stage": stage,
                 "conversation_language": language,
                 "expected_response": (

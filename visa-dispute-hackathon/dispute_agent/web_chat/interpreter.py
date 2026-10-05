@@ -137,6 +137,7 @@ only the schema.
 Current workflow stage: {stage}
 Allowed intents now: {allowed}
 Today's date: {today}
+Izzy's immediately preceding message: {agent_question}
 Purchases currently offered to the customer, numbered (if any): {candidate}
 
 Rules:
@@ -273,16 +274,25 @@ class ChatTurnInterpreter:
         message: str,
         language: str,
         candidate: list[dict[str, Any]] | None,
+        agent_question: str = "",
         today: date | None = None,
     ) -> TurnDecision:
         jev_decision = await asyncio.to_thread(
-            self._jev_decision, stage=stage, message=message, language=language
+            self._jev_decision,
+            stage=stage,
+            message=message,
+            language=language,
+            agent_question=agent_question,
         )
         if jev_decision is not None and jev_decision.intent is not ChatIntent.DESCRIBE_TRANSACTION:
             return jev_decision
 
         interpretation = await self._llm_interpretation(
-            stage=stage, message=message, candidate=candidate, today=today or date.today()
+            stage=stage,
+            message=message,
+            candidate=candidate,
+            agent_question=agent_question,
+            today=today or date.today(),
         )
         return TurnDecision(
             intent=interpretation.intent,
@@ -292,11 +302,23 @@ class ChatTurnInterpreter:
             interpretation=interpretation,
         )
 
-    def _jev_decision(self, *, stage: str, message: str, language: str) -> TurnDecision | None:
+    def _jev_decision(
+        self,
+        *,
+        stage: str,
+        message: str,
+        language: str,
+        agent_question: str = "",
+    ) -> TurnDecision | None:
         if not self.jev_router.enabled:
             return None
         try:
-            decision = self.jev_router.route(stage=stage, transcript=message, language=language)
+            decision = self.jev_router.route(
+                stage=stage,
+                transcript=message,
+                language=language,
+                agent_question=agent_question,
+            )
         except JevDecisionError as error:
             LOGGER.info(
                 json.dumps(
@@ -336,6 +358,7 @@ class ChatTurnInterpreter:
         stage: str,
         message: str,
         candidate: list[dict[str, Any]] | None,
+        agent_question: str,
         today: date,
     ) -> ChatTurnInterpretation:
         allowed = (*ALLOWED_INTENTS.get(stage, ()), *GLOBAL_INTENTS)
@@ -343,6 +366,7 @@ class ChatTurnInterpreter:
             stage=stage,
             allowed=", ".join(intent.value for intent in allowed),
             today=today.isoformat(),
+            agent_question=agent_question or "none",
             candidate=json.dumps(candidate, ensure_ascii=False) if candidate else "none",
         )
         try:

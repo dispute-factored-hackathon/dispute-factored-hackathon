@@ -2138,6 +2138,7 @@ class SipRealtimeGateway:
                 stage=state.stage.value,
                 transcript=transcript,
                 language=state.locale.language,
+                agent_question=self._last_spoken_by_call.get(call_id, ""),
             )
         except JevDecisionError as error:
             _telemetry(
