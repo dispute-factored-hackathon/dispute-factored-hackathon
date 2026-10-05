@@ -17,7 +17,7 @@
         <p class="store-kicker">SECURE-ISH CHECKOUT</p>
         <h1>Your questionable decisions</h1>
         <div id="cart-error" class="store-message error" role="alert" hidden></div>
-        <section id="cart-empty" class="empty-cart" hidden><span>🛒</span><h2>Your cart is suspiciously empty.</h2><a class="shady-button" href="/shop">Find something unnecessary</a></section>
+        <section id="cart-empty" class="empty-cart" hidden><svg class="ui-icon empty-cart-icon" aria-hidden="true"><use href="/static/assets/icons/ui.svg#cart"></use></svg><h2>Your cart is suspiciously empty.</h2><a class="shady-button" href="/shop">Find something unnecessary</a></section>
         <div id="cart-checkout" class="cart-layout" hidden>
             <section><h2>Cart</h2><div id="cart-items" class="cart-items"></div></section>
             <aside class="checkout-card">
@@ -30,7 +30,7 @@
             </aside>
         </div>
         <section id="receipt" class="receipt" hidden aria-live="polite">
-            <span class="receipt-icon">✓</span><p>SIMULATED ORDER CONFIRMED</p><h2 id="receipt-title">Your order is on its imaginary way.</h2><p id="receipt-message"></p><p id="receipt-total"></p>
+            <svg class="ui-icon receipt-icon" aria-hidden="true"><use href="/static/assets/icons/ui.svg#check"></use></svg><p>SIMULATED ORDER CONFIRMED</p><h2 id="receipt-title">Your order is on its imaginary way.</h2><p id="receipt-message"></p><p id="receipt-total"></p>
             <div class="receipt-actions"><a class="shady-button" href="/transactions">Review bank activity</a><a href="/shop">Return to store</a></div>
         </section>
     </main>

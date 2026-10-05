@@ -11,7 +11,7 @@ import {
 
 import {
     initializeGuidedTour,
-} from "../components/guided-tour.js?v=13";
+} from "../components/guided-tour.js?v=14";
 
 
 const page =

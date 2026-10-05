@@ -485,7 +485,7 @@ def test_complaint_details_resume_the_contextual_tour() -> None:
     client = TestClient(app)
     content = client.get("/static/js/pages/complaint-detail.js").text
 
-    assert 'from "../components/guided-tour.js?v=13"' in content
+    assert 'from "../components/guided-tour.js?v=14"' in content
     assert "await initializeGuidedTour();" in content
 
 

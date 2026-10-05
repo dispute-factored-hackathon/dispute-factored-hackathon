@@ -128,10 +128,11 @@
 }
 
 .guided-tour-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     width: 2.5rem;
     height: 2.5rem;
-    font-size: 1.7rem;
-    line-height: 1;
 }
 
 .guided-tour-tooltip h2 {

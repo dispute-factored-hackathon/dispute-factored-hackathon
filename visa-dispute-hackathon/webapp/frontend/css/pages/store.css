@@ -78,8 +78,15 @@
 .order-total { display: flex; justify-content: space-between; margin: 1.5rem 0; padding-top: 1rem; border-top: 1px solid rgba(255,255,255,.35); font-size: 1.3rem; }
 .checkout-card .shady-button { width: 100%; }
 .empty-cart, .receipt { padding: clamp(3rem, 8vw, 6rem); text-align: center; background: white; border: 3px solid var(--shady-line); box-shadow: 10px 10px 0 var(--shady-orange); }
-.empty-cart > span, .receipt-icon { display: block; font-size: 5rem; }
-.receipt-icon { color: var(--shady-purple); font-weight: 700; }
+.empty-cart-icon,
+.receipt-icon {
+    display: block;
+    width: 5rem;
+    height: 5rem;
+    margin-inline: auto;
+    stroke-width: 1.5;
+}
+.receipt-icon { color: var(--shady-purple); }
 .receipt h2 { font-size: clamp(2rem, 5vw, 4rem); margin: .5rem 0 1rem; }
 .receipt-actions { display: flex; justify-content: center; align-items: center; gap: 1.5rem; margin-top: 2rem; }
 .receipt-actions > a:not(.shady-button) { color: var(--shady-ink); font-weight: 700; }

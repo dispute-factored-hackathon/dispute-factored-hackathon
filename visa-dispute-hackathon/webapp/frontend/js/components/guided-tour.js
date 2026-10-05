@@ -479,7 +479,7 @@ async function showCurrentStep() {
         COPY.controls.progress,
         { current: currentIndex + 1, total: STEPS.length },
     );
-    layer.querySelector(".guided-tour-close").textContent = "×";
+    layer.querySelector(".guided-tour-close").innerHTML = '<svg class="ui-icon" aria-hidden="true"><use href="/static/assets/icons/ui.svg#close"></use></svg>';
     layer.querySelector(".guided-tour-close").setAttribute("aria-label", t(COPY.controls.close));
     layer.querySelector("#guided-tour-title").textContent = t(titleKey);
     layer.querySelector("#guided-tour-body").textContent = t(bodyKey);

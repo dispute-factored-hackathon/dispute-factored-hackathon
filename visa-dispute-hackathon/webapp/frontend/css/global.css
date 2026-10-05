@@ -30,6 +30,19 @@ select {
     width: 100%;
 }
 
+.ui-icon {
+    display: inline-block;
+    width: 1.25rem;
+    height: 1.25rem;
+    flex: none;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    vertical-align: middle;
+}
+
 button:focus-visible,
 input:focus-visible,
 select:focus-visible {
