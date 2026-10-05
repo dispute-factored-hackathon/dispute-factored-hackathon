@@ -1,0 +1,317 @@
+# Data contract specification for bronze transactions table
+dataset: lakehouse/bronze/transactions
+
+variables:
+  # Comma-separated load ids of the run being validated, as emitted by to_bronze
+  # (LOAD_IDS=... / steps.<id>.outputs.load_ids). One id for --full-load, one per
+  # batch for the daily replay.
+  LOAD_IDS:
+# Validate only the rows this run appended. Bronze is append-only, so a replayed
+# day keeps its older versions; filtering by date would count them as duplicates.
+filter: "list_contains(string_split('${var.LOAD_IDS}', ','), _dlt_load_id)"
+
+checks:
+  - schema:
+      allow_extra_columns: false
+      allow_other_column_order: true
+  - row_count:
+
+columns:
+  - name: transaction_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - duplicate:
+      - invalid:
+          valid_max_length: 30
+
+  - name: transaction_date
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: ISO timestamp format check
+          valid_format:
+            name: Timestamp regex
+            regex: '^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}:?\d{2}|Z)?$'
+      - failed_rows:
+          qualifier: castable
+          name: Verify transaction_date is castable to TIMESTAMP
+          expression: "transaction_date IS NOT NULL AND TRY_CAST(transaction_date AS TIMESTAMP) IS NULL"
+      - failed_rows:
+          qualifier: date_to_date
+          name: transaction_date is later than process_date
+          # Date to date, so a same-day transaction is not flagged
+          expression: "TRY_CAST(transaction_date AS TIMESTAMP)::DATE > process_date"
+          threshold:
+            must_be: 0
+            level: warn
+      - failed_rows:
+          qualifier: not_in_future
+          name: transaction_date is not later than today
+          # Date to date, so a transaction from today is not flagged
+          expression: "TRY_CAST(transaction_date AS DATE) > CURRENT_DATE"
+
+  - name: process_date
+    data_type: DATE
+    checks:
+      - missing:
+
+  - name: product_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 20
+
+  - name: customer_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 20
+
+  - name: transaction_type
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 50
+          valid_values: ['Adjustment', 'Deposit', 'Payment', 'Purchase', 'Transfer', 'Withdrawal']
+
+  - name: transaction_category
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 50
+          valid_values: ['Entertainment', 'Food', 'Health', 'Other', 'Services', 'Transport']
+
+  - name: amount
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: Decimal(15,2) string format check
+          valid_format:
+            name: Decimal 15_2 regex
+            regex: '^-?\d{1,13}(\.\d{1,2})?$'
+      - failed_rows:
+          name: Verify amount is castable to DECIMAL(15,2)
+          expression: "amount IS NOT NULL AND TRY_CAST(amount AS DECIMAL(15,2)) IS NULL"
+
+  - name: currency
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 3
+          valid_values: ['ARS', 'COP', 'MXN', 'USD']
+
+  - name: amount_usd
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          name: USD Decimal(15,2) string format check
+          valid_format:
+            name: Decimal 15_2 regex
+            regex: '^-?\d{1,13}(\.\d{1,2})?$'
+      - failed_rows:
+          name: Verify amount_usd is castable to DECIMAL(15,2)
+          expression: "amount_usd IS NOT NULL AND TRY_CAST(amount_usd AS DECIMAL(15,2)) IS NULL"
+
+  - name: channel
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 30
+          valid_values: ['App', 'ATM', 'Branch', 'POS', 'Transfer', 'Web']
+
+  - name: branch_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 20
+
+  - name: merchant_name
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 150
+
+  - name: merchant_category
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 50
+
+  - name: transaction_country
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: Countries in english, no accents
+          column_expression: STRIP_ACCENTS(transaction_country)
+          valid_max_length: 50
+          valid_values: ['Argentina', 'Brazil', 'Colombia', 'Mexico', 'Spain', 'USA']
+
+  - name: transaction_city
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 100
+
+  - name: transaction_status
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 20
+          valid_values: ['Approved', 'Declined', 'Pending', 'Reversed']
+
+  - name: response_code
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 10
+
+  - name: is_fraud
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: Boolean literal format check
+          valid_format:
+            name: Boolean regex
+            regex: '(?i)^(true|false|1|0|t|f)$'
+      - failed_rows:
+          name: Verify is_fraud is castable to BOOLEAN
+          expression: "is_fraud IS NOT NULL AND TRY_CAST(is_fraud AS BOOLEAN) IS NULL"
+
+  - name: fraud_score
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          name: Fraud score Decimal(5,2) format check
+          valid_format:
+            name: Decimal 5_2 regex
+            regex: '^\d{1,3}(\.\d{1,2})?$'
+      - invalid:
+          qualifier: range
+          column_expression: TRY_CAST(fraud_score AS DECIMAL(5,2))
+          valid_min: 0
+          valid_max: 100
+      - failed_rows:
+          name: Verify fraud_score is castable to DECIMAL(5,2)
+          expression: "fraud_score IS NOT NULL AND TRY_CAST(fraud_score AS DECIMAL(5,2)) IS NULL"
+
+  - name: latitude
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          name: Latitude Decimal(10, 7) format check
+          valid_format:
+            name: Decimal(10, 7) regex
+            regex: '^-?(\d{1,3}(\.\d{1,7})?|\d+(\.\d+)?[eE]-\d+)$'
+      - invalid:
+          qualifier: range
+          column_expression: TRY_CAST(latitude AS DECIMAL(10,7))
+          valid_min: -90
+          valid_max: 90
+      - failed_rows:
+          name: Verify latitude is castable to DECIMAL(10,7)
+          expression: "latitude IS NOT NULL AND TRY_CAST(latitude AS DECIMAL(10,7)) IS NULL"
+
+  - name: longitude
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          name: Longitude Decimal(10, 7) format check
+          valid_format:
+            name: Decimal(10, 7) regex
+            regex: '^-?(\d{1,3}(\.\d{1,7})?|\d+(\.\d+)?[eE]-\d+)$'
+      - invalid:
+          qualifier: range
+          column_expression: TRY_CAST(longitude AS DECIMAL(10,7))
+          valid_min: -180
+          valid_max: 180
+      - failed_rows:
+          name: Verify longitude is castable to DECIMAL(10,7)
+          expression: "longitude IS NOT NULL AND TRY_CAST(longitude AS DECIMAL(10,7)) IS NULL"
+
+  - name: _source_file
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 255
+
+  # MD5 of the source file content; drives change detection in the daily replay
+  - name: _source_fingerprint
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: MD5 hex digest format check
+          valid_format:
+            name: MD5 regex
+            regex: '^[0-9a-f]{32}$'
+
+  - name: _processed_at
+    data_type: TIMESTAMP WITH TIME ZONE
+    checks:
+      - missing:
+
+  - name: _dlt_load_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 64
+
+  - name: _dlt_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 64

@@ -1,0 +1,313 @@
+# Data contract specification for bronze products table
+dataset: lakehouse/bronze/products
+
+variables:
+  LOAD_IDS:
+
+# Scope the contract to a single delivery (one contract run = one load)
+filter: "list_contains(string_split('${var.LOAD_IDS}', ','), _dlt_load_id)"
+
+checks:
+  - schema:
+      allow_extra_columns: false
+      allow_other_column_order: true
+  - row_count:
+
+  # Exactly one snapshot date per load (the filter above already scopes the expression to the load)
+  # NOTE: verify the v4 `metric` syntax (expression vs query) before relying on it
+  - metric:
+      name: Exactly one distinct snapshot_ts per load
+      expression: COUNT(DISTINCT snapshot_ts)
+      threshold:
+        must_be: 1
+
+  # Date coherence, all warn-level: rows are kept and flagged in silver, never dropped.
+  # Compared date to date so a same-day update on the snapshot date is not flagged
+  - failed_rows:
+      qualifier: date_coherence_1
+      name: opening_date later than snapshot
+      expression: "TRY_CAST(opening_date AS TIMESTAMP)::DATE > snapshot_ts"
+      threshold:
+        must_be: 0
+        level: warn
+  - failed_rows:
+      qualifier: date_coherence_2
+      name: last_updated later than snapshot
+      expression: "TRY_CAST(last_updated AS TIMESTAMP)::DATE > snapshot_ts"
+      threshold:
+        must_be: 0
+        level: warn
+  - failed_rows:
+      qualifier: date_coherence_3
+      name: last_transaction_date later than snapshot
+      expression: "TRY_CAST(last_transaction_date AS TIMESTAMP)::DATE > snapshot_ts"
+      threshold:
+        must_be: 0
+        level: warn
+  - failed_rows:
+      qualifier: date_coherence_4
+      name: opening_date later than last_updated
+      expression: "TRY_CAST(opening_date AS TIMESTAMP) > TRY_CAST(last_updated AS TIMESTAMP)"
+      threshold:
+        must_be: 0
+        level: warn
+  - failed_rows:
+      qualifier: date_coherence_5
+      name: expiration_date earlier than opening_date
+      expression: "TRY_CAST(expiration_date AS DATE) < TRY_CAST(opening_date AS DATE)"
+      threshold:
+        must_be: 0
+        level: warn
+  - failed_rows:
+      qualifier: date_coherence_6
+      name: last_transaction_date earlier than opening_date
+      expression: "TRY_CAST(last_transaction_date AS TIMESTAMP)::DATE < TRY_CAST(opening_date AS DATE)"
+      threshold:
+        must_be: 0
+        level: warn
+
+columns:
+  - name: product_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      # PK in the data dictionary. If profiling shows duplicates by design (as in
+      # customers), lower this to level: warn and let silver dedup per photo
+      - duplicate:
+      - invalid:
+          valid_max_length: 20
+
+  - name: customer_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 20
+
+  - name: product_type
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 50
+          # The source mixes English and Spanish; silver translates to English
+          valid_values: [
+            'Checking Account', 'Credit Card', 'Debit Card', 'Insurance', 'Investment', 'Mortgage', 'Personal Loan', 'Savings Account',
+            'Cuenta Ahorro', 'Cuenta Corriente', 'Inversión', 'Préstamo Hipotecario', 'Préstamo Personal', 'Seguro', 'Tarjeta Crédito', 'Tarjeta Débito'
+          ]
+
+  - name: product_number
+    data_type: VARCHAR
+    checks:
+      - missing:
+      # UNIQUE in the data dictionary, but a reused number must not stop the pipeline:
+      # same treatment as service_agents.employee_code
+      - duplicate:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 30
+
+  - name: currency
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 3
+          valid_values: ['ARS', 'COP', 'MXN', 'USD']
+
+  - name: current_balance
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: Decimal(15,2) string format check
+          valid_format:
+            name: Decimal 15_2 regex
+            regex: '^-?\d{1,13}(\.\d{1,2})?$'
+      - failed_rows:
+          name: Verify current_balance is castable to DECIMAL(15,2)
+          expression: "current_balance IS NOT NULL AND TRY_CAST(current_balance AS DECIMAL(15,2)) IS NULL"
+
+  - name: credit_limit
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          qualifier: format
+          name: Decimal(15,2) string format check
+          valid_format:
+            name: Decimal 15_2 regex
+            regex: '^-?\d{1,13}(\.\d{1,2})?$'
+      - invalid:
+          qualifier: range
+          column_expression: TRY_CAST(credit_limit AS DECIMAL(15,2))
+          valid_min: 0
+      - failed_rows:
+          name: Verify credit_limit is castable to DECIMAL(15,2)
+          expression: "credit_limit IS NOT NULL AND TRY_CAST(credit_limit AS DECIMAL(15,2)) IS NULL"
+
+  - name: interest_rate
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          qualifier: format
+          name: Decimal(5,2) string format check
+          valid_format:
+            name: Decimal 5_2 regex
+            regex: '^\d{1,3}(\.\d{1,2})?$'
+      - invalid:
+          qualifier: range
+          column_expression: TRY_CAST(interest_rate AS DECIMAL(5,2))
+          valid_min: 0
+      - failed_rows:
+          name: Verify interest_rate is castable to DECIMAL(5,2)
+          expression: "interest_rate IS NOT NULL AND TRY_CAST(interest_rate AS DECIMAL(5,2)) IS NULL"
+
+  - name: opening_date
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: Date format check
+          valid_format:
+            name: Date regex
+            regex: '^\d{4}-\d{2}-\d{2}$'
+      - failed_rows:
+          name: Verify opening_date is castable to DATE
+          expression: "opening_date IS NOT NULL AND TRY_CAST(opening_date AS DATE) IS NULL"
+
+  - name: expiration_date
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          name: Date format check
+          valid_format:
+            name: Date regex
+            regex: '^\d{4}-\d{2}-\d{2}$'
+      - failed_rows:
+          name: Verify expiration_date is castable to DATE
+          expression: "expiration_date IS NOT NULL AND TRY_CAST(expiration_date AS DATE) IS NULL"
+
+  - name: opening_branch_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 20
+
+  - name: product_status
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 20
+          valid_values: ['Active', 'Blocked', 'Closed', 'Suspended']
+
+  - name: opening_channel
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 30
+          valid_values: ['App', 'Branch', 'Call Center', 'Web']
+
+  - name: has_linked_app
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: Boolean literal format check
+          valid_format:
+            name: Boolean regex
+            regex: '(?i)^(true|false|1|0|t|f)$'
+      - failed_rows:
+          name: Verify has_linked_app is castable to BOOLEAN
+          expression: "has_linked_app IS NOT NULL AND TRY_CAST(has_linked_app AS BOOLEAN) IS NULL"
+
+  - name: days_past_due
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          column_expression: TRY_CAST(days_past_due AS INTEGER)
+          valid_min: 0
+      - failed_rows:
+          name: Verify days_past_due is castable to INTEGER
+          expression: "days_past_due IS NOT NULL AND TRY_CAST(days_past_due AS INTEGER) IS NULL"
+
+  - name: last_transaction_date
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          name: ISO timestamp format check
+          valid_format:
+            name: Timestamp regex
+            regex: '^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}:?\d{2}|Z)?$'
+      - failed_rows:
+          name: Verify last_transaction_date is castable to TIMESTAMP
+          expression: "last_transaction_date IS NOT NULL AND TRY_CAST(last_transaction_date AS TIMESTAMP) IS NULL"
+
+  - name: last_updated
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: ISO timestamp format check
+          valid_format:
+            name: Timestamp regex
+            regex: '^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}:?\d{2}|Z)?$'
+      - failed_rows:
+          name: Verify last_updated is castable to TIMESTAMP
+          expression: "last_updated IS NOT NULL AND TRY_CAST(last_updated AS TIMESTAMP) IS NULL"
+
+  # Business date of the delivered photo, stamped by to_bronze.py from the CLI argument
+  - name: snapshot_ts
+    data_type: DATE
+    checks:
+      - missing:
+
+  - name: _source_file
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 255
+
+  - name: _processed_at
+    data_type: TIMESTAMP WITH TIME ZONE
+    checks:
+      - missing:
+
+  - name: _dlt_load_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 64
+
+  - name: _dlt_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 64

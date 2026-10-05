@@ -1,0 +1,312 @@
+dataset: lakehouse/bronze/call_center_interactions
+
+variables:
+  # Comma-separated load ids of the run being validated, as emitted by to_bronze
+  # (LOAD_IDS=... / steps.<id>.outputs.load_ids). One id for --full-load, one per
+  # batch for the daily replay.
+  LOAD_IDS:
+# Validate only the rows this run appended. Bronze is append-only, so a replayed
+# day keeps its older versions; filtering by date would count them as duplicates.
+filter: "list_contains(string_split('${var.LOAD_IDS}', ','), _dlt_load_id)"
+
+checks:
+  - schema:
+      allow_extra_columns: false
+      allow_other_column_order: true
+  - row_count:
+
+columns:
+  - name: interaction_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - duplicate:
+      - invalid:
+          valid_max_length: 30
+
+  - name: interaction_date
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: ISO timestamp format check
+          valid_format:
+            name: Timestamp regex
+            regex: '^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}:?\d{2}|Z)?$'
+      - failed_rows:
+          name: Verify interaction_date is castable to TIMESTAMP
+          expression: "interaction_date IS NOT NULL AND TRY_CAST(interaction_date AS TIMESTAMP) IS NULL"
+      - failed_rows:
+          name: Verify interaction_date is not after process_date
+          qualifier: not_after_process_date
+          expression: "TRY_CAST(interaction_date AS TIMESTAMP) > TRY_CAST(CONCAT(process_date, ' 23:59:59') AS TIMESTAMP)"
+          threshold:
+            must_be: 0
+            level: warn
+      - failed_rows:
+          name: Verify interaction_date is not greater than today
+          qualifier: not_future_dated
+          expression: "TRY_CAST(interaction_date AS TIMESTAMP) > CURRENT_TIMESTAMP"
+
+  - name: process_date
+    data_type: DATE
+    checks:
+      - missing:
+
+  - name: customer_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 20
+
+  - name: agent_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 20
+
+  - name: interaction_type
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 30
+          valid_values: ['Chat', 'Email', 'Inbound Call', 'Outbound Call', 'Video']
+
+  - name: channel
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 30
+          valid_values: ['App', 'Email', 'Phone', 'WhatsApp', 'Web Chat', 'Web']
+
+  - name: contact_reason
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 100
+
+  - name: reason_category
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 50
+          valid_values: ['Commercial', 'Complaint', 'Product', 'Technical', 'Transactional', 'Técnico', 'Transaccional', 'Retención', 'Producto', 'Comercial', 'Queja']
+
+  - name: duration_seconds
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          qualifier: range
+          column_expression: TRY_CAST(duration_seconds AS INTEGER)
+          valid_min: 0
+      - failed_rows:
+          name: Verify duration_seconds is castable to INTEGER
+          expression: "duration_seconds IS NOT NULL AND TRY_CAST(duration_seconds AS INTEGER) IS NULL"
+
+  - name: wait_time_seconds
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          qualifier: range
+          column_expression: TRY_CAST(wait_time_seconds AS INTEGER)
+          valid_min: 0
+      - failed_rows:
+          name: Verify wait_time_seconds is castable to INTEGER
+          expression: "wait_time_seconds IS NOT NULL AND TRY_CAST(wait_time_seconds AS INTEGER) IS NULL"
+
+  - name: was_resolved
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          name: Boolean literal format check
+          valid_format:
+            name: Boolean regex
+            regex: '(?i)^(true|false|1|0|t|f)$'
+      - failed_rows:
+          name: Verify was_resolved is castable to BOOLEAN
+          expression: "was_resolved IS NOT NULL AND TRY_CAST(was_resolved AS BOOLEAN) IS NULL"
+
+  - name: requires_followup
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: Boolean literal format check
+          valid_format:
+            name: Boolean regex
+            regex: '(?i)^(true|false|1|0|t|f)$'
+      - failed_rows:
+          name: Verify requires_followup is castable to BOOLEAN
+          expression: "requires_followup IS NOT NULL AND TRY_CAST(requires_followup AS BOOLEAN) IS NULL"
+
+  - name: detected_sentiment
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 20
+          valid_values: ['Negative', 'Neutral', 'Positive', 'Very Negative', 'Very Positive', 'Negativo', 'Muy Negativo', 'Positivo', 'Muy Positivo']
+
+  - name: sentiment_score
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          name: Sentiment score Decimal(3,2) format check
+          valid_format:
+            name: Decimal 3_2 regex
+            regex: '^-?\d(\.\d{1,2})?$'
+      - invalid:
+          qualifier: range
+          column_expression: TRY_CAST(sentiment_score AS DECIMAL(3,2))
+          valid_min: -1
+          valid_max: 1
+      - failed_rows:
+          name: Verify sentiment_score is castable to DECIMAL(3,2)
+          expression: "sentiment_score IS NOT NULL AND TRY_CAST(sentiment_score AS DECIMAL(3,2)) IS NULL"
+
+  - name: customer_detected_accent
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 50
+
+  - name: agent_used_accent
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 50
+
+  - name: was_escalated
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: Boolean literal format check
+          valid_format:
+            name: Boolean regex
+            regex: '(?i)^(true|false|1|0|t|f)$'
+      - failed_rows:
+          name: Verify was_escalated is castable to BOOLEAN
+          expression: "was_escalated IS NOT NULL AND TRY_CAST(was_escalated AS BOOLEAN) IS NULL"
+
+  - name: mentioned_products
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          qualifier: max_length
+          valid_max_length: 200
+      - invalid:
+          qualifier: format
+          valid_format:
+            name: CSV product_id list regex
+            regex: '^[A-Za-z0-9_-]{1,20}(,\s*[A-Za-z0-9_-]{1,20})*$'
+      - failed_rows:
+          name: Verify every element of mentioned_products is a well-formed product_id (<=20 chars)
+          expression: >-
+            mentioned_products IS NOT NULL AND EXISTS (
+              SELECT 1 FROM UNNEST(STRING_SPLIT(mentioned_products, ',')) AS t(pid)
+              WHERE NOT REGEXP_MATCHES(TRIM(pid), '^[A-Za-z0-9_-]{1,20}$')
+            )
+
+  - name: has_transcript
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: Boolean literal format check
+          valid_format:
+            name: Boolean regex
+            regex: '(?i)^(true|false|1|0|t|f)$'
+      - failed_rows:
+          name: Verify has_transcript is castable to BOOLEAN
+          expression: "has_transcript IS NOT NULL AND TRY_CAST(has_transcript AS BOOLEAN) IS NULL"
+
+  - name: has_recording
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: Boolean literal format check
+          valid_format:
+            name: Boolean regex
+            regex: '(?i)^(true|false|1|0|t|f)$'
+      - failed_rows:
+          name: Verify has_recording is castable to BOOLEAN
+          expression: "has_recording IS NOT NULL AND TRY_CAST(has_recording AS BOOLEAN) IS NULL"
+
+  - name: _source_file
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 255
+
+  # MD5 of the source file content; drives change detection in the daily replay
+  - name: _source_fingerprint
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: MD5 hex digest format check
+          valid_format:
+            name: MD5 regex
+            regex: '^[0-9a-f]{32}$'
+
+  - name: _processed_at
+    data_type: TIMESTAMP WITH TIME ZONE
+    checks:
+      - missing:
+
+  - name: _dlt_load_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 64
+
+  - name: _dlt_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 64

@@ -1,0 +1,256 @@
+dataset: lakehouse/bronze/call_transcripts
+
+variables:
+  # Comma-separated load ids of the run being validated, as emitted by to_bronze
+  # (LOAD_IDS=... / steps.<id>.outputs.load_ids). One id for --full-load, one per
+  # batch for the daily replay.
+  LOAD_IDS:
+# Validate only the rows this run appended. Bronze is append-only, so a replayed
+# day keeps its older versions; filtering by date would count them as duplicates.
+filter: "list_contains(string_split('${var.LOAD_IDS}', ','), _dlt_load_id)"
+
+checks:
+  - schema:
+      allow_extra_columns: false
+      allow_other_column_order: true
+  - row_count:
+
+columns:
+  - name: transcript_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - duplicate:
+      - invalid:
+          valid_max_length: 30
+
+  - name: interaction_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 30
+
+  - name: process_date
+    data_type: DATE
+    checks:
+      - missing:
+      # Transcripts carry no timestamp of their own, so process_date is the only date to bound
+
+  - name: customer_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 20
+
+  - name: agent_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 20
+
+  - name: full_text
+    data_type: VARCHAR
+    checks:
+      - missing:
+
+  - name: customer_text
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+
+  - name: agent_text
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+
+  - name: detected_language
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 10
+
+  - name: detected_accent
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 50
+
+  - name: accent_confidence
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          qualifier: format
+          name: Accent confidence Decimal(3,2) format check
+          valid_format:
+            name: Decimal 3_2 regex
+            regex: '^\d(\.\d{1,2})?$'
+      - invalid:
+          qualifier: range
+          column_expression: TRY_CAST(accent_confidence AS DECIMAL(3,2))
+          valid_min: 0
+          valid_max: 1
+      - failed_rows:
+          name: Verify accent_confidence is castable to DECIMAL(3,2)
+          expression: "accent_confidence IS NOT NULL AND TRY_CAST(accent_confidence AS DECIMAL(3,2)) IS NULL"
+
+  - name: detected_keywords
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          qualifier: max_length
+          valid_max_length: 500
+      - invalid:
+          qualifier: format
+          name: Comma-separated keyword list format check
+          column_expression: UPPER(TRIM(REGEXP_REPLACE(detected_keywords, ',\s*', ',', 'g')))
+          valid_format:
+            name: CSV keyword list regex
+            regex: '^[A-ZÀ-Ÿ\s]{1,50}(,[A-ZÀ-Ÿ\s]{1,50})*$'
+
+  - name: mentioned_entities
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - failed_rows:
+          qualifier: is_object
+          name: Verify mentioned_entities is a valid JSON object
+          expression: "mentioned_entities IS NOT NULL AND (TRY_CAST(mentioned_entities AS JSON) IS NULL OR json_type(mentioned_entities) != 'OBJECT')"
+      - failed_rows:
+          qualifier: has_keys
+          name: Verify mentioned_entities has the expected keys (account_numbers, dates, amounts, products) regardless of null values
+          expression: >-
+            mentioned_entities IS NOT NULL AND TRY_CAST(mentioned_entities AS JSON) IS NOT NULL AND json_type(mentioned_entities) = 'OBJECT' AND (
+              json_type(mentioned_entities, '$.account_numbers') IS NULL
+              OR json_type(mentioned_entities, '$.dates') IS NULL
+              OR json_type(mentioned_entities, '$.amounts') IS NULL
+              OR json_type(mentioned_entities, '$.products') IS NULL
+            )
+      - failed_rows:
+          qualifier: value_types
+          name: Verify mentioned_entities value types (account_numbers required integer; dates/amounts nullable integer; products nullable text)
+          expression: >-
+            mentioned_entities IS NOT NULL AND TRY_CAST(mentioned_entities AS JSON) IS NOT NULL AND json_type(mentioned_entities) = 'OBJECT' AND (
+              json_type(mentioned_entities, '$.account_numbers') NOT IN ('BIGINT', 'UBIGINT', 'DOUBLE')
+              OR json_type(mentioned_entities, '$.dates') NOT IN ('NULL', 'BIGINT', 'UBIGINT', 'DOUBLE')
+              OR json_type(mentioned_entities, '$.amounts') NOT IN ('NULL', 'BIGINT', 'UBIGINT', 'DOUBLE')
+              OR json_type(mentioned_entities, '$.products') NOT IN ('NULL', 'VARCHAR')
+            )
+
+  - name: detected_intents
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 300
+
+  - name: main_topics
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 20
+          valid_values: ['Comercial', 'Commercial', 'Complaint', 'Producto', 'Product', 'Queja', 'Retención', 'Retention', 'Technical', 'Transaccional', 'Transactional', 'Técnico']
+
+  - name: transcription_model
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 50
+
+  - name: audio_quality
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 20
+          valid_values: ['High', 'Low', 'Medium']
+
+  - name: duration_seconds
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          qualifier: range
+          column_expression: TRY_CAST(duration_seconds AS INTEGER)
+          valid_min: 0
+      - failed_rows:
+          name: Verify duration_seconds is castable to INTEGER
+          expression: "duration_seconds IS NOT NULL AND TRY_CAST(duration_seconds AS INTEGER) IS NULL"
+
+  - name: _source_file
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 255
+
+  # MD5 of the source file content; drives change detection in the daily replay
+  - name: _source_fingerprint
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: MD5 hex digest format check
+          valid_format:
+            name: MD5 regex
+            regex: '^[0-9a-f]{32}$'
+
+  - name: _processed_at
+    data_type: TIMESTAMP WITH TIME ZONE
+    checks:
+      - missing:
+
+  - name: _dlt_load_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 64
+
+  - name: _dlt_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 64
