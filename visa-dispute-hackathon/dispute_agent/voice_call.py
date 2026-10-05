@@ -647,12 +647,25 @@ class VoiceCallService:
         replace_existing: bool = False,
         clear_filters: bool = False,
         remove_filters: tuple[str, ...] = (),
+        unavailable_fields: tuple[str, ...] = (),
     ) -> TransactionSelectionResult:
         """Search the authenticated caller's transactions and propose one candidate."""
 
         state = self.get(call_id)
         self._require_transaction_search_stage(state)
         assert state.identity is not None
+        supported_detail_fields = {"merchant", "amount", "date", "location", "channel"}
+        unknown_unavailable = set(unavailable_fields).difference(supported_detail_fields)
+        if unknown_unavailable:
+            raise ValueError(f"unsupported unavailable field: {sorted(unknown_unavailable)[0]}")
+        if unavailable_fields:
+            state = replace(
+                state,
+                requested_transaction_fields=tuple(
+                    dict.fromkeys((*state.requested_transaction_fields, *unavailable_fields))
+                ),
+            )
+            self._calls[call_id] = state
         filters_changed = replace_existing or clear_filters or bool(remove_filters)
         if (
             state.stage is VoiceCallStage.NEEDS_TRANSACTION_DETAILS

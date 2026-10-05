@@ -1,5 +1,6 @@
 import json
 import unittest
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,6 +10,8 @@ from fastapi.testclient import TestClient
 from dispute_agent.jev_decision import JevAction, JevVoiceDecision
 from dispute_agent.sip_realtime import (
     SipRealtimeGateway,
+    _ground_transaction_turn,
+    _spoken_amount,
     create_sip_app,
     extract_caller_phone,
 )
@@ -16,6 +19,72 @@ from dispute_agent.transaction_search import TransactionSearchCriteria
 from dispute_agent.voice_call import TransactionSelectionOutcome
 
 FIXTURE = Path(__file__).parent / "fixtures" / "customers.csv"
+
+
+class SpokenTransactionInputTests(unittest.TestCase):
+    def test_unambiguous_portuguese_amount_overrides_bad_model_extraction(self):
+        self.assertEqual(
+            _spoken_amount(
+                "Mil e quatrocentos dólares.",
+                language="pt-BR",
+                expected_field="amount",
+            ),
+            1400.0,
+        )
+        self.assertEqual(
+            _spoken_amount(
+                "Me faturaram cento e vinte dólares.",
+                language="pt-BR",
+                expected_field="amount",
+            ),
+            120.0,
+        )
+
+    def test_multiple_spoken_amounts_remain_for_model_clarification(self):
+        self.assertIsNone(
+            _spoken_amount(
+                "Mil e quatrocentos, mil e trezentos dólares.",
+                language="pt-BR",
+                expected_field="amount",
+            )
+        )
+
+    def test_clear_all_discards_hallucinated_location_and_amount(self):
+        criteria, clear_filters, unavailable = _ground_transaction_turn(
+            TransactionSearchCriteria(approximate_amount=140, country="Portugal"),
+            "Limpar tudo.",
+            language="pt-BR",
+            expected_field="location",
+            clear_filters=False,
+        )
+
+        self.assertFalse(criteria.has_any_filter)
+        self.assertTrue(clear_filters)
+        self.assertEqual(unavailable, ())
+
+    def test_relative_date_is_recovered_from_a_direct_answer(self):
+        criteria, clear_filters, _ = _ground_transaction_turn(
+            TransactionSearchCriteria(approximate_amount=1400),
+            "Hoje.",
+            language="pt-BR",
+            expected_field="date",
+            clear_filters=False,
+        )
+
+        self.assertEqual(criteria.date_from, date.today())
+        self.assertEqual(criteria.date_to, date.today())
+        self.assertFalse(clear_filters)
+
+    def test_detail_explicitly_not_remembered_is_marked_unavailable(self):
+        _, _, unavailable = _ground_transaction_turn(
+            TransactionSearchCriteria(),
+            "Eu não lembro o valor.",
+            language="pt-BR",
+            expected_field=None,
+            clear_filters=False,
+        )
+
+        self.assertEqual(unavailable, ("amount",))
 
 
 def incoming_event(*, event_id="evt_1", include_phone=True):
@@ -2074,6 +2143,90 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("clear_filters", properties)
         outbound = json.dumps(websocket.sent, ensure_ascii=False)
         self.assertIn("Ainda não há filtros ativos", outbound)
+
+    async def test_spoken_amount_corrects_model_amount_before_search(self):
+        transactions = fruit_search_repository("CLI-002")
+        self.addCleanup(transactions.close)
+        gateway, websocket, _ = self._gateway([], transaction_repository=transactions)
+        state = gateway.calls.start("+5511999990001", call_id="call_spoken_amount")
+        state = gateway.calls.confirm_language(state.call_id)
+        state = gateway.calls.choose_authentication_method(state.call_id, method="phone")
+
+        await gateway._handle_tool_calls(
+            websocket,
+            state.call_id,
+            json.loads(
+                tool_call_event(
+                    "search_transactions",
+                    "tool_spoken_amount",
+                    {"approximate_amount": 140},
+                )
+            ),
+            last_customer_transcript="Mil e quatrocentos dólares.",
+        )
+
+        updated = gateway.calls.get(state.call_id)
+        self.assertEqual(updated.transaction_criteria.approximate_amount, 1400)
+
+    async def test_clear_command_discards_model_hallucinated_country(self):
+        transactions = fruit_search_repository("CLI-002")
+        self.addCleanup(transactions.close)
+        gateway, websocket, _ = self._gateway([], transaction_repository=transactions)
+        state = gateway.calls.start("+5511999990001", call_id="call_grounded_clear")
+        state = gateway.calls.confirm_language(state.call_id)
+        state = gateway.calls.choose_authentication_method(state.call_id, method="phone")
+        gateway.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(approximate_amount=13),
+        )
+
+        await gateway._handle_tool_calls(
+            websocket,
+            state.call_id,
+            json.loads(
+                tool_call_event(
+                    "search_transactions",
+                    "tool_grounded_clear",
+                    {"approximate_amount": 140, "country": "Portugal"},
+                )
+            ),
+            last_customer_transcript="Limpar tudo.",
+        )
+
+        updated = gateway.calls.get(state.call_id)
+        self.assertFalse(updated.transaction_criteria.has_any_filter)
+        self.assertEqual(updated.stage, "needs_transaction_details")
+
+    async def test_filter_correction_without_value_asks_one_actionable_question(self):
+        transactions = fruit_search_repository("CLI-002")
+        self.addCleanup(transactions.close)
+        gateway, websocket, _ = self._gateway([], transaction_repository=transactions)
+        state = gateway.calls.start("+5511999990001", call_id="call_filter_correction")
+        state = gateway.calls.confirm_language(state.call_id)
+        state = gateway.calls.choose_authentication_method(state.call_id, method="phone")
+
+        await gateway._handle_tool_calls(
+            websocket,
+            state.call_id,
+            json.loads(
+                tool_call_event(
+                    "search_transactions",
+                    "tool_filter_correction",
+                    {"approximate_amount": 0},
+                )
+            ),
+            last_customer_transcript="Corrigir o filtro.",
+        )
+
+        outbound = json.dumps(websocket.sent, ensure_ascii=False)
+        self.assertIn("Qual filtro você quer corrigir e qual é o novo valor?", outbound)
+        spoken = [
+            event["response"]["instructions"]
+            for event in websocket.sent
+            if event.get("type") == "response.create"
+            and "instructions" in event.get("response", {})
+        ]
+        self.assertEqual(spoken[-1].count("?"), 1)
 
     def test_denial_asks_for_one_missing_detail_before_another_candidate(self):
         transactions = fruit_search_repository("CLI-002")

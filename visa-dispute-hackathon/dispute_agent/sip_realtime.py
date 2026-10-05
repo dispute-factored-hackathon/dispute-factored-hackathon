@@ -10,7 +10,8 @@ import re
 import time
 import unicodedata
 from collections.abc import Awaitable, Callable, Mapping
-from datetime import date
+from dataclasses import replace
+from datetime import date, timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -336,7 +337,8 @@ def _guard_extracted_numeric_filters(
     amount_supported = has_number and (
         expected_field == "amount" or bool(tokens.intersection(amount_cues))
     )
-    date_supported = has_number and (
+    relative_date_words = {"hoje", "ontem", "hoy", "ayer", "today", "yesterday"}
+    date_supported = (has_number or bool(tokens.intersection(relative_date_words))) and (
         expected_field == "date" or bool(tokens.intersection(date_cues))
     )
     if criteria.approximate_amount is not None and not amount_supported:
@@ -348,6 +350,293 @@ def _guard_extracted_numeric_filters(
             if value is not None
         )
     return criteria.without(removed), tuple(removed)
+
+
+def _transaction_control_intent(transcript: str) -> str | None:
+    """Recognize explicit filter controls only inside the transaction-search stage."""
+
+    normalized, _ = _normalized_words(transcript)
+    clear_phrases = {
+        "limpar tudo",
+        "limpa tudo",
+        "apagar tudo",
+        "zerar filtros",
+        "recomecar",
+        "voltar",
+        "limpiar todo",
+        "borrar todo",
+        "empezar de nuevo",
+        "volver",
+        "clear all",
+        "clear filters",
+        "start over",
+        "go back",
+    }
+    correction_phrases = {
+        "corrigir filtro",
+        "corrigir o filtro",
+        "editar filtro",
+        "editar o filtro",
+        "corregir filtro",
+        "corregir el filtro",
+        "editar el filtro",
+        "correct filter",
+        "correct the filter",
+        "edit filter",
+        "edit the filter",
+    }
+    if normalized in clear_phrases:
+        return "clear"
+    if normalized in correction_phrases:
+        return "correct"
+    return None
+
+
+def _unavailable_transaction_fields(
+    transcript: str,
+    *,
+    expected_field: str | None,
+) -> tuple[str, ...]:
+    """Capture details the caller explicitly says they cannot provide."""
+
+    normalized, tokens = _normalized_words(transcript)
+    short_refusal = normalized in {"nao", "no", "nope", "dont know", "nao sei"}
+    inability_phrases = (
+        "nao lembro",
+        "nao sei",
+        "nao tenho",
+        "no recuerdo",
+        "no se",
+        "no tengo",
+        "dont remember",
+        "do not remember",
+        "dont know",
+        "do not know",
+    )
+    if not short_refusal and not any(phrase in normalized for phrase in inability_phrases):
+        return ()
+    if short_refusal and expected_field is not None:
+        return (expected_field,)
+
+    field_cues = {
+        "merchant": {"estabelecimento", "loja", "comercio", "merchant", "store"},
+        "amount": {"valor", "preco", "monto", "importe", "amount", "price"},
+        "date": {"data", "dia", "fecha", "date", "day"},
+        "location": {"local", "cidade", "pais", "lugar", "ciudad", "country", "city"},
+        "channel": {"canal", "online", "presencial", "channel", "in person"},
+    }
+    unavailable = tuple(
+        field_name for field_name, cues in field_cues.items() if tokens.intersection(cues)
+    )
+    return unavailable or ((expected_field,) if expected_field is not None else ())
+
+
+def _spoken_amount(transcript: str, *, language: str, expected_field: str | None) -> float | None:
+    """Parse one unambiguous spoken integer amount in English, Portuguese, or Spanish."""
+
+    normalized, tokens = _normalized_words(transcript)
+    if re.search(r"\d", normalized):
+        return None
+    amount_cues = {
+        "valor",
+        "reais",
+        "real",
+        "dolar",
+        "dolares",
+        "peso",
+        "pesos",
+        "amount",
+        "dollar",
+        "dollars",
+        "euro",
+        "euros",
+    }
+    if expected_field != "amount" and not tokens.intersection(amount_cues):
+        return None
+
+    language_key = language.casefold().split("-", maxsplit=1)[0]
+    values = {
+        "pt": {
+            "zero": 0,
+            "um": 1,
+            "uma": 1,
+            "dois": 2,
+            "duas": 2,
+            "tres": 3,
+            "quatro": 4,
+            "cinco": 5,
+            "seis": 6,
+            "sete": 7,
+            "oito": 8,
+            "nove": 9,
+            "dez": 10,
+            "onze": 11,
+            "doze": 12,
+            "treze": 13,
+            "quatorze": 14,
+            "catorze": 14,
+            "quinze": 15,
+            "dezesseis": 16,
+            "dezessete": 17,
+            "dezoito": 18,
+            "dezenove": 19,
+            "vinte": 20,
+            "trinta": 30,
+            "quarenta": 40,
+            "cinquenta": 50,
+            "sessenta": 60,
+            "setenta": 70,
+            "oitenta": 80,
+            "noventa": 90,
+            "cem": 100,
+            "cento": 100,
+            "duzentos": 200,
+            "trezentos": 300,
+            "quatrocentos": 400,
+            "quinhentos": 500,
+            "seiscentos": 600,
+            "setecentos": 700,
+            "oitocentos": 800,
+            "novecentos": 900,
+        },
+        "es": {
+            "cero": 0,
+            "uno": 1,
+            "una": 1,
+            "dos": 2,
+            "tres": 3,
+            "cuatro": 4,
+            "cinco": 5,
+            "seis": 6,
+            "siete": 7,
+            "ocho": 8,
+            "nueve": 9,
+            "diez": 10,
+            "once": 11,
+            "doce": 12,
+            "trece": 13,
+            "catorce": 14,
+            "quince": 15,
+            "dieciseis": 16,
+            "diecisiete": 17,
+            "dieciocho": 18,
+            "diecinueve": 19,
+            "veinte": 20,
+            "treinta": 30,
+            "cuarenta": 40,
+            "cincuenta": 50,
+            "sesenta": 60,
+            "setenta": 70,
+            "ochenta": 80,
+            "noventa": 90,
+            "cien": 100,
+            "ciento": 100,
+            "doscientos": 200,
+            "trescientos": 300,
+            "cuatrocientos": 400,
+            "quinientos": 500,
+            "seiscientos": 600,
+            "setecientos": 700,
+            "ochocientos": 800,
+            "novecientos": 900,
+        },
+        "en": {
+            "zero": 0,
+            "one": 1,
+            "two": 2,
+            "three": 3,
+            "four": 4,
+            "five": 5,
+            "six": 6,
+            "seven": 7,
+            "eight": 8,
+            "nine": 9,
+            "ten": 10,
+            "eleven": 11,
+            "twelve": 12,
+            "thirteen": 13,
+            "fourteen": 14,
+            "fifteen": 15,
+            "sixteen": 16,
+            "seventeen": 17,
+            "eighteen": 18,
+            "nineteen": 19,
+            "twenty": 20,
+            "thirty": 30,
+            "forty": 40,
+            "fifty": 50,
+            "sixty": 60,
+            "seventy": 70,
+            "eighty": 80,
+            "ninety": 90,
+        },
+    }.get(language_key, {})
+    words = normalized.split()
+    if words.count("mil") + words.count("thousand") > 1:
+        return None
+
+    total = 0
+    current = 0
+    found = False
+    for word in words:
+        if word in values:
+            current += values[word]
+            found = True
+        elif word == "hundred" and language_key == "en":
+            current = max(current, 1) * 100
+            found = True
+        elif word in {"mil", "thousand"}:
+            total += max(current, 1) * 1000
+            current = 0
+            found = True
+    amount = total + current
+    return float(amount) if found and amount > 0 else None
+
+
+def _ground_transaction_turn(
+    criteria: TransactionSearchCriteria,
+    transcript: str,
+    *,
+    language: str,
+    expected_field: str | None,
+    clear_filters: bool,
+) -> tuple[TransactionSearchCriteria, bool, tuple[str, ...]]:
+    """Recover explicit caller data and reject ungrounded filter-control mutations."""
+
+    if not transcript.strip():
+        # Direct SDK/unit callers may invoke the validated tool without ASR text.
+        return criteria, clear_filters, ()
+
+    control = _transaction_control_intent(transcript)
+    unavailable = _unavailable_transaction_fields(
+        transcript,
+        expected_field=expected_field,
+    )
+    if control == "clear":
+        return TransactionSearchCriteria(), True, unavailable
+
+    amount = _spoken_amount(
+        transcript,
+        language=language,
+        expected_field=expected_field,
+    )
+    if amount is not None:
+        criteria = replace(criteria, approximate_amount=amount)
+
+    _, tokens = _normalized_words(transcript)
+    today_words = {"hoje", "hoy", "today"}
+    yesterday_words = {"ontem", "ayer", "yesterday"}
+    if expected_field == "date" or tokens.intersection(today_words | yesterday_words):
+        relative_date = None
+        if tokens.intersection(today_words):
+            relative_date = date.today()
+        elif tokens.intersection(yesterday_words):
+            relative_date = date.today() - timedelta(days=1)
+        if relative_date is not None:
+            criteria = replace(criteria, date_from=relative_date, date_to=relative_date)
+
+    # A model cannot clear all filters unless the caller actually requested it.
+    return criteria, clear_filters and control == "clear", unavailable
 
 
 def _telemetry(event: str, *, call_id: str | None = None, **fields: Any) -> None:
@@ -1386,47 +1675,65 @@ class SipRealtimeGateway:
                     )
 
                 elif tool_name == "search_transactions":
-                    criteria, replace_existing, clear_filters, remove_filters = (
-                        self._transaction_search_arguments(arguments)
-                    )
-                    if last_customer_transcript:
+                    control_intent = _transaction_control_intent(last_customer_transcript)
+                    if control_intent == "correct":
+                        state = self.calls.get(call_id)
+                        result = self._message_for(state, "transaction_correction_prompt")
+                        tool_metadata = {"outcome": "correction_needs_value"}
+                    else:
+                        if control_intent == "clear":
+                            # Ignore any filter hallucinated from the spoken clear command.
+                            arguments = {"clear_filters": True}
+                        criteria, replace_existing, clear_filters, remove_filters = (
+                            self._transaction_search_arguments(arguments)
+                        )
                         before_search = self.calls.get(call_id)
-                        criteria, rejected_filters = _guard_extracted_numeric_filters(
+                        criteria, clear_filters, unavailable_fields = _ground_transaction_turn(
                             criteria,
                             last_customer_transcript,
+                            language=before_search.locale.language,
                             expected_field=before_search.pending_transaction_detail,
+                            clear_filters=clear_filters,
                         )
-                        if rejected_filters:
-                            _telemetry(
-                                "voice.transaction.unsupported_filters_dropped",
-                                call_id=call_id,
-                                filters=rejected_filters,
+                        if last_customer_transcript:
+                            criteria, rejected_filters = _guard_extracted_numeric_filters(
+                                criteria,
+                                last_customer_transcript,
+                                expected_field=before_search.pending_transaction_detail,
                             )
-                    selection = self.calls.search_transactions(
-                        call_id,
-                        criteria,
-                        replace_existing=replace_existing,
-                        clear_filters=clear_filters,
-                        remove_filters=remove_filters,
-                    )
-                    state = selection.state
-                    reason = {
-                        TransactionSelectionOutcome.NEEDS_CLARIFICATION: (
-                            "transaction_clarification"
-                        ),
-                        TransactionSelectionOutcome.NO_MATCH: "transaction_no_match",
-                        TransactionSelectionOutcome.CANDIDATE: "transaction_candidate",
-                        TransactionSelectionOutcome.EXHAUSTED: "transaction_handoff",
-                    }[selection.outcome]
-                    result = self._message_for(state, reason)
-                    tool_metadata = {
-                        "outcome": selection.outcome.value,
-                        "candidate_count": selection.result_count,
-                        "guess_number": state.transaction_guess_attempts,
-                        "active_filters": [
-                            name for name, _ in state.transaction_criteria.active_filters()
-                        ],
-                    }
+                            if rejected_filters:
+                                _telemetry(
+                                    "voice.transaction.unsupported_filters_dropped",
+                                    call_id=call_id,
+                                    filters=rejected_filters,
+                                )
+                        selection = self.calls.search_transactions(
+                            call_id,
+                            criteria,
+                            replace_existing=replace_existing,
+                            clear_filters=clear_filters,
+                            remove_filters=remove_filters,
+                            unavailable_fields=unavailable_fields,
+                        )
+                        state = selection.state
+                        reason = {
+                            TransactionSelectionOutcome.NEEDS_CLARIFICATION: (
+                                "transaction_clarification"
+                            ),
+                            TransactionSelectionOutcome.NO_MATCH: "transaction_no_match",
+                            TransactionSelectionOutcome.CANDIDATE: "transaction_candidate",
+                            TransactionSelectionOutcome.EXHAUSTED: "transaction_handoff",
+                        }[selection.outcome]
+                        result = self._message_for(state, reason)
+                        tool_metadata = {
+                            "outcome": selection.outcome.value,
+                            "candidate_count": selection.result_count,
+                            "guess_number": state.transaction_guess_attempts,
+                            "active_filters": [
+                                name for name, _ in state.transaction_criteria.active_filters()
+                            ],
+                            "unavailable_fields": list(unavailable_fields),
+                        }
 
                 elif tool_name == "confirm_transaction":
                     try:
@@ -1451,11 +1758,23 @@ class SipRealtimeGateway:
                             confirmed=confirmed,
                         )
                         if not confirmed:
+                            if _transaction_control_intent(last_customer_transcript) == "clear":
+                                arguments = {
+                                    "confirmation_intent": confirmation_intent.value,
+                                    "clear_filters": True,
+                                }
                             criteria, replace_existing, clear_filters, remove_filters = (
                                 self._transaction_search_arguments(arguments)
                             )
+                            before_refinement = self.calls.get(call_id)
+                            criteria, clear_filters, unavailable_fields = _ground_transaction_turn(
+                                criteria,
+                                last_customer_transcript,
+                                language=before_refinement.locale.language,
+                                expected_field=before_refinement.pending_transaction_detail,
+                                clear_filters=clear_filters,
+                            )
                             if last_customer_transcript:
-                                before_refinement = self.calls.get(call_id)
                                 criteria, rejected_filters = _guard_extracted_numeric_filters(
                                     criteria,
                                     last_customer_transcript,
@@ -1479,6 +1798,7 @@ class SipRealtimeGateway:
                                     replace_existing=replace_existing,
                                     clear_filters=clear_filters,
                                     remove_filters=remove_filters,
+                                    unavailable_fields=unavailable_fields,
                                 )
                         state = selection.state
                         reason = {
@@ -2402,6 +2722,12 @@ Transaction-search workflow:
 - Never disclose internal transaction IDs, SQL, hidden candidates, or another customer's transactions.
 - After three denied candidates the server ends in handoff. Speak only the server-provided transfer or availability message.
 
+Question discipline:
+- Ask a question only when the current workflow state requires an immediate caller answer and you will wait for it.
+- Ask at most one focused question per turn.
+- Do not append rhetorical questions, optional offers, or "if you want" questions to status updates, acknowledgements, tool progress, or terminal messages.
+- When a tool can answer or advance the workflow, call it silently instead of asking the caller to wait or confirm an internal action.
+
 Dispute-classification workflow:
 - Classification starts only at needs_dispute_classification, after the caller confirms the transaction.
 - Ask whether the caller did not make or authorize this transaction, or recognizes the purchase but was charged more than once for the same purchase.
@@ -3031,6 +3357,13 @@ General behavior:
 
         if reason == "transaction_no_match":
             return SipRealtimeGateway._transaction_no_match_message(state)
+
+        if reason == "transaction_correction_prompt":
+            return {
+                "pt": "Qual filtro você quer corrigir e qual é o novo valor?",
+                "es": "¿Qué filtro quieres corregir y cuál es el nuevo valor?",
+                "en": "Which filter do you want to correct, and what is the new value?",
+            }[state.locale.language]
 
         if reason in {
             "transaction_invalid",

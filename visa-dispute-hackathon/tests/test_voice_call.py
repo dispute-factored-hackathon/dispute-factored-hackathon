@@ -647,6 +647,23 @@ class VoiceCallServiceTests(unittest.TestCase):
         self.assertEqual(second_question.state.transaction_guess_attempts, 1)
         self.assertIsNone(second_question.state.current_transaction)
 
+    def test_explicitly_unavailable_amount_is_not_asked_later(self):
+        state = self.authenticate_known_phone("call_transaction_unavailable_amount")
+        first_question = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(),
+            unavailable_fields=("amount",),
+        )
+        second_question = self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(),
+            unavailable_fields=("merchant",),
+        )
+
+        self.assertEqual(first_question.state.pending_transaction_detail, "merchant")
+        self.assertEqual(second_question.state.pending_transaction_detail, "date")
+        self.assertIn("amount", second_question.state.requested_transaction_fields)
+
     def test_no_match_can_be_corrected_without_losing_the_call(self):
         state = self.authenticate_known_phone("call_transaction_correction")
 
