@@ -28,7 +28,11 @@ const COPY = {
 };
 
 const STEPS = [
-    { id: "welcome", route: "/home" },
+    {
+        id: "welcome",
+        route: "/home",
+        target: "[data-tour='shady-business']",
+    },
     {
         id: "cards-link",
         route: "/home",
@@ -258,9 +262,9 @@ function setTarget(target, step) {
     targetElement = target;
     if (!target) return;
     target.classList.add("guided-tour-target");
-    const isClickableCard = requiresTargetActivation(step)
-        && target.matches(".hub-card, .bank-card");
-    target.classList.toggle("guided-tour-target-attention", isClickableCard);
+    const needsAttention = target.matches(".shady-business")
+        || (requiresTargetActivation(step) && target.matches(".hub-card, .bank-card"));
+    target.classList.toggle("guided-tour-target-attention", needsAttention);
     targetContext = target.closest(".app-header, .bottom-nav");
     targetContext?.classList.add("guided-tour-target-context");
     if (!requiresTargetActivation(step)) return;

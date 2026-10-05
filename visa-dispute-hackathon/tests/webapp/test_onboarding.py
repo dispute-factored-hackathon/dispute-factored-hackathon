@@ -270,6 +270,21 @@ def test_contextual_tour_is_interactive_and_english_only() -> None:
     assert 'id: "report-transaction"' not in content
 
 
+def test_first_tour_step_highlights_shady_business_as_the_start() -> None:
+    client = TestClient(app)
+    javascript = client.get("/static/js/components/guided-tour.js").text
+    english = client.get("/static/locales/v1/en.json").json()
+    portuguese = client.get("/static/locales/v1/pt.json").json()
+    spanish = client.get("/static/locales/v1/es.json").json()
+
+    welcome_step = javascript.split('id: "welcome"', 1)[1].split("},", 1)[0]
+    assert "target: \"[data-tour='shady-business']\"" in welcome_step
+    assert 'target.matches(".shady-business")' in javascript
+    assert english["tour.welcome_title"] == "Your experience starts at Shady Business"
+    assert portuguese["tour.welcome_title"] == "Sua experiência começa na Shady Business"
+    assert spanish["tour.welcome_title"] == "Tu experiencia comienza en Shady Business"
+
+
 def test_empty_transaction_history_does_not_ask_customer_to_pick_one() -> None:
     client = TestClient(app)
     create_customer(client)
@@ -388,7 +403,7 @@ def test_complaint_details_resume_the_contextual_tour() -> None:
     client = TestClient(app)
     content = client.get("/static/js/pages/complaint-detail.js").text
 
-    assert 'from "../components/guided-tour.js?v=10"' in content
+    assert 'from "../components/guided-tour.js?v=11"' in content
     assert "await initializeGuidedTour();" in content
 
 
