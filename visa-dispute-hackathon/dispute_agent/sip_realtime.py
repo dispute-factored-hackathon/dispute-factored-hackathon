@@ -2835,7 +2835,8 @@ Transaction-search workflow:
 - Call search_transactions with only details the caller supplied. Do not invent missing values.
 - The current server-owned transaction filters are: {active_filters}.
 - Tell the caller which filters are active whenever the backend searches or asks for another detail.
-- The caller may correct a filter, remove one named filter, or clear every filter at any time.
+- Before requesting any new transaction detail, first explain that the caller may edit a filter,
+  remove one named filter, or clear every filter. Only then ask the focused question.
 - For a correction, send the corrected value. To remove selected filters use remove_filters. To clear all filters use clear_filters=true.
 - Preserve earlier details by default. Correct one filter by sending only its new value. Set replace_existing=true only when the caller explicitly replaces the entire previous search description.
 - On every search turn, the backend retrieves up to ten customer-scoped candidates, reranks them against all collected details, and returns only the Top-1 candidate for presentation.
@@ -3994,8 +3995,8 @@ General behavior:
             guess_number=state.transaction_guess_attempts,
         )
         return (
-            prefixes[language]
-            + SipRealtimeGateway._transaction_filter_context(state)
+            SipRealtimeGateway._transaction_filter_context(state)
+            + prefixes[language]
             + questions[language][missing_field]
         )
 
@@ -4013,7 +4014,7 @@ General behavior:
             if not include_controls:
                 return f"Filtros usados na última busca: {summary}. "
             return (
-                f"Filtros ativos: {summary}. Você pode corrigir um filtro, remover um filtro "
+                f"Filtros ativos: {summary}. Você pode editar um filtro, remover um filtro "
                 "específico ou limpar todos. "
             )
         if state.locale.language == "es":
@@ -4022,7 +4023,7 @@ General behavior:
             if not include_controls:
                 return f"Filtros usados en la última búsqueda: {summary}. "
             return (
-                f"Filtros activos: {summary}. Puedes corregir un filtro, eliminar un filtro "
+                f"Filtros activos: {summary}. Puedes editar un filtro, eliminar un filtro "
                 "específico o borrar todos. "
             )
         if not summary:
@@ -4030,7 +4031,7 @@ General behavior:
         if not include_controls:
             return f"Filters used in the last search: {summary}. "
         return (
-            f"Active filters: {summary}. You can correct a filter, remove a specific filter, "
+            f"Active filters: {summary}. You can edit a filter, remove a specific filter, "
             "or clear them all. "
         )
 

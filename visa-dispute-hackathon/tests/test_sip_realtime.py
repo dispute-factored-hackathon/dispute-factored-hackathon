@@ -2495,6 +2495,14 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("não vou usar essa opção", message)
         self.assertIn("nome do estabelecimento", message)
         self.assertNotIn("Encontrei uma possibilidade", message)
+        controls_position = message.index(
+            "Você pode editar um filtro, remover um filtro específico ou limpar todos."
+        )
+        refinement_position = message.index("não vou usar essa opção")
+        question_position = message.index("nome do estabelecimento")
+        self.assertLess(controls_position, refinement_position)
+        self.assertLess(refinement_position, question_position)
+        self.assertTrue(message.endswith("?"))
 
         refined = gateway.calls.search_transactions(
             state.call_id,
