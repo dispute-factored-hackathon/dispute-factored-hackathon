@@ -364,11 +364,31 @@ def test_active_card_step_reserves_readable_space_on_short_mobile_screens() -> N
     assert 'grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr)' in css
 
 
+def test_mobile_click_steps_separate_explanation_from_target_selection() -> None:
+    client = TestClient(app)
+    javascript = client.get("/static/js/components/guided-tour.js").text
+    css = client.get("/static/css/components.css").text
+
+    assert 'let mobilePresentation = "explanation"' in javascript
+    assert "usesSplitMobilePresentation" in javascript
+    assert 'mobilePresentation === "target"' in javascript
+    assert 'mobilePresentation = "target"' in javascript
+    assert 'layer.dataset.presentation = mobileTargetPresentation ? "target" : "explanation"' in (
+        javascript
+    )
+    assert 'emitMetric("mobile_target_prompted")' in javascript
+    assert 'tooltip.setAttribute("aria-label", t(COPY.controls.activate))' in javascript
+    assert 'tooltip.setAttribute("aria-labelledby", "guided-tour-title")' in javascript
+    assert ".guided-tour-mobile-target-phase .guided-tour-content" in css
+    assert "display: none" in css
+    assert ".guided-tour-mobile-target-phase .guided-tour-actions" in css
+
+
 def test_complaint_details_resume_the_contextual_tour() -> None:
     client = TestClient(app)
     content = client.get("/static/js/pages/complaint-detail.js").text
 
-    assert 'from "../components/guided-tour.js?v=9"' in content
+    assert 'from "../components/guided-tour.js?v=10"' in content
     assert "await initializeGuidedTour();" in content
 
 

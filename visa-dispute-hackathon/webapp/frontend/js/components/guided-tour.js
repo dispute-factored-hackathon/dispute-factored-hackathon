@@ -93,6 +93,7 @@ let activationElements = [];
 let targetActivationHandler = null;
 let repositionHandler = null;
 let transitioning = false;
+let mobilePresentation = "explanation";
 
 async function routeFor(step) {
     return typeof step.route === "function" ? step.route() : step.route;
@@ -162,6 +163,14 @@ function createLayer() {
 
 function requiresTargetActivation(step = STEPS[currentIndex]) {
     return ["activate", "finish-and-activate"].includes(step?.action);
+}
+
+function usesSplitMobilePresentation(step = STEPS[currentIndex]) {
+    return viewportSize().width <= MOBILE_BREAKPOINT && requiresTargetActivation(step);
+}
+
+function showsMobileTarget(step = STEPS[currentIndex]) {
+    return usesSplitMobilePresentation(step) && mobilePresentation === "target";
 }
 
 function focusableControls() {
@@ -439,6 +448,7 @@ async function skipMissingStep() {
     emitMetric("target_missing");
     await saveProgress("in_progress", STEPS[currentIndex].id);
     currentIndex += 1;
+    mobilePresentation = "explanation";
     if (currentIndex >= STEPS.length) await finishTour();
     else await showCurrentStep();
 }
@@ -456,8 +466,12 @@ async function showCurrentStep() {
         return;
     }
 
+    const splitMobilePresentation = usesSplitMobilePresentation(step);
+    const mobileTargetPresentation = showsMobileTarget(step);
+    const shouldShowTarget = Boolean(step.target)
+        && (!splitMobilePresentation || mobileTargetPresentation);
     let target = null;
-    if (step.target) {
+    if (shouldShowTarget) {
         target = await waitForTarget(step.target);
         if (!target && !step.allowMissingTarget) {
             await skipMissingStep();
@@ -474,8 +488,20 @@ async function showCurrentStep() {
     setTarget(target, step);
     if (!layer) layer = createLayer();
     layer.dataset.step = step.id;
+    layer.dataset.presentation = mobileTargetPresentation ? "target" : "explanation";
+    layer.classList.toggle("guided-tour-mobile-target-phase", mobileTargetPresentation);
 
     const [titleKey, bodyKey] = COPY.steps[step.id];
+    const tooltip = layer.querySelector(".guided-tour-tooltip");
+    if (mobileTargetPresentation) {
+        tooltip.removeAttribute("aria-labelledby");
+        tooltip.removeAttribute("aria-describedby");
+        tooltip.setAttribute("aria-label", t(COPY.controls.activate));
+    } else {
+        tooltip.setAttribute("aria-labelledby", "guided-tour-title");
+        tooltip.setAttribute("aria-describedby", "guided-tour-body");
+        tooltip.removeAttribute("aria-label");
+    }
     layer.querySelector(".guided-tour-progress").textContent = t(
         COPY.controls.progress,
         { current: currentIndex + 1, total: STEPS.length },
@@ -530,6 +556,7 @@ async function activateTarget(target) {
     }
     await saveProgress("in_progress", completedId);
     currentIndex += 1;
+    mobilePresentation = "explanation";
     if (destination) {
         window.location.assign(withTourContinuation(destination));
         return;
@@ -538,19 +565,34 @@ async function activateTarget(target) {
 }
 
 async function nextStep() {
-    const completedId = STEPS[currentIndex].id;
+    const step = STEPS[currentIndex];
+    if (usesSplitMobilePresentation(step) && mobilePresentation === "explanation") {
+        mobilePresentation = "target";
+        emitMetric("mobile_target_prompted");
+        await showCurrentStep();
+        return;
+    }
+    const completedId = step.id;
     if (currentIndex === STEPS.length - 1) {
         await finishTour();
         return;
     }
     await saveProgress("in_progress", completedId);
     currentIndex += 1;
+    mobilePresentation = "explanation";
     await showCurrentStep();
 }
 
 async function previousStep() {
+    const step = STEPS[currentIndex];
+    if (showsMobileTarget(step)) {
+        mobilePresentation = "explanation";
+        await showCurrentStep();
+        return;
+    }
     if (currentIndex === 0) return;
     currentIndex -= 1;
+    mobilePresentation = "explanation";
     const previousCompleted = currentIndex > 0 ? STEPS[currentIndex - 1].id : null;
     await saveProgress("in_progress", previousCompleted);
     await showCurrentStep();
@@ -599,6 +641,7 @@ async function runGuidedTour() {
 
     active = true;
     currentIndex = restart ? 0 : indexAfter(state.last_completed_step);
+    mobilePresentation = "explanation";
     lastFocused = document.activeElement;
     document.body.classList.add("guided-tour-active");
     repositionHandler = () => positionTour();

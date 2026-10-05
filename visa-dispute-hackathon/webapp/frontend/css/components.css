@@ -254,6 +254,25 @@
         display: grid;
         grid-template-columns: 1fr auto;
     }
+
+    .guided-tour-mobile-target-phase .guided-tour-tooltip {
+        padding: var(--space-3);
+    }
+
+    .guided-tour-mobile-target-phase .guided-tour-content {
+        display: none;
+    }
+
+    .guided-tour-mobile-target-phase .guided-tour-actions {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: var(--space-2);
+        padding-top: var(--space-2);
+    }
+
+    .guided-tour-mobile-target-phase .guided-tour-skip {
+        margin: 0;
+    }
 }
 
 @media (max-width: 600px) and (max-height: 700px) {
