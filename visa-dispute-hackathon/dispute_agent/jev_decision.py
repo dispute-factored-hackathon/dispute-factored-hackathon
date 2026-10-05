@@ -10,7 +10,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -184,6 +186,12 @@ class JevVoiceRouter:
                 "customer_utterance": transcript,
                 "workflow_stage": stage,
                 "conversation_language": language,
+                "expected_response": (
+                    "A satisfaction rating from 1 to 5, or an explicit refusal. "
+                    "A bare number word is a complete answer."
+                    if stage == "dispute_classified"
+                    else None
+                ),
             },
             questions=questions,
         )
@@ -231,6 +239,25 @@ class JevVoiceRouter:
             choice = str(stage_answer.get("choice", ""))
             confidence = float(stage_answer.get("confidence", 0.0))
             mapped = self._map_stage_choice(stage, choice, answers)
+
+        # System One can interpret Portuguese "um" as an article even while
+        # answering a tightly bounded 1-to-5 survey. Jev remains the primary
+        # intent classifier; this locale-aware validator only recovers an
+        # unambiguous, single-token scale value at the CSAT stage. It will not
+        # turn ordinary phrases such as "um problema" into a rating.
+        explicit_rating = self._explicit_bare_csat_rating(
+            stage=stage,
+            transcript=transcript,
+            language=language,
+        )
+        if explicit_rating is not None:
+            return JevVoiceDecision(
+                JevAction.TOOL,
+                max(confidence, 1.0),
+                tool_name="record_csat",
+                arguments={"response_intent": "RATING", "rating": explicit_rating},
+                model=model,
+            )
 
         required_confidence = (
             self.language_threshold
@@ -285,6 +312,37 @@ class JevVoiceRouter:
             arguments=arguments,
             model=model,
         )
+
+    @staticmethod
+    def _explicit_bare_csat_rating(
+        *,
+        stage: str,
+        transcript: str,
+        language: str,
+    ) -> int | None:
+        """Return a rating only for one unambiguous scale token in the CSAT stage."""
+
+        if stage != "dispute_classified":
+            return None
+
+        normalized = unicodedata.normalize("NFKD", transcript.casefold())
+        normalized = "".join(
+            character for character in normalized if not unicodedata.combining(character)
+        )
+        tokens = re.findall(r"[a-z]+|[1-5]", normalized)
+        if len(tokens) != 1:
+            return None
+
+        token = tokens[0]
+        if token in {"1", "2", "3", "4", "5"}:
+            return int(token)
+
+        ratings_by_language = {
+            "pt": {"um": 1, "uma": 1, "dois": 2, "duas": 2, "tres": 3, "quatro": 4, "cinco": 5},
+            "es": {"uno": 1, "una": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5},
+            "en": {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5},
+        }
+        return ratings_by_language.get(language.casefold().split("-", maxsplit=1)[0], {}).get(token)
 
     @staticmethod
     def _base_questions() -> dict[str, dict[str, Any]]:

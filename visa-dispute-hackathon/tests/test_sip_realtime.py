@@ -307,8 +307,10 @@ class FakeWebsocket:
 class FakeConnector:
     def __init__(self, websocket):
         self.websocket = websocket
+        self.calls = []
 
     def __call__(self, url, **kwargs):
+        self.calls.append((url, kwargs))
         return self.websocket
 
 
@@ -643,6 +645,51 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         _, configuration = calls.accepted[0]
         self.assertEqual(gateway.voice, "cedar")
         self.assertEqual(configuration["audio"]["output"]["voice"], "cedar")
+
+    async def test_sends_project_header_on_sideband_connection(self):
+        websocket = FakeWebsocket([session_updated_event()])
+        connector = FakeConnector(websocket)
+        calls = FakeAcceptCalls()
+        gateway = SipRealtimeGateway(
+            FIXTURE,
+            api_key="sk-test",
+            openai_project="proj_sip_owner",
+            openai_client=SimpleNamespace(realtime=SimpleNamespace(calls=calls)),
+            websocket_connect=connector,
+            **voice_repositories(),
+        )
+
+        await gateway.accept_and_control("call_project_header", "+5511999990001")
+
+        _, options = connector.calls[0]
+        self.assertEqual(
+            options["additional_headers"],
+            {
+                "Authorization": "Bearer sk-test",
+                "OpenAI-Project": "proj_sip_owner",
+            },
+        )
+
+    async def test_omits_project_header_when_project_is_not_configured(self):
+        websocket = FakeWebsocket([session_updated_event()])
+        connector = FakeConnector(websocket)
+        calls = FakeAcceptCalls()
+        gateway = SipRealtimeGateway(
+            FIXTURE,
+            api_key="sk-test",
+            openai_project="",
+            openai_client=SimpleNamespace(realtime=SimpleNamespace(calls=calls)),
+            websocket_connect=connector,
+            **voice_repositories(),
+        )
+
+        await gateway.accept_and_control("call_without_project_header", "+5511999990001")
+
+        _, options = connector.calls[0]
+        self.assertEqual(
+            options["additional_headers"],
+            {"Authorization": "Bearer sk-test"},
+        )
 
     async def test_enables_input_transcription_in_accept_and_session_update(self):
         gateway, websocket, calls = self._gateway([session_updated_event()])

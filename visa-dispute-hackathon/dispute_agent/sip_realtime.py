@@ -399,6 +399,7 @@ class SipRealtimeGateway:
         customer_source: str | Path | CustomerRepository,
         *,
         api_key: str | None = None,
+        openai_project: str | None = None,
         model: str | None = None,
         voice: str | None = None,
         webhook_secret: str | None = None,
@@ -418,6 +419,8 @@ class SipRealtimeGateway:
     ) -> None:
 
         self.api_key = api_key or os.getenv("OPENAI_API_KEY", "")
+
+        self.openai_project = openai_project or os.getenv("OPENAI_PROJECT_ID", "")
 
         self.model = model or os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1")
 
@@ -441,10 +444,14 @@ class SipRealtimeGateway:
         self.jev_router = jev_router or JevVoiceRouter(api_key=jev_api_key)
         _telemetry("jev.router.configured", enabled=self.jev_router.enabled)
 
-        self.client = openai_client or OpenAI(
-            api_key=self.api_key,
-            webhook_secret=webhook_secret or os.getenv("OPENAI_WEBHOOK_SECRET"),
-        )
+        client_options: dict[str, str] = {
+            "api_key": self.api_key,
+            "webhook_secret": webhook_secret or os.getenv("OPENAI_WEBHOOK_SECRET", ""),
+        }
+        if self.openai_project:
+            client_options["project"] = self.openai_project
+
+        self.client = openai_client or OpenAI(**client_options)
 
         self._customer_source = customer_source
         self._transaction_repository = transaction_repository
@@ -643,9 +650,13 @@ class SipRealtimeGateway:
             connector = connect
 
         LOGGER.info("Opening Realtime WebSocket url=%s", url)
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        if self.openai_project:
+            headers["OpenAI-Project"] = self.openai_project
+
         return connector(
             url,
-            additional_headers={"Authorization": f"Bearer {self.api_key}"},
+            additional_headers=headers,
             open_timeout=10,
             close_timeout=5,
         )

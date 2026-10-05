@@ -169,6 +169,69 @@ class JevVoiceRouterTests(unittest.TestCase):
         self.assertEqual(decision.tool_name, "record_csat")
         self.assertEqual(decision.arguments, {"response_intent": "UNCLEAR", "rating": None})
 
+    def test_bare_portuguese_one_recovers_when_jev_marks_it_unclear(self):
+        client = FakeClient(
+            {
+                "prompt_abuse": noul(0.01),
+                "explicit_human_request": noul(0.01),
+                "explicit_language_change": choice("none"),
+                "stage_intent": choice("unclear", confidence=0.83),
+            }
+        )
+
+        decision = JevVoiceRouter(client=client).route(
+            stage="dispute_classified",
+            transcript="Um.",
+            language="pt-BR",
+        )
+
+        self.assertEqual(decision.tool_name, "record_csat")
+        self.assertEqual(decision.arguments, {"response_intent": "RATING", "rating": 1})
+        self.assertIn("bare number word", client.requests[0]["state"]["expected_response"])
+
+    def test_bare_rating_recovery_is_locale_aware(self):
+        client = FakeClient(
+            {
+                "prompt_abuse": noul(0.01),
+                "explicit_human_request": noul(0.01),
+                "explicit_language_change": choice("none"),
+                "stage_intent": choice("unclear", confidence=0.83),
+            }
+        )
+        router = JevVoiceRouter(client=client)
+
+        spanish = router.route(
+            stage="dispute_classified",
+            transcript="Uno.",
+            language="es-CO",
+        )
+        english = router.route(
+            stage="dispute_classified",
+            transcript="One.",
+            language="en-US",
+        )
+
+        self.assertEqual(spanish.arguments["rating"], 1)
+        self.assertEqual(english.arguments["rating"], 1)
+
+    def test_rating_recovery_does_not_extract_number_word_from_a_phrase(self):
+        client = FakeClient(
+            {
+                "prompt_abuse": noul(0.01),
+                "explicit_human_request": noul(0.01),
+                "explicit_language_change": choice("none"),
+                "stage_intent": choice("unclear", confidence=0.83),
+            }
+        )
+
+        decision = JevVoiceRouter(client=client).route(
+            stage="dispute_classified",
+            transcript="Um problema ainda não foi resolvido.",
+            language="pt-BR",
+        )
+
+        self.assertEqual(decision.arguments, {"response_intent": "UNCLEAR", "rating": None})
+
     def test_prompt_abuse_takes_priority_over_stage_decision(self):
         client = FakeClient(
             {

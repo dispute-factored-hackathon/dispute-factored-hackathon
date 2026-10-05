@@ -20,6 +20,12 @@ Parameters:
     Type: String
     Description: ARN of the JSON secret containing OpenAI credentials.
 
+  OpenAIProjectId:
+    Type: String
+    Default: proj_5tTah5HzJGr5gXEQbAZkBKYP
+    AllowedPattern: "proj_[A-Za-z0-9]+"
+    Description: OpenAI project that owns the SIP endpoint and incoming call sessions.
+
   LangSmithSecretArn:
     Type: String
     Description: ARN of the JSON secret containing LANGSMITH_API_KEY.
@@ -204,6 +210,7 @@ Resources:
           OPENAI_REALTIME_MODEL: gpt-realtime-2.1
           OPENAI_REALTIME_VOICE: cedar
           OPENAI_INPUT_TRANSCRIPTION_MODEL: gpt-transcribe
+          OPENAI_PROJECT_ID: !Ref OpenAIProjectId
           HUMAN_HANDOFF_NUMBER: !Ref HumanHandoffNumber
           DEMO_LOG_FULL_TRANSCRIPTS: "true"
 
