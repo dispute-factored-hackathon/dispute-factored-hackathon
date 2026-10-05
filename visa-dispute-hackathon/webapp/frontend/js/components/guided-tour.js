@@ -50,8 +50,6 @@ const STEPS = [
     {
         id: "transactions",
         route: "/transactions",
-        target: ".transaction-item, #empty-state",
-        allowMissingTarget: true,
     },
     {
         id: "izzy",
@@ -73,8 +71,6 @@ const STEPS = [
     {
         id: "profile-link",
         route: "/home",
-        target: "[data-tour='profile-link']",
-        action: "activate",
     },
     { id: "profile", route: "/profile" },
     {
@@ -118,7 +114,9 @@ function waitForTarget(selector, timeout = 3000) {
     return new Promise((resolve) => {
         const started = performance.now();
         function check() {
-            const target = document.querySelector(selector);
+            const target = [...document.querySelectorAll(selector)].find(
+                (candidate) => !candidate.hidden && candidate.getClientRects().length > 0,
+            );
             if (target && !target.hidden && target.getClientRects().length > 0) {
                 resolve(target);
                 return;
@@ -237,7 +235,11 @@ function clearTarget() {
             element.removeEventListener("click", targetActivationHandler, true);
         }
     }
-    targetElement?.classList.remove("guided-tour-target", "guided-tour-target-busy");
+    targetElement?.classList.remove(
+        "guided-tour-target",
+        "guided-tour-target-action",
+        "guided-tour-target-busy",
+    );
     targetElement?.removeAttribute("aria-disabled");
     targetContext?.classList.remove("guided-tour-target-context");
     targetElement = null;
@@ -251,6 +253,7 @@ function setTarget(target, step) {
     targetElement = target;
     if (!target) return;
     target.classList.add("guided-tour-target");
+    target.classList.toggle("guided-tour-target-action", requiresTargetActivation(step));
     targetContext = target.closest(".app-header, .bottom-nav");
     targetContext?.classList.add("guided-tour-target-context");
     if (!requiresTargetActivation(step)) return;

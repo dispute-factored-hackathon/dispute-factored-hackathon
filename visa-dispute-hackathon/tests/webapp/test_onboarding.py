@@ -250,7 +250,6 @@ def test_contextual_tour_is_interactive_and_handles_empty_accounts() -> None:
         'id: "cards-link"',
         'target: ".bank-card.is-active"',
         'id: "transactions"',
-        'target: ".transaction-item, #empty-state"',
         'id: "izzy"',
         "target: \"[data-tour='izzy']\"",
         'id: "complaints-link"',
@@ -268,6 +267,11 @@ def test_contextual_tour_is_interactive_and_handles_empty_accounts() -> None:
     assert "transactionDetailRoute" not in content
     assert 'id: "complaint-detail"' not in content
     assert 'target: ".complaint-item"' not in content
+    transactions_step = content.split('id: "transactions"', 1)[1].split("},", 1)[0]
+    assert "target:" not in transactions_step
+    profile_link_step = content.split('id: "profile-link"', 1)[1].split("},", 1)[0]
+    assert "target:" not in profile_link_step
+    assert "action:" not in profile_link_step
     finish_step = content.split('id: "finish"', 1)[1].split("},", 1)[0]
     assert "target:" not in finish_step
     assert "action:" not in finish_step
@@ -281,7 +285,7 @@ def test_empty_transaction_history_has_truthful_tour_copy() -> None:
 
     assert client.get("/api/transactions").json() == []
     javascript = client.get("/static/js/components/guided-tour.js").text
-    assert 'target: ".transaction-item, #empty-state"' in javascript
+    assert "document.querySelectorAll(selector)" in javascript
     assert 'route: "/home",\n        target: "[data-tour=\'izzy\']"' in javascript
 
     expected_copy = {
@@ -431,13 +435,13 @@ def test_complaint_details_resume_the_contextual_tour() -> None:
     client = TestClient(app)
     content = client.get("/static/js/pages/complaint-detail.js").text
 
-    assert 'from "../components/guided-tour.js?v=10"' in content
+    assert 'from "../components/guided-tour.js?v=11"' in content
     assert "await initializeGuidedTour();" in content
 
 
 def test_pages_load_the_cache_busted_empty_account_tour() -> None:
     client = TestClient(app)
-    expected_version = "v=20261005-onboarding-empty2"
+    expected_version = "v=20261005-onboarding-empty3"
 
     for page in (
         "home",
@@ -460,12 +464,28 @@ def test_contextual_tour_keeps_targets_visible_clickable_and_non_overlapping() -
     javascript = client.get("/static/js/components/guided-tour.js").text
 
     assert ".guided-tour-target" in css
+    assert ".guided-tour-target-action" in css
+    assert "guided-tour-click-target" in css
+    assert '"guided-tour-target-action", requiresTargetActivation(step)' in javascript
     assert "z-index: 102" in css
     assert "pointer-events: none" in css
     assert "tooltipPlacement" in javascript
     assert "window.innerWidth" in javascript
     assert "window.innerHeight" in javascript
     assert "prefers-reduced-motion" in css
+
+
+def test_click_targets_are_distinct_from_informational_highlights() -> None:
+    client = TestClient(app)
+    css = client.get("/static/css/components.css").text
+    javascript = client.get("/static/js/components/guided-tour.js").text
+
+    assert "outline-color: #ffcf5c" in css
+    assert "animation: guided-tour-click-target" in css
+    assert 'target.classList.toggle("guided-tour-target-action"' in javascript
+    for language in ("en", "pt", "es"):
+        instruction = client.get(f"/static/locales/v1/{language}.json").json()["tour.activate"]
+        assert any(color in instruction.lower() for color in ("gold", "dourado", "dorado"))
 
 
 def test_contextual_tour_reenables_controls_after_changing_steps() -> None:
