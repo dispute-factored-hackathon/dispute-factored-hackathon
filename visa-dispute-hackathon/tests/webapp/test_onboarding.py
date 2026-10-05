@@ -255,9 +255,7 @@ def test_contextual_tour_is_interactive_and_english_only() -> None:
         'id: "complaints-link"',
         'target: ".page-heading"',
         'id: "profile-link"',
-        "target: \"[data-tour='shady-business']\"",
         'id: "finish"',
-        'action: "finish-and-activate"',
         'action: "activate"',
         'actionTarget: "#report-button"',
         "element.addEventListener",
@@ -268,6 +266,69 @@ def test_contextual_tour_is_interactive_and_english_only() -> None:
     assert "es:" not in content
     assert 'id: "complaint-detail"' not in content
     assert 'target: ".complaint-item"' not in content
+    finish_step = content.split('id: "finish"', 1)[1].split("},", 1)[0]
+    assert "target:" not in finish_step
+    assert "action:" not in finish_step
+
+
+def test_first_tour_completion_prompts_shady_business_after_overlay_closes() -> None:
+    client = TestClient(app)
+    javascript = client.get("/static/js/components/guided-tour.js").text
+    home_javascript = client.get("/static/js/pages/home.js").text
+    home = client.get("/home").text
+    css = client.get("/static/css/pages/home.css").text
+
+    assert 'const FIRST_EXPERIENCE = "first-experience"' in javascript
+    assert 'CustomEvent("factored:shady-start")' in javascript
+    assert 'last_completed_step: "shady-business-started"' in home_javascript
+    assert 'state.last_completed_step === "finish"' in home_javascript
+    assert 'id="shady-start-hint"' in home
+    assert "Start here" in home
+    assert ".shady-business-start" in css
+    assert ".shady-start-hint[hidden]" in css
+    assert "prefers-reduced-motion" in css
+
+
+def test_replayed_tour_does_not_restore_first_login_store_prompt() -> None:
+    client = TestClient(app)
+    javascript = client.get("/static/js/components/guided-tour.js").text
+
+    assert 'const completedStep = mode === REPLAY ? "replay-finish"' in javascript
+    assert "mode === FIRST_EXPERIENCE" in javascript
+
+
+def test_shady_business_prompt_state_is_accepted_and_persisted() -> None:
+    client = TestClient(app)
+    created = create_customer(client)
+    login(client)
+
+    finished = client.patch(
+        "/api/onboarding/tour",
+        json={"status": "completed", "last_completed_step": "finish"},
+    )
+    started = client.patch(
+        "/api/onboarding/tour",
+        json={"status": "completed", "last_completed_step": "shady-business-started"},
+    )
+
+    assert finished.status_code == 200
+    assert started.status_code == 200
+    assert started.json()["last_completed_step"] == "shady-business-started"
+    stored = customer_repository.get_by_id(created["customer_id"])
+    assert stored is not None
+    assert stored.tutorial_last_completed_step == "shady-business-started"
+
+
+def test_start_here_copy_exists_in_all_supported_languages() -> None:
+    client = TestClient(app)
+    expected = {
+        "en": "Start here",
+        "pt": "Comece por aqui",
+        "es": "Comienza aquí",
+    }
+    for language, copy in expected.items():
+        catalog = client.get(f"/static/locales/v1/{language}.json").json()
+        assert catalog["home.start_here"] == copy
 
 
 def test_empty_complaint_history_does_not_block_contextual_tour() -> None:
@@ -335,7 +396,7 @@ def test_complaint_details_resume_the_contextual_tour() -> None:
     client = TestClient(app)
     content = client.get("/static/js/pages/complaint-detail.js").text
 
-    assert 'from "../components/guided-tour.js?v=7"' in content
+    assert 'from "../components/guided-tour.js?v=8"' in content
     assert "await initializeGuidedTour();" in content
 
 

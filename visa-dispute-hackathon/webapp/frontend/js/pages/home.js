@@ -13,7 +13,7 @@ import {
 
 import {
     initializeGuidedTour,
-} from "../components/guided-tour.js?v=7";
+} from "../components/guided-tour.js?v=8";
 
 
 const homePage =
@@ -36,6 +36,56 @@ const bottomNav =
 
 const tutorialReplay =
     document.querySelector("#tutorial-replay");
+
+const shadyBusiness =
+    document.querySelector("#shady-business");
+
+const shadyStartHint =
+    document.querySelector("#shady-start-hint");
+
+const shadyLink =
+    shadyBusiness?.querySelector(".shady-link");
+
+let shadyStartVisible = false;
+
+
+function showShadyBusinessStart() {
+    if (!shadyBusiness || !shadyStartHint || shadyStartVisible) return;
+    shadyStartVisible = true;
+    shadyBusiness.classList.add("shady-business-start");
+    shadyStartHint.hidden = false;
+    shadyBusiness.scrollIntoView({ block: "center", behavior: "smooth" });
+    shadyLink?.focus({ preventScroll: true });
+}
+
+
+async function openShadyBusiness(event) {
+    if (!shadyStartVisible) return;
+    event.preventDefault();
+    const destination = shadyLink.href;
+    shadyBusiness.classList.remove("shady-business-start");
+    shadyStartHint.hidden = true;
+    try {
+        await apiRequest("/onboarding/tour", {
+            method: "PATCH",
+            body: JSON.stringify({
+                status: "completed",
+                last_completed_step: "shady-business-started",
+            }),
+        });
+    } catch (error) {
+        console.warn("Unable to save the Shady Business starting point:", error);
+    }
+    window.location.assign(destination);
+}
+
+
+async function restoreShadyBusinessStart() {
+    const state = await apiRequest("/onboarding/tour", { method: "GET" });
+    if (state.status === "completed" && state.last_completed_step === "finish") {
+        showShadyBusinessStart();
+    }
+}
 
 
 function greetingForCurrentTime() {
@@ -107,6 +157,8 @@ async function initializeHome() {
 
         displayIzzyPhone();
 
+        await restoreShadyBusinessStart();
+
         await initializeGuidedTour(
             customer,
         );
@@ -145,6 +197,9 @@ logoutButton.addEventListener(
     "click",
     handleLogout,
 );
+
+shadyLink?.addEventListener("click", openShadyBusiness);
+window.addEventListener("factored:shady-start", showShadyBusinessStart);
 
 
 initializeHome();
