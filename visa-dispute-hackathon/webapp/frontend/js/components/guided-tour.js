@@ -67,7 +67,8 @@ const STEPS = [
     {
         id: "complaints",
         route: "/complaints",
-        target: ".page-heading",
+        target: ".complaint-item, #empty-state",
+        allowMissingTarget: true,
     },
     {
         id: "profile-link",
