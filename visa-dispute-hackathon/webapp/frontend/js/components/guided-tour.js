@@ -18,7 +18,6 @@ const COPY = {
         cards: ["tour.cards_title", "tour.cards_body"],
         "transactions-link": ["tour.transactions_link_title", "tour.transactions_link_body"],
         transactions: ["tour.transactions_title", "tour.transactions_body"],
-        "report-transaction": ["tour.report_title", "tour.report_body"],
         izzy: ["tour.izzy_title", "tour.izzy_body"],
         "complaints-link": ["tour.complaints_link_title", "tour.complaints_link_body"],
         complaints: ["tour.complaints_title", "tour.complaints_body"],
@@ -51,16 +50,6 @@ const STEPS = [
     {
         id: "transactions",
         route: "/transactions",
-        target: ".transaction-item",
-        action: "activate",
-        allowMissingTarget: true,
-    },
-    {
-        id: "report-transaction",
-        route: transactionDetailRoute,
-        target: ".report-card",
-        actionTarget: "#report-button",
-        action: "activate",
     },
     { id: "izzy", route: "/agent" },
     {
@@ -103,12 +92,6 @@ let activationElements = [];
 let targetActivationHandler = null;
 let repositionHandler = null;
 let transitioning = false;
-
-async function transactionDetailRoute() {
-    const transactions = await apiRequest("/transactions", { method: "GET" });
-    const first = transactions[0];
-    return first ? `/transactions/${encodeURIComponent(first.transaction_id)}` : null;
-}
 
 async function routeFor(step) {
     return typeof step.route === "function" ? step.route() : step.route;

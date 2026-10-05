@@ -250,7 +250,6 @@ def test_contextual_tour_is_interactive_and_english_only() -> None:
         'id: "cards-link"',
         'target: ".bank-card.is-active"',
         'id: "transactions"',
-        'id: "report-transaction"',
         'id: "izzy"',
         'id: "complaints-link"',
         'target: ".page-heading"',
@@ -259,7 +258,6 @@ def test_contextual_tour_is_interactive_and_english_only() -> None:
         'id: "finish"',
         'action: "finish-and-activate"',
         'action: "activate"',
-        'actionTarget: "#report-button"',
         "element.addEventListener",
         "guided-tour-no-target",
     ):
@@ -268,6 +266,25 @@ def test_contextual_tour_is_interactive_and_english_only() -> None:
     assert "es:" not in content
     assert 'id: "complaint-detail"' not in content
     assert 'target: ".complaint-item"' not in content
+    assert 'target: ".transaction-item"' not in content
+    assert 'id: "report-transaction"' not in content
+
+
+def test_empty_transaction_history_does_not_ask_customer_to_pick_one() -> None:
+    client = TestClient(app)
+    create_customer(client)
+    login(client)
+    transaction_repository._transactions.clear()
+
+    assert client.get("/api/transactions").json() == []
+    javascript = client.get("/static/js/components/guided-tour.js").text
+    english = client.get("/static/locales/v1/en.json").json()
+
+    assert 'id: "transactions"' in javascript
+    assert 'target: ".transaction-item"' not in javascript
+    assert 'id: "report-transaction"' not in javascript
+    assert english["tour.transactions_title"] == "Your transaction history starts here"
+    assert "begin with no transactions" in english["tour.transactions_body"]
 
 
 def test_empty_complaint_history_does_not_block_contextual_tour() -> None:
