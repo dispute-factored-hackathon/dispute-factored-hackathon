@@ -137,6 +137,21 @@ def test_home_contains_required_navigation() -> None:
         assert expected_link in response.text
 
 
+def test_home_sections_follow_the_primary_menu_hierarchy() -> None:
+    client = TestClient(app)
+
+    html = client.get("/home").text
+    section_positions = [
+        html.index('class="banking-section"'),
+        html.index('class="shady-business"'),
+        html.index('class="izzy-hero"'),
+        html.index('id="tutorial-replay"'),
+        html.index('id="logout-button"'),
+    ]
+
+    assert section_positions == sorted(section_positions)
+
+
 def test_navigation_uses_consistent_svg_icons_and_transactions_label() -> None:
     client = TestClient(app)
 
