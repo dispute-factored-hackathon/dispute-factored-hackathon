@@ -4,7 +4,8 @@ Issuer-side Visa dispute intake through a multilingual telephone agent and a syn
 
 Project documentation is maintained in the [GitHub Wiki](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki).
 
-Explore the public [LATAM dispute-service analytics dashboard](https://dispute-factored-analytics.streamlit.app/)
+Try the public [Factored Bank application](https://dispute-factored-hackathon.github.io/dispute-factored-hackathon/),
+explore the [LATAM dispute-service analytics dashboard](https://dispute-factored-analytics.streamlit.app/),
 or review the executed [analytics notebook](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/blob/main/visa-dispute-hackathon/notebooks/latam_service_analytics.ipynb).
 
 ## Implementation map
