@@ -6,6 +6,7 @@ import os
 import sys
 from pathlib import Path
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -83,10 +84,58 @@ def metric_row(metrics: dict[str, object]) -> None:
     cols[4].metric("Repeat complainants", pct(metrics["repeat_complainer_pct"]))
 
 
-def bar(frame: pd.DataFrame, category: str, value: str, title: str) -> None:
+def donut(frame: pd.DataFrame, category: str, value: str, title: str) -> None:
+    """Render a categorical distribution as a percentage-first donut."""
+
     st.subheader(title)
-    chart = frame[[category, value]].set_index(category)
-    st.bar_chart(chart, horizontal=True)
+    chart_data = frame[[category, value]].copy()
+    total = chart_data[value].sum()
+    chart_data["share_pct"] = 100 * chart_data[value] / total if total else 0.0
+    chart = (
+        alt.Chart(chart_data)
+        .mark_arc(innerRadius=70, outerRadius=120)
+        .encode(
+            theta=alt.Theta(f"{value}:Q", stack=True),
+            color=alt.Color(f"{category}:N", title=None),
+            tooltip=[
+                alt.Tooltip(f"{category}:N", title="Category"),
+                alt.Tooltip(f"{value}:Q", title="Count", format=","),
+                alt.Tooltip("share_pct:Q", title="Share", format=".2f"),
+            ],
+        )
+        .properties(height=300)
+    )
+    st.altair_chart(chart, width="stretch")
+
+
+def percentage_donut(label: str, value: float | int | None) -> None:
+    """Render one binary percentage as value versus the remaining share."""
+
+    resolved = 0.0 if pd.isna(value) else min(max(float(value), 0.0), 100.0)
+    chart_data = pd.DataFrame(
+        {
+            "segment": [label, "Remaining"],
+            "percent": [resolved, 100.0 - resolved],
+        }
+    )
+    chart = (
+        alt.Chart(chart_data)
+        .mark_arc(innerRadius=55, outerRadius=90)
+        .encode(
+            theta=alt.Theta("percent:Q", stack=True),
+            color=alt.Color(
+                "segment:N",
+                scale=alt.Scale(domain=[label, "Remaining"], range=["#2563EB", "#E5E7EB"]),
+                legend=None,
+            ),
+            tooltip=[
+                alt.Tooltip("segment:N", title="Outcome"),
+                alt.Tooltip("percent:Q", title="Percent", format=".2f"),
+            ],
+        )
+        .properties(height=220, title=f"{label}: {resolved:.2f}%")
+    )
+    st.altair_chart(chart, width="stretch")
 
 
 st.title("LATAM dispute service analytics")
@@ -115,19 +164,25 @@ with overview:
     )
     left, right = st.columns(2)
     with left:
-        bar(data["subcategory"], "category", "cases", "Card-linked intake labels")
-        bar(data["country"], "category", "cases", "Country mix")
+        donut(data["subcategory"], "category", "cases", "Card-linked intake labels")
+        donut(data["country"], "category", "cases", "Country mix")
     with right:
-        bar(data["channel"], "category", "cases", "Reception channel")
-        bar(data["status"], "category", "cases", "Current case status")
+        donut(data["channel"], "category", "cases", "Reception channel")
+        donut(data["status"], "category", "cases", "Current case status")
     st.dataframe(data["priority"], width="stretch", hide_index=True)
     st.subheader("Experience baseline by country")
     st.dataframe(data["country_experience"], width="stretch", hide_index=True)
     st.subheader("Monthly baseline")
     monthly = data["trend"].set_index("month")
-    st.line_chart(monthly[["cases", "sla_breach_pct"]])
+    trend_left, trend_right = st.columns(2)
+    with trend_left:
+        st.caption("Case volume over time")
+        st.line_chart(monthly[["cases"]])
+    with trend_right:
+        st.caption("SLA-breach percentage over time")
+        st.line_chart(monthly[["sla_breach_pct"]])
     st.caption(
-        "Two scales share this compact view: case count and SLA-breach percentage. "
+        "A line chart is used for each time series; categorical percentage compositions use donuts. "
         "Use the table below for exact values."
     )
     st.dataframe(data["trend"], width="stretch", hide_index=True)
@@ -146,8 +201,16 @@ with experience:
     cols[2].metric("Mean duration", f"{cohort['mean_duration_seconds'] / 60:.1f} min")
     cols[3].metric("FCR proxy", pct(cohort["fcr_proxy_pct"]))
     cols[4].metric("Follow-up", pct(cohort["followup_pct"]))
+    outcome_cols = st.columns(3)
+    with outcome_cols[0]:
+        percentage_donut("Resolved on first call (proxy)", cohort["fcr_proxy_pct"])
+    with outcome_cols[1]:
+        percentage_donut("Requires follow-up", cohort["followup_pct"])
+    with outcome_cols[2]:
+        percentage_donut("Escalated", cohort["escalation_pct"])
     st.dataframe(call_reason, width="stretch", hide_index=True)
     st.subheader("Accent alignment as an experience diagnostic")
+    donut(data["accent"], "accent_alignment", "interactions", "Accent-alignment distribution")
     st.dataframe(data["accent"], width="stretch", hide_index=True)
     st.caption(
         "Accent is evaluated only as a service-quality signal. It must never determine identity, "
