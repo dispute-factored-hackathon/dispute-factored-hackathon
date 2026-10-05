@@ -77,7 +77,7 @@
   "signup.prefer_not": "Prefiro não informar",
   "signup.mobile": "Celular",
   "signup.optional": "· opcional",
-  "signup.phone_help": "Inclua o código do país. Formataremos o número automaticamente. Ele também poderá ser usado para autenticar você ao ligar para a Izzy.",
+  "signup.phone_help": "Inclua o código do país. Formataremos o número automaticamente. Ele também poderá ser usado para autenticar você ao ligar para o Izzy. Se outra conta de demonstração já usar este número, essa conta e seus dados de demonstração serão substituídos pela nova conta.",
   "signup.language": "Idioma e sotaque preferidos",
   "signup.english": "Inglês americano",
   "signup.portuguese": "Português brasileiro",

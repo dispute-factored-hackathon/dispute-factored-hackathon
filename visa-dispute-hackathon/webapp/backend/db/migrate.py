@@ -24,8 +24,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 APP_ROLE = "factored_app"
 
-# What the web application may do. It can never alter the schema, delete customers, products,
-# transactions or complaints, or write the migration history.
+# What the web application may do. It cannot alter the schema or directly delete customer data.
+# Signup replacement is limited to one atomic operation that must create a new demo account.
 APP_GRANTS = (
     "GRANT SELECT, INSERT, UPDATE ON customers, products, transactions, complaints TO {role}",
     (
@@ -34,6 +34,7 @@ APP_GRANTS = (
     ),
     "GRANT SELECT, INSERT, DELETE ON sessions TO {role}",
     "GRANT SELECT ON alembic_version TO {role}",
+    "GRANT EXECUTE ON FUNCTION register_demo_account(jsonb, jsonb) TO {role}",
     # Izzy web chat checkpoints (LangGraph tables, created below by the owner role).
     (
         "GRANT SELECT, INSERT, UPDATE, DELETE ON checkpoints, checkpoint_blobs, "
