@@ -1029,6 +1029,7 @@ class SipRealtimeGateway:
                     last_customer_transcript = ""
                     pending_handoff: HumanHandoffPlan | None = None
                     deferred_handoff_event: dict[str, Any] | None = None
+                    deferred_dtmf_message: str | None = None
 
                     async for raw_event in websocket:
                         try:
@@ -1271,6 +1272,19 @@ class SipRealtimeGateway:
                                 response_id=response_id,
                             )
 
+                            # A caller may finish entering a document while a
+                            # previous model answer is still active. That answer
+                            # is cancelled and the authoritative DTMF result is
+                            # spoken only after Realtime confirms it is done.
+                            if deferred_dtmf_message is not None:
+                                message = deferred_dtmf_message
+                                deferred_dtmf_message = None
+                                model_turn_requested = False
+                                silent_model_response_ids.discard(response_id)
+                                last_customer_transcript = ""
+                                await self._speak(websocket, call_id, message)
+                                continue
+
                             silent_model_response = (
                                 response_id in silent_model_response_ids or model_turn_requested
                             )
@@ -1340,11 +1354,20 @@ class SipRealtimeGateway:
                                 has_key=bool(key),
                             )
 
-                            handoff = await self._handle_dtmf(
+                            handoff, deferred_message = await self._handle_dtmf(
                                 websocket,
                                 call_id,
                                 key,
+                                defer_speech=active_response,
                             )
+                            if deferred_message is not None:
+                                deferred_dtmf_message = deferred_message
+                                await websocket.send(json.dumps({"type": "response.cancel"}))
+                                _telemetry(
+                                    "voice.dtmf.response.deferred",
+                                    call_id=call_id,
+                                    reason="active_response",
+                                )
                             if handoff is not None:
                                 pending_handoff = handoff
 
@@ -1487,7 +1510,9 @@ class SipRealtimeGateway:
         websocket: Any,
         call_id: str,
         key: str,
-    ) -> HumanHandoffPlan | None:
+        *,
+        defer_speech: bool = False,
+    ) -> tuple[HumanHandoffPlan | None, str | None]:
 
         before = self.calls.get(call_id)
 
@@ -1495,13 +1520,12 @@ class SipRealtimeGateway:
             state, should_respond = self.calls.receive_dtmf(call_id, key)
 
         except ValueError:
-            await self._speak(
-                websocket,
-                call_id,
-                self._message_for(self.calls.get(call_id), "invalid_dtmf"),
-            )
+            message = self._message_for(self.calls.get(call_id), "invalid_dtmf")
+            if defer_speech:
+                return None, message
+            await self._speak(websocket, call_id, message)
 
-            return None
+            return None, None
 
         if should_respond:
             if key == "*":
@@ -1543,16 +1567,30 @@ class SipRealtimeGateway:
                 accent=state.locale.accent,
                 reason="dtmf_result",
             )
-            await self._speak(
-                websocket,
-                call_id,
+            message = (
                 self._message_for(state, self._handoff_message_reason(handoff))
                 if state.stage is VoiceCallStage.HANDOFF
-                else self._message_for(state, reason),
+                else self._message_for(state, reason)
             )
-            return handoff if handoff.can_transfer else None
+            if defer_speech:
+                deferred_message = message
+            else:
+                await self._speak(websocket, call_id, message)
+                deferred_message = None
 
-        return None
+            # A configured transfer destination is not itself a request to
+            # transfer. DTMF may authenticate a caller, clear digits, or retry;
+            # only an explicit HANDOFF state may arm SIP REFER.
+            approved_handoff = (
+                handoff
+                if state.stage is VoiceCallStage.HANDOFF
+                and bool(state.handoff_reason)
+                and handoff.can_transfer
+                else None
+            )
+            return approved_handoff, deferred_message
+
+        return None, None
 
     async def _handle_tool_calls(
         self,
@@ -2206,7 +2244,20 @@ class SipRealtimeGateway:
     async def _refer_call(self, call_id: str, plan: HumanHandoffPlan) -> bool:
         """Relay one approved blind transfer after Izzy finishes the handoff message."""
 
-        if not plan.can_transfer or plan.target_uri is None:
+        state = self.calls.get(call_id)
+        if (
+            state.stage is not VoiceCallStage.HANDOFF
+            or not state.handoff_reason
+            or not plan.can_transfer
+            or plan.target_uri is None
+        ):
+            _telemetry(
+                "voice.handoff.rejected",
+                call_id=call_id,
+                stage=state.stage.value,
+                handoff_reason=state.handoff_reason,
+                can_transfer=plan.can_transfer,
+            )
             return False
 
         started = time.monotonic()

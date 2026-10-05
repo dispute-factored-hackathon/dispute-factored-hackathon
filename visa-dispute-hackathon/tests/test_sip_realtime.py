@@ -1498,6 +1498,76 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             outbound,
         )
 
+    async def test_successful_dtmf_authentication_does_not_transfer_the_call(self):
+        events = [
+            session_updated_event(),
+            tool_call_event("confirm_language", "tool_language", {}),
+            tool_call_event(
+                "set_authentication_method",
+                "tool_auth",
+                {"method": "document"},
+            ),
+            *[dtmf_event(key) for key in "123456789#"],
+            output_audio_stopped_event("resp_authentication_result"),
+        ]
+        gateway, _, calls = self._gateway(
+            events,
+            human_handoff_number="+5511981020050",
+        )
+
+        await gateway.accept_and_control("call_no_accidental_refer", "+573009998877")
+
+        state = gateway.calls.get("call_no_accidental_refer")
+        self.assertEqual(state.stage, "authenticated")
+        self.assertIsNone(state.handoff_reason)
+        self.assertEqual(calls.referrals, [])
+
+    async def test_dtmf_completion_cancels_active_answer_before_authentication_message(self):
+        events = [
+            session_updated_event(),
+            tool_call_event("confirm_language", "tool_language", {}),
+            tool_call_event(
+                "set_authentication_method",
+                "tool_auth",
+                {"method": "document"},
+            ),
+            *[dtmf_event(key) for key in "123456789"],
+            json.dumps(
+                {
+                    "type": "response.created",
+                    "response": {"id": "resp_stale_document_answer"},
+                }
+            ),
+            dtmf_event("#"),
+            json.dumps(
+                {
+                    "type": "response.done",
+                    "response": {
+                        "id": "resp_stale_document_answer",
+                        "output": [],
+                    },
+                }
+            ),
+        ]
+        gateway, websocket, calls = self._gateway(
+            events,
+            human_handoff_number="+5511981020050",
+        )
+
+        await gateway.accept_and_control("call_dtmf_response_race", "+573009998877")
+
+        state = gateway.calls.get("call_dtmf_response_race")
+        self.assertEqual(state.stage, "authenticated")
+        self.assertEqual(calls.referrals, [])
+        self.assertEqual(
+            [event for event in websocket.sent if event.get("type") == "response.cancel"],
+            [{"type": "response.cancel"}],
+        )
+        self.assertIn(
+            "autenticación está completa",
+            json.dumps(websocket.sent, ensure_ascii=False),
+        )
+
     async def test_language_change_then_direct_document_authentication(self):
         events = [
             session_updated_event(),
