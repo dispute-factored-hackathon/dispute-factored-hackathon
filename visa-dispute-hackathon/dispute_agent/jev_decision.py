@@ -231,6 +231,15 @@ class JevVoiceRouter:
                     model=model,
                 )
 
+        ambiguous_navigation = self._noul(answers, "ambiguous_navigation_request")
+        if ambiguous_navigation >= self.confidence_threshold:
+            return JevVoiceDecision(
+                JevAction.TOOL,
+                ambiguous_navigation,
+                tool_name="clarify_navigation",
+                model=model,
+            )
+
         stage_answer = answers.get("stage_intent")
         choice = ""
         confidence = 0.0
@@ -381,6 +390,24 @@ class JevVoiceRouter:
                     "pt": "Explicitly chooses or requests Portuguese.",
                     "es": "Explicitly chooses or requests Spanish.",
                     "none": "No explicit language selection or change request.",
+                },
+            },
+            "ambiguous_navigation_request": {
+                "type": "noul",
+                "instructions": (
+                    "Is the caller asking to go back, return, undo, or rewind without clearly "
+                    "saying which workflow step, information, or action they mean?"
+                ),
+                "criteria": {
+                    "true": (
+                        "An underspecified navigation request such as only 'go back', 'back', "
+                        "'voltar', or 'volver', where acting would require guessing the target."
+                    ),
+                    "false": (
+                        "The caller states a clear target or desired action, such as changing "
+                        "language, correcting a transaction amount, clearing filters, hearing "
+                        "the last question again, or speaking with a human."
+                    ),
                 },
             },
             "speech_clarity": {

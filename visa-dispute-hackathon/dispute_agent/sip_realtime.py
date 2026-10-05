@@ -1674,6 +1674,14 @@ class SipRealtimeGateway:
                         authenticated=state.stage is VoiceCallStage.AUTHENTICATED,
                     )
 
+                elif tool_name == "clarify_navigation":
+                    state = self.calls.get(call_id)
+                    result = self._message_for(state, "ambiguous_navigation")
+                    tool_metadata = {
+                        "outcome": "clarification_requested",
+                        "stage_preserved": state.stage.value,
+                    }
+
                 elif tool_name == "search_transactions":
                     control_intent = _transaction_control_intent(last_customer_transcript)
                     if control_intent == "correct":
@@ -2629,6 +2637,23 @@ class SipRealtimeGateway:
         }
 
     @staticmethod
+    def _navigation_clarification_tool() -> dict[str, Any]:
+        return {
+            "type": "function",
+            "name": "clarify_navigation",
+            "description": (
+                "Use when the caller asks to go back, return, undo, or rewind but does not "
+                "say which step, information, or action they mean. Do not guess a destination. "
+                "Do not use when the caller clearly states the desired action."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        }
+
+    @staticmethod
     def _system_instructions(state: VoiceCallState) -> str:
         language_name = {
             "pt": "Portuguese",
@@ -2754,6 +2779,9 @@ General behavior:
 - If the caller explicitly asks for a human, person, operator, attendant, or specialist at any active stage, call request_human immediately. This global control takes priority over language, authentication, transaction, classification, and satisfaction tools.
 - Do not call request_human merely because the caller is frustrated, reports a dispute, asks a question, or says they need help. The request for human assistance must be explicit.
 - Do not claim a bank action occurred unless a server/tool result confirms it.
+- If the caller asks to go back, return, undo, or rewind without naming the target or desired
+  action, call clarify_navigation. Do not guess what should change. If the caller clearly says
+  what they want changed, follow that intent instead.
 - Whenever you call a tool, your response must contain only the tool call. Never speak an acknowledgement, plan, or assumed result before a tool result.
 """
 
@@ -2780,6 +2808,8 @@ General behavior:
         tools = [factory() for factory in factories]
         if state.stage is not VoiceCallStage.HANDOFF:
             tools.append(cls._human_handoff_tool())
+        if state.stage not in {VoiceCallStage.COMPLETED, VoiceCallStage.HANDOFF}:
+            tools.append(cls._navigation_clarification_tool())
         return tools
 
     @staticmethod
@@ -2898,6 +2928,11 @@ General behavior:
                 ),
                 "unclear_speech": (
                     "Não consegui entender o que foi dito. Pode repetir com uma frase curta?"
+                ),
+                "ambiguous_navigation": (
+                    "Quando você diz voltar, não sei qual etapa ou informação você quer mudar. "
+                    "Diga em uma frase o que deseja que eu faça, por exemplo: repetir a última "
+                    "pergunta, mudar o idioma ou corrigir uma informação da transação."
                 ),
                 "turn_recovery": (
                     "Tive uma falha temporária ao processar sua resposta. "
@@ -3020,6 +3055,11 @@ General behavior:
                 "unclear_speech": (
                     "No pude entender lo que dijiste. ¿Puedes repetirlo con una frase corta?"
                 ),
+                "ambiguous_navigation": (
+                    "Cuando dices volver, no sé qué etapa o información quieres cambiar. "
+                    "Dime en una frase qué deseas que haga, por ejemplo: repetir la última "
+                    "pregunta, cambiar el idioma o corregir un dato de la transacción."
+                ),
                 "turn_recovery": (
                     "Tuve una falla temporal al procesar tu respuesta. "
                     "Por favor, repite tu última respuesta."
@@ -3135,6 +3175,11 @@ General behavior:
                 ),
                 "unclear_speech": (
                     "I couldn't understand what was said. Please repeat it in a short sentence."
+                ),
+                "ambiguous_navigation": (
+                    "When you say go back, I don't know which step or information you want to "
+                    "change. Tell me in one sentence what you want me to do, for example: repeat "
+                    "the last question, change the language, or correct transaction information."
                 ),
                 "turn_recovery": (
                     "I had a temporary problem processing your answer. "
@@ -3393,6 +3438,9 @@ General behavior:
 
         if reason == "unclear_speech":
             return SipRealtimeGateway._unclear_speech_message(state, messages)
+
+        if reason == "ambiguous_navigation":
+            return messages["ambiguous_navigation"]
 
         if reason == "turn_recovery":
             return messages["turn_recovery"]

@@ -515,6 +515,29 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("O áudio chegou incompleto ou com muito ruído", spoken)
         self.assertIn("escolha autenticação pelo número de telefone", spoken)
 
+    async def test_ambiguous_back_request_preserves_stage_and_asks_for_intent(self):
+        events = [
+            *opened_session_events(),
+            completed_transcript_event(speaker="customer", transcript="Voltar."),
+        ]
+        router = FakeJevRouter(
+            JevVoiceDecision(
+                JevAction.TOOL,
+                0.97,
+                tool_name="clarify_navigation",
+                model="jev-test",
+            )
+        )
+        gateway, websocket, calls = self._gateway(events, jev_router=router)
+
+        await gateway.accept_and_control("call_ambiguous_back", "+5511999990001")
+
+        self.assertEqual(gateway.calls.get("call_ambiguous_back").stage, "needs_auth_method")
+        self.assertEqual(calls.referrals, [])
+        spoken = json.dumps(websocket.sent, ensure_ascii=False)
+        self.assertIn("não sei qual etapa ou informação você quer mudar", spoken)
+        self.assertIn("Diga em uma frase o que deseja que eu faça", spoken)
+
     async def test_explicit_human_request_transfers_after_spoken_notice(self):
         events = [
             *opened_session_events(),
@@ -1788,20 +1811,20 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gateway._tool_choice_for(state), "required")
         self.assertEqual(
             {tool["name"] for tool in gateway._tools_for(state)},
-            {"set_authentication_method", "request_human"},
+            {"set_authentication_method", "request_human", "clarify_navigation"},
         )
 
         state = gateway.calls.confirm_language(state.call_id)
         self.assertEqual(gateway._tool_choice_for(state), "required")
         self.assertEqual(
             {tool["name"] for tool in gateway._tools_for(state)},
-            {"set_authentication_method", "request_human"},
+            {"set_authentication_method", "request_human", "clarify_navigation"},
         )
         state = gateway.calls.choose_authentication_method(state.call_id, method="phone")
         self.assertEqual(gateway._tool_choice_for(state), "required")
         self.assertEqual(
             {tool["name"] for tool in gateway._tools_for(state)},
-            {"search_transactions", "request_human"},
+            {"search_transactions", "request_human", "clarify_navigation"},
         )
         clarification = gateway.calls.search_transactions(
             state.call_id,
@@ -1810,7 +1833,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gateway._tool_choice_for(clarification.state), "required")
         self.assertEqual(
             {tool["name"] for tool in gateway._tools_for(clarification.state)},
-            {"search_transactions", "request_human"},
+            {"search_transactions", "request_human", "clarify_navigation"},
         )
         selection = gateway.calls.search_transactions(
             state.call_id,
@@ -1819,7 +1842,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gateway._tool_choice_for(selection.state), "required")
         self.assertEqual(
             {tool["name"] for tool in gateway._tools_for(selection.state)},
-            {"confirm_transaction", "request_human"},
+            {"confirm_transaction", "request_human", "clarify_navigation"},
         )
 
         confirmed = gateway.calls.resolve_transaction_candidate(
@@ -1829,7 +1852,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gateway._tool_choice_for(confirmed.state), "required")
         self.assertEqual(
             {tool["name"] for tool in gateway._tools_for(confirmed.state)},
-            {"classify_dispute", "request_human"},
+            {"classify_dispute", "request_human", "clarify_navigation"},
         )
 
         classified = gateway.calls.classify_dispute(

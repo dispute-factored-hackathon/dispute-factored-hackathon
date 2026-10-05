@@ -283,6 +283,37 @@ class JevVoiceRouterTests(unittest.TestCase):
         self.assertEqual(decision.tool_name, "set_language")
         self.assertEqual(decision.arguments, {"language": "es"})
 
+    def test_ambiguous_back_request_asks_for_the_desired_action(self):
+        client = FakeClient(
+            {
+                "prompt_abuse": noul(0.01),
+                "explicit_human_request": noul(0.01),
+                "explicit_language_change": choice("none"),
+                "ambiguous_navigation_request": noul(0.96),
+                "speech_clarity": choice("clear"),
+            }
+        )
+
+        decision = JevVoiceRouter(client=client).route(
+            stage="needs_transaction_details",
+            transcript="Voltar.",
+            language="pt",
+        )
+
+        self.assertEqual(decision.action, JevAction.TOOL)
+        self.assertEqual(decision.tool_name, "clarify_navigation")
+        self.assertEqual(decision.arguments, {})
+
+    def test_specific_back_request_continues_to_stage_routing(self):
+        decision, _ = self._route(
+            "needs_auth_method",
+            choice("document"),
+            ambiguous_navigation_request=noul(0.02),
+        )
+
+        self.assertEqual(decision.tool_name, "set_authentication_method")
+        self.assertEqual(decision.arguments, {"method": "document"})
+
     def test_low_confidence_decision_falls_back(self):
         decision, _ = self._route("needs_auth_method", choice("phone", confidence=0.51))
 
