@@ -4,8 +4,7 @@ from datetime import UTC, datetime
 from webapp.backend.models.customer import Customer
 from webapp.backend.models.product import Product
 from webapp.backend.repositories.interfaces import (
-    CustomerRepository,
-    ProductRepository,
+    AccountRegistrationRepository,
 )
 from webapp.backend.schemas.customer import (
     CustomerSignupRequest,
@@ -19,22 +18,14 @@ class SignupService:
 
     def __init__(
         self,
-        customers: CustomerRepository,
-        products: ProductRepository,
+        accounts: AccountRegistrationRepository,
     ) -> None:
-        self.customers = customers
-        self.products = products
+        self.accounts = accounts
 
     def signup(
         self,
         request: CustomerSignupRequest,
     ) -> CustomerSignupResponse:
-        if self.customers.get_by_document(request.factored_id):
-            raise ValueError("FACTORED_ID already exists.")
-
-        if request.mobile_phone and self.customers.get_by_phone(request.mobile_phone):
-            raise ValueError("Phone number already exists.")
-
         now = datetime.now(UTC)
 
         customer_id = f"CLI-DEMO-{secrets.token_hex(6).upper()}"
@@ -60,8 +51,6 @@ class SignupService:
             last_updated=now,
         )
 
-        self.customers.create(customer)
-
         card_number = self._generate_card_number()
 
         product = Product(
@@ -80,7 +69,7 @@ class SignupService:
             last_updated=now,
         )
 
-        self.products.create(product)
+        customer, product = self.accounts.register(customer, product)
 
         return CustomerSignupResponse(
             customer_id=customer.customer_id,
