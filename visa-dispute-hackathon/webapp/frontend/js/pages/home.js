@@ -49,13 +49,25 @@ const shadyLink =
 let shadyStartVisible = false;
 
 
+function scrollToShadyBusinessStart() {
+    const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth";
+    window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+            shadyBusiness.scrollIntoView({ block: "center", behavior });
+            shadyLink?.focus({ preventScroll: true });
+        });
+    });
+}
+
+
 function showShadyBusinessStart() {
     if (!shadyBusiness || !shadyStartHint || shadyStartVisible) return;
     shadyStartVisible = true;
     shadyBusiness.classList.add("shady-business-start");
     shadyStartHint.hidden = false;
-    shadyBusiness.scrollIntoView({ block: "center", behavior: "smooth" });
-    shadyLink?.focus({ preventScroll: true });
+    scrollToShadyBusinessStart();
 }
 
 
