@@ -153,6 +153,32 @@ class AwsLambdaTests(unittest.TestCase):
         self.assertEqual(gateway.accepted, [])
         invoke_worker.assert_not_called()
 
+    def test_twilio_voice_webhook_routes_to_openai_without_loading_gateway(self):
+        request = {
+            "rawPath": "/webhooks/twilio/voice",
+            "body": (
+                "AccountSid=AC11111111111111111111111111111111&"
+                "CallSid=CA22222222222222222222222222222222&"
+                "From=%2B5511984348217&To=%2B16615779964"
+            ),
+        }
+        credentials = SimpleNamespace(
+            account_sid="AC" + "1" * 32,
+            caller_id="+16615779964",
+        )
+        handoff = SimpleNamespace(credentials=credentials)
+        with (
+            patch.dict(aws_lambda.os.environ, {"OPENAI_PROJECT_ID": "proj_test123"}),
+            patch.object(aws_lambda, "_load_twilio_handoff", return_value=handoff),
+            patch.object(aws_lambda, "_get_gateway") as get_gateway,
+        ):
+            response = aws_lambda.lambda_handler(request, self.context)
+
+        self.assertEqual(response["statusCode"], 200)
+        self.assertEqual(response["headers"]["content-type"], "application/xml; charset=utf-8")
+        self.assertIn("sip:proj_test123@sip.api.openai.com;transport=tls", response["body"])
+        get_gateway.assert_not_called()
+
     def test_missing_phone_rejects_call(self):
         gateway = FakeGateway(incoming_event(include_phone=False))
         with patch.object(aws_lambda, "_get_gateway", return_value=gateway):

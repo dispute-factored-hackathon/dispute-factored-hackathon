@@ -428,6 +428,9 @@ Outputs:
   OpenAIWebhookUrl:
     Value: !Sub "${SipFunctionUrl.FunctionUrl}webhooks/openai"
 
+  TwilioVoiceWebhookUrl:
+    Value: !Sub "${SipFunctionUrl.FunctionUrl}webhooks/twilio/voice"
+
   FunctionName:
     Value: !Ref SipFunction
 

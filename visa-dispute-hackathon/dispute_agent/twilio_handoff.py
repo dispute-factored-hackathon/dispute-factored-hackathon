@@ -37,7 +37,12 @@ class TwilioHandoffError(RuntimeError):
 
 
 class TwilioCallHandoff:
-    """Replace the active SIP leg with a Twilio-controlled PSTN dial."""
+    """Replace a Programmable Voice parent call with a PSTN dial.
+
+    OpenAI receives the child SIP leg created by ``<Dial><Sip>``.  Twilio can
+    redirect the parent Programmable Voice call, not that child leg, so every
+    transfer first resolves ``parent_call_sid`` from the SIP Call resource.
+    """
 
     def __init__(
         self,
@@ -69,9 +74,10 @@ class TwilioCallHandoff:
         if caller == target:
             raise TwilioHandoffError("refusing to transfer a call back to its caller")
 
-        resolved_sid = (
+        sip_call_sid = (
             call_sid if self._valid_call_sid(call_sid) else self._find_active_call(caller)
         )
+        resolved_sid = self._resolve_parent_call(sip_call_sid)
         twiml = (
             '<Response><Dial answerOnBridge="true" timeout="30" '
             f'callerId="{escape(self.credentials.caller_id)}">'
@@ -83,6 +89,15 @@ class TwilioCallHandoff:
         )
         self._raise_for_status(response, operation="redirect active call")
         return resolved_sid
+
+    def _resolve_parent_call(self, call_sid: str) -> str:
+        response = self._client.get(self._call_url(call_sid))
+        self._raise_for_status(response, operation="read active SIP call")
+        payload = response.json()
+        parent_call_sid = payload.get("parent_call_sid") if isinstance(payload, dict) else None
+        if not self._valid_call_sid(parent_call_sid):
+            raise TwilioHandoffError("active SIP call has no Programmable Voice parent")
+        return str(parent_call_sid)
 
     def _find_active_call(self, caller_phone: str) -> str:
         response = self._client.get(

@@ -16,6 +16,12 @@ from webapp.backend.repositories.postgres import open_repositories
 
 from .sip_realtime import SipRealtimeGateway, _value, extract_caller_phone, extract_twilio_call_sid
 from .twilio_handoff import TwilioCallHandoff, TwilioHandoffCredentials
+from .twilio_voice import (
+    TwilioVoiceRequestError,
+    build_openai_sip_twiml,
+    is_twilio_voice_request,
+    parse_voice_request,
+)
 from .voice_call import voice_repository_arguments
 
 LOGGER = logging.getLogger(__name__)
@@ -222,6 +228,14 @@ def _response(
     }
 
 
+def _xml_response(status_code: int, body: str) -> dict[str, Any]:
+    return {
+        "statusCode": status_code,
+        "headers": {"content-type": "application/xml; charset=utf-8"},
+        "body": body,
+    }
+
+
 def _raw_body(event: dict[str, Any]) -> bytes:
     """Return the original HTTP request body used for webhook verification."""
 
@@ -394,6 +408,29 @@ def _dispatch_event(
     # Internal asynchronous invocation used for the long-running call worker.
     if event.get("mode") == WORKER_MODE:
         return _run_worker(event)
+
+    # Twilio must enter through Programmable Voice before dialing OpenAI SIP.
+    # This parent leg is what the handoff service can later redirect to a human.
+    if is_twilio_voice_request(event):
+        try:
+            request = parse_voice_request(_raw_body(event))
+            credentials = _load_twilio_handoff().credentials
+            twiml = build_openai_sip_twiml(
+                request,
+                expected_account_sid=credentials.account_sid,
+                expected_called_phone=credentials.caller_id,
+                openai_project_id=os.environ.get("OPENAI_PROJECT_ID", ""),
+            )
+        except TwilioVoiceRequestError as error:
+            _telemetry("twilio.voice.rejected", error=str(error))
+            return _xml_response(400, "<Response><Reject/></Response>")
+
+        _telemetry(
+            "twilio.voice.routed",
+            call_id=request.call_sid,
+            caller_phone=request.caller_phone,
+        )
+        return _xml_response(200, twiml)
 
     _telemetry("webhook.handler.started")
 

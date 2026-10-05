@@ -10,6 +10,7 @@ from dispute_agent.twilio_handoff import (
 ACCOUNT_SID = "AC" + "1" * 32
 API_KEY_SID = "SK" + "2" * 32
 CALL_SID = "CA" + "3" * 32
+PARENT_CALL_SID = "CA" + "4" * 32
 
 
 def credentials():
@@ -26,6 +27,8 @@ def test_redirects_known_call_with_twilio_owned_caller_id():
 
     def handler(request):
         requests.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json={"parent_call_sid": PARENT_CALL_SID})
         return httpx.Response(200, json={"sid": CALL_SID})
 
     handoff = TwilioCallHandoff(credentials(), transport=httpx.MockTransport(handler))
@@ -35,10 +38,10 @@ def test_redirects_known_call_with_twilio_owned_caller_id():
         call_sid=CALL_SID,
     )
 
-    assert result == CALL_SID
-    assert len(requests) == 1
-    assert requests[0].method == "POST"
-    body = requests[0].content.decode()
+    assert result == PARENT_CALL_SID
+    assert [request.method for request in requests] == ["GET", "POST"]
+    assert PARENT_CALL_SID in str(requests[1].url)
+    body = requests[1].content.decode()
     assert "%2B16615779964" in body
     assert "%2B5511981020050" in body
 
@@ -49,6 +52,8 @@ def test_finds_current_sip_call_when_header_has_no_call_sid():
     def handler(request):
         requests.append(request)
         if request.method == "GET":
+            if CALL_SID in str(request.url):
+                return httpx.Response(200, json={"parent_call_sid": PARENT_CALL_SID})
             return httpx.Response(
                 200,
                 json={
@@ -70,9 +75,25 @@ def test_finds_current_sip_call_when_header_has_no_call_sid():
         target_phone="+5511981020050",
     )
 
-    assert result == CALL_SID
-    assert [request.method for request in requests] == ["GET", "POST"]
+    assert result == PARENT_CALL_SID
+    assert [request.method for request in requests] == ["GET", "GET", "POST"]
     assert "From=%2B5511984348217" in str(requests[0].url)
+
+
+def test_fails_closed_when_sip_leg_has_no_programmable_voice_parent():
+    handoff = TwilioCallHandoff(
+        credentials(),
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"parent_call_sid": None})
+        ),
+    )
+
+    with pytest.raises(TwilioHandoffError, match="no Programmable Voice parent"):
+        handoff.transfer(
+            caller_phone="+5511984348217",
+            target_phone="+5511981020050",
+            call_sid=CALL_SID,
+        )
 
 
 def test_fails_closed_when_no_active_sip_call_matches():
