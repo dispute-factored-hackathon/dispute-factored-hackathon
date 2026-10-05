@@ -308,7 +308,7 @@ def test_empty_complaint_history_does_not_block_contextual_tour() -> None:
     assert progress.json()["last_completed_step"] == "complaints"
 
 
-def test_demo_selector_login_does_not_offer_or_update_tutorial() -> None:
+def test_demo_selector_login_offers_and_updates_tutorial() -> None:
     client = TestClient(app)
     create_customer(client)
     selection = client.get("/api/auth/demo-customers", params={"q": "Gabriel"}).json()["options"][
@@ -317,19 +317,22 @@ def test_demo_selector_login_does_not_offer_or_update_tutorial() -> None:
     login_response = client.post("/api/auth/demo-login", json={"selection": selection})
 
     assert login_response.status_code == 200
-    assert login_response.json()["customer"]["onboarding_eligible"] is False
+    assert login_response.json()["customer"]["onboarding_eligible"] is True
+    assert client.get("/api/auth/me").json()["onboarding_eligible"] is True
+    assert "Replay tutorial" in client.get("/home").text
     assert client.get("/api/onboarding/tour").json() == {
         "version": 4,
         "status": "not_started",
         "last_completed_step": None,
-        "should_offer": False,
-        "eligible": False,
+        "should_offer": True,
+        "eligible": True,
     }
     response = client.patch(
         "/api/onboarding/tour",
         json={"status": "in_progress", "last_completed_step": None},
     )
-    assert response.status_code == 403
+    assert response.status_code == 200
+    assert response.json()["status"] == "in_progress"
 
 
 def test_tour_script_retries_transient_progress_failures_and_keeps_mobile_controls_visible() -> (

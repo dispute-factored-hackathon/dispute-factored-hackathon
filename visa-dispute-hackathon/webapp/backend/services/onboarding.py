@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
 from webapp.backend.models.customer import Customer, TutorialStatus
+from webapp.backend.models.session import AuthenticationMethod
 from webapp.backend.repositories.interfaces import CustomerRepository
 from webapp.backend.schemas.onboarding import TutorialProgressRequest, TutorialStateResponse
 
@@ -20,6 +21,18 @@ TUTORIAL_STEP_IDS = (
     "profile",
     "finish",
 )
+
+
+def onboarding_eligible(
+    customer: Customer,
+    authentication_method: AuthenticationMethod,
+) -> bool:
+    """Allow judge Factored-ID sessions and every explicit demo-customer session."""
+
+    return (
+        authentication_method is AuthenticationMethod.DEMO_SELECTOR
+        or customer.is_judge_profile
+    )
 
 
 class InvalidTutorialStepError(ValueError):

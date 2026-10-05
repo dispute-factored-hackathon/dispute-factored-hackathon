@@ -13,9 +13,12 @@ from webapp.backend.api.dependencies import (
     require_authenticated_context,
 )
 from webapp.backend.models.customer import TutorialStatus
-from webapp.backend.models.session import AuthenticationMethod
 from webapp.backend.schemas.onboarding import TutorialProgressRequest, TutorialStateResponse
-from webapp.backend.services.onboarding import InvalidTutorialStepError, OnboardingService
+from webapp.backend.services.onboarding import (
+    InvalidTutorialStepError,
+    OnboardingService,
+    onboarding_eligible,
+)
 
 router = APIRouter(
     prefix="/api/onboarding",
@@ -38,10 +41,7 @@ def get_tutorial_state(
     context: Annotated[AuthenticatedContext, Depends(require_authenticated_context)],
     onboarding_service: OnboardingServiceDependency,
 ) -> TutorialStateResponse:
-    if (
-        context.session.authentication_method is not AuthenticationMethod.FACTORED_ID
-        or not context.customer.is_judge_profile
-    ):
+    if not onboarding_eligible(context.customer, context.session.authentication_method):
         return TutorialStateResponse(
             version=onboarding_service.version,
             status=TutorialStatus.NOT_STARTED,
@@ -61,13 +61,10 @@ def update_tutorial_progress(
     context: Annotated[AuthenticatedContext, Depends(require_authenticated_context)],
     onboarding_service: OnboardingServiceDependency,
 ) -> TutorialStateResponse:
-    if (
-        context.session.authentication_method is not AuthenticationMethod.FACTORED_ID
-        or not context.customer.is_judge_profile
-    ):
+    if not onboarding_eligible(context.customer, context.session.authentication_method):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="The guided tour is available after signing in with a Factored ID.",
+            detail="The guided tour is not available for this session.",
         )
     try:
         return onboarding_service.update(context.customer, request)

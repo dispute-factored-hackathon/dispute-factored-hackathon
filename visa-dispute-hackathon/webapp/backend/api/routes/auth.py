@@ -31,6 +31,7 @@ from webapp.backend.schemas.auth import (
 from webapp.backend.services.auth import (
     AuthenticationError,
 )
+from webapp.backend.services.onboarding import onboarding_eligible
 
 router = APIRouter(
     prefix="/api/auth",
@@ -57,10 +58,7 @@ def customer_response(
             else "ip"
         ),
         onboarding_completed=(customer.onboarding_completed),
-        onboarding_eligible=(
-            session.authentication_method is AuthenticationMethod.FACTORED_ID
-            and customer.is_judge_profile
-        ),
+        onboarding_eligible=onboarding_eligible(customer, session.authentication_method),
     )
 
 

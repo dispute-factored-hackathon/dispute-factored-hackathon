@@ -32,7 +32,7 @@
   "login.demo_warning_title": "Demo access only.",
   "login.demo_warning": "No password is required because every profile and transaction is synthetic. Never use this pattern for real banking access.",
   "login.judges": "Judges:",
-  "login.judges_help": "create a profile, then sign in with its Factored ID for the guided first experience. Choosing a customer opens the demo without onboarding.",
+  "login.judges_help": "create a profile, then sign in with its Factored ID for the guided first experience. Choosing a customer also starts the tutorial from the beginning.",
   "login.judge_badge": "NEW JUDGE?",
   "login.judge_title": "Start here",
   "login.judge_intro": "Create a demo profile first to receive a Factored ID and unlock the guided experience.",

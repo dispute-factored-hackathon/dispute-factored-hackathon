@@ -364,7 +364,7 @@ def test_demo_selection_logs_in_exact_customer_and_returns_locale() -> None:
     assert response.status_code == 200
     assert response.json()["customer"]["customer_id"] == expected["customer_id"]
     assert response.json()["customer"]["locale"] == "es-CO"
-    assert response.json()["customer"]["onboarding_eligible"] is False
+    assert response.json()["customer"]["onboarding_eligible"] is True
     assert client.get("/api/auth/me").json()["customer_id"] == expected["customer_id"]
 
 
@@ -458,6 +458,7 @@ def test_login_page_uses_accessible_searchable_demo_selector() -> None:
     assert 'event.key === "Enter"' in script
     assert '"/auth/login"' in script
     assert '"/auth/demo-login"' in script
+    assert 'method === "customer" ? "/home?tour=start" : "/home"' in script
     assert 'const FACTORED_ID_COOKIE = "factored_id"' in script
     assert "prefillFactoredId();" in script
     assert 'setLoginMethod("factored-id")' in script

@@ -108,7 +108,7 @@ async function redirectCustomer(customer, method = "session") {
         clearCustomerLocale();
     }
     window.location.replace(
-        "/home",
+        method === "customer" ? "/home?tour=start" : "/home",
     );
 }
 

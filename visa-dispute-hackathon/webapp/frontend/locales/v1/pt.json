@@ -32,7 +32,7 @@
   "login.demo_warning_title": "Acesso somente para demonstração.",
   "login.demo_warning": "Nenhuma senha é exigida porque todos os perfis e transações são sintéticos. Nunca use este padrão para acessar um banco real.",
   "login.judges": "Jurados:",
-  "login.judges_help": "criem um perfil e depois entrem com o Factored ID para conhecer a experiência guiada. Escolher um cliente abre a demonstração sem o tutorial.",
+  "login.judges_help": "criem um perfil e depois entrem com o Factored ID para conhecer a experiência guiada. Escolher um cliente também inicia o tutorial desde o começo.",
   "login.judge_badge": "NOVO JURADO?",
   "login.judge_title": "Comece aqui",
   "login.judge_intro": "Primeiro, crie um perfil de demonstração para receber um Factored ID e acessar a experiência guiada.",
