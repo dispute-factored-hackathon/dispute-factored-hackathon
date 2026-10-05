@@ -230,7 +230,11 @@ function clearTarget() {
             element.removeEventListener("click", targetActivationHandler, true);
         }
     }
-    targetElement?.classList.remove("guided-tour-target", "guided-tour-target-busy");
+    targetElement?.classList.remove(
+        "guided-tour-target",
+        "guided-tour-target-attention",
+        "guided-tour-target-busy",
+    );
     targetElement?.removeAttribute("aria-disabled");
     targetContext?.classList.remove("guided-tour-target-context");
     targetElement = null;
@@ -244,6 +248,9 @@ function setTarget(target, step) {
     targetElement = target;
     if (!target) return;
     target.classList.add("guided-tour-target");
+    const isClickableCard = requiresTargetActivation(step)
+        && target.matches(".hub-card, .bank-card");
+    target.classList.toggle("guided-tour-target-attention", isClickableCard);
     targetContext = target.closest(".app-header, .bottom-nav");
     targetContext?.classList.add("guided-tour-target-context");
     if (!requiresTargetActivation(step)) return;

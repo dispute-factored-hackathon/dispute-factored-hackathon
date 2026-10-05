@@ -7,7 +7,7 @@ import {
     translateValue,
 } from "../i18n.js?v=1";
 import { renderBottomNavigation } from "../components/bottom-nav.js?v=4";
-import { initializeGuidedTour } from "../components/guided-tour.js?v=7";
+import { initializeGuidedTour } from "../components/guided-tour.js?v=8";
 
 await i18nReady;
 

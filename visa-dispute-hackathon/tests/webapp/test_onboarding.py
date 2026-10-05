@@ -355,7 +355,7 @@ def test_complaint_details_resume_the_contextual_tour() -> None:
     client = TestClient(app)
     content = client.get("/static/js/pages/complaint-detail.js").text
 
-    assert 'from "../components/guided-tour.js?v=7"' in content
+    assert 'from "../components/guided-tour.js?v=8"' in content
     assert "await initializeGuidedTour();" in content
 
 
@@ -371,6 +371,20 @@ def test_contextual_tour_keeps_targets_visible_clickable_and_non_overlapping() -
     assert "window.innerWidth" in javascript
     assert "window.innerHeight" in javascript
     assert "prefers-reduced-motion" in css
+
+
+def test_clickable_tour_cards_use_an_accessible_attention_animation() -> None:
+    client = TestClient(app)
+    css = client.get("/static/css/components.css").text
+    javascript = client.get("/static/js/components/guided-tour.js").text
+
+    assert 'target.matches(".hub-card, .bank-card")' in javascript
+    assert '"guided-tour-target-attention"' in javascript
+    assert ".guided-tour-target-attention::before" in css
+    assert "@keyframes guided-tour-card-attention" in css
+    assert "@keyframes guided-tour-card-icon-attention" in css
+    assert "pointer-events: none" in css
+    assert "prefers-reduced-motion: reduce" in css
 
 
 def test_contextual_tour_reenables_controls_after_changing_steps() -> None:
