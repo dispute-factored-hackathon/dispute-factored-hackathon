@@ -492,7 +492,20 @@ def test_login_explains_factored_id_where_it_is_requested() -> None:
     assert "What is a Factored ID?" in panel
     assert "six-digit demo login code" in panel
     assert 'href="/signup"' in panel
+    assert "Authentication on a call" in panel
+    assert "phone number used for the call" in panel
+    assert "document number on the phone keypad" in panel
+    assert "Factored ID can be used as that document number" in panel
     assert "Factored ID — six-digit code" in page
     assert "No password is needed" in page
     assert ".factored-id-explainer" in styles
     assert ".factored-id-example" in styles
+    assert ".factored-id-call-note" in styles
+
+
+def test_signup_explains_both_call_authentication_options() -> None:
+    page = TestClient(app).get("/signup").text
+
+    assert "phone number used for the call" in page
+    assert "document number on the phone keypad" in page
+    assert "Factored ID can be used as that document number" in page
