@@ -1,0 +1,4 @@
+type: duckdb
+name: lakehouse
+connection:
+  database: "md:prod?motherduck_token=${env.MOTHERDUCK_LAKEHOUSE_TOKEN}"

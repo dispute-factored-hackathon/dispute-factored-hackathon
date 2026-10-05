@@ -1,0 +1,26 @@
+project: hackathon_factored_data_eng
+model_defaults:
+  dialect: duckdb
+
+gateways:
+  local:
+    connection:
+      type: duckdb
+      database: "{{ env_var('LAKEHOUSE_LOCAL_PATH') }}"
+      extensions:
+        - spatial
+
+  motherduck:
+    connection:
+      type: motherduck
+      database: prod
+      token: "{{ env_var('MOTHERDUCK_LAKEHOUSE_TOKEN') }}"
+      extensions:
+        - spatial
+    # SQLMesh state lives in its own catalog, separate from the data
+    state_connection:
+      type: motherduck
+      database: sqlmesh_state
+      token: "{{ env_var('MOTHERDUCK_LAKEHOUSE_TOKEN') }}"
+
+default_gateway: motherduck

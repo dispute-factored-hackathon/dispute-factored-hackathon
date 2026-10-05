@@ -1,0 +1,224 @@
+# Data contract specification for bronze service_agents table
+dataset: lakehouse/bronze/service_agents
+
+variables:
+  LOAD_IDS:
+
+# Scope the contract to a single delivery (one contract run = one load)
+filter: "list_contains(string_split('${var.LOAD_IDS}', ','), _dlt_load_id)"
+
+checks:
+  - schema:
+      allow_extra_columns: false
+      allow_other_column_order: true
+  - row_count:
+
+  # Exactly one snapshot date per load (the filter above already scopes the expression to the load)
+  # NOTE: verify the v4 `metric` syntax (expression vs query) before relying on it
+  - metric:
+      name: Exactly one distinct snapshot_ts per load
+      expression: COUNT(DISTINCT snapshot_ts)
+      threshold:
+        must_be: 1
+
+  # Date coherence (warn only: rows are kept and flagged in silver). Compared date to date
+  - failed_rows:
+      name: hire_date later than snapshot
+      expression: "TRY_CAST(hire_date AS TIMESTAMP)::DATE > snapshot_ts"
+      threshold:
+        must_be: 0
+        level: warn
+
+columns:
+  - name: agent_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - duplicate:
+      - invalid:
+          valid_max_length: 20
+
+  - name: employee_code
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - duplicate:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 15
+
+  - name: first_name
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          column_expression: STRIP_ACCENTS(UPPER(first_name))
+          valid_max_length: 100
+          valid_format:
+            name: Uppercase letters, spaces, hyphens and apostrophes regex
+            regex: '^[A-Z\s\-'']+$'
+
+  - name: last_name
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          column_expression: STRIP_ACCENTS(UPPER(last_name))
+          valid_max_length: 100
+          valid_format:
+            name: Uppercase letters, spaces, hyphens and apostrophes regex
+            regex: '^[A-Z\s\-'']+$'
+
+  - name: email
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 100
+
+  - name: phone
+    data_type: VARCHAR
+    checks:
+      - invalid:
+          name: Phone format check
+          valid_max_length: 20
+          valid_format:
+            name: Phone regex
+            regex: '^\+?[0-9\s\-\(\)]{7,20}$'
+
+  - name: native_accent
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 50
+          valid_values: ['mexican', 'colombian', 'argentine']
+
+  - name: country_of_origin
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          # (!) Open question: the data dictionary does not list valid values; profile the data first
+          valid_max_length: 50
+
+  - name: assigned_branch_id
+    data_type: VARCHAR
+    checks:
+      - invalid:
+          valid_max_length: 20
+
+  - name: agent_type
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 30
+          valid_values: ['Phone', 'In-Person', 'Digital', 'Hybrid']
+
+  - name: experience_level
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 20
+          valid_values: ['Junior', 'Mid-Senior', 'Senior', 'Specialist']
+
+  - name: languages
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 100
+
+  - name: specialty
+    data_type: VARCHAR
+    checks:
+      - invalid:
+          valid_max_length: 100
+
+  - name: hire_date
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - failed_rows:
+          name: Verify hire_date is castable to DATE
+          expression: "hire_date IS NOT NULL AND TRY_CAST(hire_date AS DATE) IS NULL"
+
+  - name: avg_csat
+    data_type: VARCHAR
+    checks:
+      - invalid:
+          qualifier: format
+          name: Decimal(3,2) string format check
+          valid_format:
+            name: Decimal 3_2 regex
+            regex: '^\d(\.\d{1,2})?$'
+      - invalid:
+          qualifier: range
+          column_expression: TRY_CAST(avg_csat AS DECIMAL(3,2))
+          valid_min: 1
+          valid_max: 5
+      - failed_rows:
+          name: Verify avg_csat is castable to DECIMAL(3,2)
+          expression: "avg_csat IS NOT NULL AND TRY_CAST(avg_csat AS DECIMAL(3,2)) IS NULL"
+
+  - name: total_monthly_interactions
+    data_type: VARCHAR
+    checks:
+      - invalid:
+          column_expression: TRY_CAST(total_monthly_interactions AS INTEGER)
+          valid_min: 0
+      - failed_rows:
+          name: Verify total_monthly_interactions is castable to INTEGER
+          expression: "total_monthly_interactions IS NOT NULL AND TRY_CAST(total_monthly_interactions AS INTEGER) IS NULL"
+
+  - name: agent_status
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 20
+          valid_values: ['Active', 'Vacation', 'Leave', 'Inactive']
+
+  - name: work_shift
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 20
+          valid_values: ['Morning', 'Afternoon', 'Night', 'Rotating']
+
+  # Business date of the delivered photo, stamped by to_bronze.py from the CLI argument
+  - name: snapshot_ts
+    data_type: DATE
+    checks:
+      - missing:
+
+  - name: _source_file
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 255
+
+  - name: _processed_at
+    data_type: TIMESTAMP WITH TIME ZONE
+    checks:
+      - missing:
+
+  - name: _dlt_load_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 64
+
+  - name: _dlt_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 64
