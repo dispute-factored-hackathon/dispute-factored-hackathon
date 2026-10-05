@@ -215,6 +215,15 @@ class JevVoiceRouter:
                 model=model,
             )
 
+        repeat_probability = self._noul(answers, "repeat_last_agent_message")
+        if repeat_probability >= self.confidence_threshold:
+            return JevVoiceDecision(
+                JevAction.TOOL,
+                repeat_probability,
+                tool_name="repeat_last_message",
+                model=model,
+            )
+
         language_answer = answers.get("explicit_language_change")
         if isinstance(language_answer, dict) and language_answer.get("type") == "choice":
             language_choice = str(language_answer.get("choice", "none"))
@@ -376,6 +385,22 @@ class JevVoiceRouter:
                 "criteria": {
                     "true": "The caller explicitly requests a human.",
                     "false": "The caller only asks for help, reports frustration, or discusses a problem.",
+                },
+            },
+            "repeat_last_agent_message": {
+                "type": "noul",
+                "instructions": (
+                    "Is the caller explicitly asking Izzy to repeat the last thing Izzy said?"
+                ),
+                "criteria": {
+                    "true": (
+                        "A clear request such as repeat, say that again, repita, repetir, "
+                        "repete, repita eso, or vuelve a decirlo."
+                    ),
+                    "false": (
+                        "The caller is repeating their own answer, asking to restart, asking to "
+                        "go back, or making an unrelated request."
+                    ),
                 },
             },
             "explicit_language_change": {

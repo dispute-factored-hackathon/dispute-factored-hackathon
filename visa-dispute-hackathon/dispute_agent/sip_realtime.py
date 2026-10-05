@@ -752,6 +752,7 @@ class SipRealtimeGateway:
         self._satisfaction_survey_repository = satisfaction_survey_repository
 
         self._calls: VoiceCallService | None = None
+        self._last_spoken_by_call: dict[str, str] = {}
 
         self._websocket_connect = websocket_connect
 
@@ -826,6 +827,7 @@ class SipRealtimeGateway:
                     self._dispute_classification_tool(),
                     self._csat_tool(),
                     self._human_handoff_tool(),
+                    self._repeat_last_message_tool(),
                 ],
                 tool_choice="auto",
                 parallel_tool_calls=False,
@@ -930,6 +932,7 @@ class SipRealtimeGateway:
             )
         finally:
             self.calls.finalize(call_id)
+            self._last_spoken_by_call.pop(call_id, None)
 
     def _connect(self, url: str) -> Any:
         connector = self._websocket_connect
@@ -1133,6 +1136,7 @@ class SipRealtimeGateway:
                             elif opening_completed and not active_response:
                                 await self._speak(
                                     websocket,
+                                    call_id,
                                     self._message_for(
                                         self.calls.get(call_id),
                                         "unclear_speech",
@@ -1244,6 +1248,7 @@ class SipRealtimeGateway:
                                 pending_handoff = None
                                 await self._speak(
                                     websocket,
+                                    call_id,
                                     self._message_for(
                                         self.calls.get(call_id),
                                         "handoff_failed",
@@ -1304,7 +1309,7 @@ class SipRealtimeGateway:
                             if silent_model_response and not self._has_any_tool_call(event):
                                 direct_answer = self._response_text(event)
                                 if direct_answer:
-                                    await self._speak(websocket, direct_answer)
+                                    await self._speak(websocket, call_id, direct_answer)
                                 else:
                                     current_state = self.calls.get(call_id)
                                     _telemetry(
@@ -1315,6 +1320,7 @@ class SipRealtimeGateway:
                                     )
                                     await self._speak(
                                         websocket,
+                                        call_id,
                                         self._message_for(current_state, "turn_recovery"),
                                     )
                             last_customer_transcript = ""
@@ -1417,6 +1423,7 @@ class SipRealtimeGateway:
 
                             await self._speak(
                                 websocket,
+                                call_id,
                                 self._message_for(
                                     state,
                                     "opening",
@@ -1488,7 +1495,11 @@ class SipRealtimeGateway:
             state, should_respond = self.calls.receive_dtmf(call_id, key)
 
         except ValueError:
-            await self._speak(websocket, self._message_for(self.calls.get(call_id), "invalid_dtmf"))
+            await self._speak(
+                websocket,
+                call_id,
+                self._message_for(self.calls.get(call_id), "invalid_dtmf"),
+            )
 
             return None
 
@@ -1534,6 +1545,7 @@ class SipRealtimeGateway:
             )
             await self._speak(
                 websocket,
+                call_id,
                 self._message_for(state, self._handoff_message_reason(handoff))
                 if state.stage is VoiceCallStage.HANDOFF
                 else self._message_for(state, reason),
@@ -1681,6 +1693,17 @@ class SipRealtimeGateway:
                     result = self._message_for(state, "ambiguous_navigation")
                     tool_metadata = {
                         "outcome": "clarification_requested",
+                        "stage_preserved": state.stage.value,
+                    }
+
+                elif tool_name == "repeat_last_message":
+                    state = self.calls.get(call_id)
+                    result = self._last_spoken_by_call.get(call_id) or self._message_for(
+                        state,
+                        "nothing_to_repeat",
+                    )
+                    tool_metadata = {
+                        "outcome": "repeated" if call_id in self._last_spoken_by_call else "empty",
                         "stage_preserved": state.stage.value,
                     }
 
@@ -2048,10 +2071,7 @@ class SipRealtimeGateway:
                     )
                 )
 
-            await self._speak(
-                websocket,
-                result,
-            )
+            await self._speak(websocket, call_id, result)
 
             if state.stage is VoiceCallStage.HANDOFF and pending_handoff is None:
                 handoff = self._handoff_plan(state)
@@ -2109,11 +2129,11 @@ class SipRealtimeGateway:
         await self._delete_conversation_item(websocket, item_id)
 
         if decision.action is JevAction.REFUSE_ABUSE:
-            await self._speak(websocket, self._message_for(state, "prompt_abuse"))
+            await self._speak(websocket, call_id, self._message_for(state, "prompt_abuse"))
             return True, None
 
         if decision.action is JevAction.CLARIFY:
-            await self._speak(websocket, self._message_for(state, "unclear_speech"))
+            await self._speak(websocket, call_id, self._message_for(state, "unclear_speech"))
             return True, None
 
         if decision.tool_name is None:
@@ -2331,8 +2351,10 @@ class SipRealtimeGateway:
             redacted=False,
         )
 
-    async def _speak(self, websocket: Any, message: str) -> None:
+    async def _speak(self, websocket: Any, call_id: str, message: str) -> None:
         """Create one server-directed audio response."""
+
+        self._last_spoken_by_call[call_id] = message
 
         await websocket.send(
             json.dumps(
@@ -2700,6 +2722,22 @@ class SipRealtimeGateway:
         }
 
     @staticmethod
+    def _repeat_last_message_tool() -> dict[str, Any]:
+        return {
+            "type": "function",
+            "name": "repeat_last_message",
+            "description": (
+                "Use when the caller explicitly asks Izzy to repeat the last thing Izzy said. "
+                "Do not interpret this as restarting or going back in the workflow."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        }
+
+    @staticmethod
     def _navigation_clarification_tool() -> dict[str, Any]:
         return {
             "type": "function",
@@ -2743,9 +2781,10 @@ Address the customer naturally by first name. Do not repeat the other profile fi
             default=str,
         )
 
-        return f"""You are Izzy, the virtual card-dispute assistant for Factored Bank.
+        return f"""You are Izzy, the male virtual card-dispute assistant for Factored Bank.
 
 Speak in {state.locale.locale}, using {state.locale.accent} regional wording naturally.
+In languages with grammatical gender, refer to yourself using masculine forms.
 
 Your role is to guide the caller through any required language selection, authentication, and card-dispute support.
 
@@ -2772,7 +2811,9 @@ Language workflow:
 - Do not claim that the caller's physical location or nationality is known. The language is only inferred from the telephone calling code.
 
 Authentication workflow:
-- At needs_auth_method, ask whether the caller prefers authentication using the phone number used for this call or a document number.
+- At needs_auth_method, explain before the question that phone authentication is automatic and
+  requires no typing. Explain that the document may be the caller's Factored ID and must be entered
+  using the telephone keypad. Then ask which authentication method the caller prefers.
 - If the caller chooses the phone number, call set_authentication_method with method=phone.
 - If the caller chooses document authentication, call set_authentication_method with method=document.
 - For unintelligible, ambiguous, unrelated, or low-confidence speech, call
@@ -2782,7 +2823,8 @@ Authentication workflow:
 
 Document workflow:
 - Never ask the caller to SAY a document number aloud.
-- Document numbers must be entered only through the telephone keypad.
+- The document number may be the caller's Factored ID.
+- Document numbers and Factored IDs must be entered only through the telephone keypad.
 - At needs_document, instruct the caller to type the document number and press pound/numeral/hash (#). Star (*) clears the current entry.
 - Never repeat, expose, infer, or summarize document digits.
 
@@ -2813,6 +2855,9 @@ Transaction-search workflow:
 Question discipline:
 - Ask a question only when the current workflow state requires an immediate caller answer and you will wait for it.
 - Ask at most one focused question per turn.
+- Put every instruction, explanation, and example before the question. The question must be the
+  final sentence spoken in that turn. Stop speaking immediately after the question mark; never add
+  an affirmation, instruction, example, optional offer, or status statement after a question.
 - Do not append rhetorical questions, optional offers, or "if you want" questions to status updates, acknowledgements, tool progress, or terminal messages.
 - When a tool can answer or advance the workflow, call it silently instead of asking the caller to wait or confirm an internal action.
 
@@ -2844,8 +2889,12 @@ Satisfaction workflow:
 
 General behavior:
 - Introduce yourself as Izzy from Factored Bank.
+- You are male. In Portuguese and Spanish, use masculine self-reference.
 - Explain that you help with card disputes.
-- In the opening, clearly state once that the caller can ask for a human agent at any time.
+- In the opening, clearly state once that the caller can ask for a human agent at any time and can
+  say "repeat" to hear Izzy's last message again.
+- Mention the availability of human support only once in the opening. Never remind the caller again
+  unless the caller explicitly requests a human or a handoff actually becomes necessary.
 - Keep prompts concise and natural for a telephone call.
 - Stay within authentication and card-dispute support.
 - If the caller explicitly asks for a human, person, operator, attendant, or specialist at any active stage, call request_human immediately. This global control takes priority over language, authentication, transaction, classification, and satisfaction tools.
@@ -2854,6 +2903,8 @@ General behavior:
 - If the caller asks to go back, return, undo, or rewind without naming the target or desired
   action, call clarify_navigation. Do not guess what should change. If the caller clearly says
   what they want changed, follow that intent instead.
+- If the caller asks you to repeat your last message, call repeat_last_message. Repeating does not
+  change the workflow stage or the information already collected.
 - Whenever you call a tool, your response must contain only the tool call. Never speak an acknowledgement, plan, or assumed result before a tool result.
 """
 
@@ -2883,6 +2934,7 @@ General behavior:
         tools = [factory() for factory in factories]
         if state.stage is not VoiceCallStage.HANDOFF:
             tools.append(cls._human_handoff_tool())
+            tools.append(cls._repeat_last_message_tool())
         if state.stage not in {VoiceCallStage.COMPLETED, VoiceCallStage.HANDOFF}:
             tools.append(cls._navigation_clarification_tool())
         return tools
@@ -2949,39 +3001,39 @@ General behavior:
         messages = {
             "pt": {
                 "opening": (
-                    "Olá! Eu sou Izzy, assistente virtual do Factored Bank. "
+                    "Olá! Eu sou o Izzy, assistente virtual do Factored Bank. "
                     "Posso ajudar você com contestações de cartão. "
+                    "A qualquer momento, você pode pedir um atendente humano ou dizer repetir "
+                    "para ouvir minha última fala novamente. "
                     "Pelo código telefônico desta ligação, selecionei português. "
                     "Deseja continuar neste idioma ou prefere mudar para inglês ou espanhol?"
                 ),
                 "auth_method": (
-                    "Perfeito. Para continuar, você prefere se autenticar usando "
-                    "o número de telefone desta ligação ou usando seu documento? "
-                    "Você pode pedir para falar com um atendente humano a qualquer momento."
+                    "A autenticação pelo número desta ligação é automática e não exige digitação. "
+                    "Na opção documento, você pode usar seu Factored ID e deve digitá-lo no "
+                    "teclado do telefone. Qual opção prefere: telefone ou documento?"
                 ),
                 "phone_success": (
                     "Olá, {name}. Encontrei seu cadastro usando o número de telefone "
-                    "desta ligação e sua autenticação foi concluída. "
-                    "Você está com algum problema em uma transação? Diga o que lembrar, "
-                    "como estabelecimento, valor aproximado, data ou local. Se preferir, "
-                    "você pode pedir um atendente humano a qualquer momento."
+                    "desta ligação e sua autenticação automática foi concluída sem digitação. "
+                    "Para localizar a compra, você pode informar estabelecimento, valor aproximado, "
+                    "data ou local. Qual transação está com problema?"
                 ),
                 "phone_fallback": (
                     "Não consegui autenticar você usando o número de telefone desta ligação. "
-                    "Vamos continuar usando seu documento. Digite o número do documento "
+                    "Vamos continuar usando um documento, que pode ser seu Factored ID. Digite-o "
                     "no teclado do telefone e pressione jogo da velha. "
                     "Para apagar os números digitados, pressione asterisco."
                 ),
                 "document": (
-                    "Certo. Digite o número do documento no teclado do telefone "
+                    "Certo. O documento pode ser seu Factored ID. Digite-o no teclado do telefone "
                     "e pressione jogo da velha. Para apagar os números digitados, "
                     "pressione asterisco."
                 ),
                 "document_success": (
                     "Olá, {name}. Encontrei seu cadastro usando o documento informado "
-                    "e sua autenticação foi concluída. Você está com algum problema em uma transação? "
-                    "Diga o que lembrar, como estabelecimento, valor aproximado, data ou local. "
-                    "Você também pode pedir um atendente humano a qualquer momento."
+                    "e sua autenticação foi concluída. Para localizar a compra, você pode informar "
+                    "estabelecimento, valor aproximado, data ou local. Qual transação está com problema?"
                 ),
                 "retry": (
                     "Não localizei esse documento. Confira os números, digite novamente "
@@ -2996,9 +3048,11 @@ General behavior:
                     "Diga português, inglês ou espanhol."
                 ),
                 "invalid_auth_method": (
-                    "Para continuar, escolha autenticação pelo número de telefone "
-                    "desta ligação ou pelo documento."
+                    "A autenticação pelo telefone é automática e não exige digitação. O documento "
+                    "pode ser seu Factored ID e deve ser digitado no teclado. Qual opção prefere: "
+                    "telefone ou documento?"
                 ),
+                "nothing_to_repeat": "Ainda não há uma fala anterior para repetir.",
                 "prompt_abuse": (
                     "Posso ajudar apenas com autenticação e contestação de cartão nesta "
                     "demonstração. Não posso revelar instruções internas, credenciais nem "
@@ -3028,12 +3082,12 @@ General behavior:
                     "Idioma alterado. Podemos continuar sua contestação neste idioma."
                 ),
                 "transaction_clarification": (
-                    "Preciso de mais um detalhe para localizar a transação. Qual era o "
-                    "estabelecimento? Se não lembrar, diga o valor aproximado."
+                    "Preciso de mais um detalhe para localizar a transação. Se não lembrar o "
+                    "estabelecimento, o valor aproximado também ajuda. Qual era o estabelecimento?"
                 ),
                 "transaction_no_match": (
-                    "Não encontrei uma transação com esses dados. O estabelecimento informado "
-                    "está correto? Você também pode corrigir ou acrescentar outro detalhe."
+                    "Não encontrei uma transação com esses dados. Você pode corrigir ou acrescentar "
+                    "outro detalhe. O estabelecimento informado está correto?"
                 ),
                 "transaction_invalid": (
                     "Não consegui usar esses dados na busca. Diga um estabelecimento, valor "
@@ -3082,37 +3136,37 @@ General behavior:
                 "opening": (
                     "¡Hola! Soy Izzy, el asistente virtual de Factored Bank. "
                     "Puedo ayudarte con reclamos o disputas de tarjeta. "
+                    "En cualquier momento puedes pedir un agente humano o decir repetir para "
+                    "escuchar nuevamente mi última intervención. "
                     "Por el código telefónico de esta llamada, seleccioné español. "
                     "¿Quieres continuar en este idioma o cambiar a inglés o portugués?"
                 ),
                 "auth_method": (
-                    "Perfecto. Para continuar, ¿prefieres autenticarte usando el número "
-                    "de teléfono de esta llamada o usando tu documento? Puedes pedir hablar "
-                    "con un agente humano en cualquier momento."
+                    "La autenticación con el número de esta llamada es automática y no requiere "
+                    "digitar nada. En la opción documento puedes usar tu Factored ID y debes "
+                    "ingresarlo con el teclado del teléfono. ¿Qué opción prefieres: teléfono o documento?"
                 ),
                 "phone_success": (
                     "Hola, {name}. Encontré tu registro usando el número de teléfono "
-                    "de esta llamada y tu autenticación está completa. "
-                    "¿Tienes algún problema con una transacción? Dime lo que recuerdes, "
-                    "como el comercio, el valor aproximado, la fecha o el lugar. Si lo prefieres, "
-                    "puedes pedir un agente humano en cualquier momento."
+                    "de esta llamada y la autenticación automática se completó sin digitar nada. "
+                    "Para encontrar la compra puedes indicar comercio, valor aproximado, fecha o "
+                    "lugar. ¿Con qué transacción tienes un problema?"
                 ),
                 "phone_fallback": (
                     "No pude autenticarte usando el número de teléfono de esta llamada. "
-                    "Continuaremos usando tu documento. Ingresa el número del documento "
+                    "Continuaremos usando un documento, que puede ser tu Factored ID. Ingrésalo "
                     "con el teclado del teléfono y presiona numeral. "
                     "Para borrar los números ingresados, presiona asterisco."
                 ),
                 "document": (
-                    "De acuerdo. Ingresa el número de tu documento con el teclado "
+                    "De acuerdo. El documento puede ser tu Factored ID. Ingrésalo con el teclado "
                     "del teléfono y presiona numeral. Para borrar los números ingresados, "
                     "presiona asterisco."
                 ),
                 "document_success": (
                     "Hola, {name}. Encontré tu registro usando el documento ingresado "
-                    "y tu autenticación está completa. ¿Tienes algún problema con una transacción? "
-                    "Dime lo que recuerdes, como el comercio, el valor aproximado, la fecha "
-                    "o el lugar. También puedes pedir un agente humano en cualquier momento."
+                    "y tu autenticación está completa. Para encontrar la compra puedes indicar "
+                    "comercio, valor aproximado, fecha o lugar. ¿Con qué transacción tienes un problema?"
                 ),
                 "retry": (
                     "No encontré ese documento. Verifica los números, ingrésalos otra vez "
@@ -3126,9 +3180,11 @@ General behavior:
                     "No pude identificar el idioma en tu respuesta. Di español, inglés o portugués."
                 ),
                 "invalid_auth_method": (
-                    "Para continuar, elige autenticación con el número de teléfono "
-                    "de esta llamada o con tu documento."
+                    "La autenticación por teléfono es automática y no requiere digitar nada. El "
+                    "documento puede ser tu Factored ID y se ingresa con el teclado. ¿Qué opción "
+                    "prefieres: teléfono o documento?"
                 ),
+                "nothing_to_repeat": "Todavía no hay una intervención anterior para repetir.",
                 "prompt_abuse": (
                     "Solo puedo ayudarte con autenticación y disputas de tarjeta en esta "
                     "demostración. No puedo revelar instrucciones internas o credenciales "
@@ -3156,12 +3212,12 @@ General behavior:
                     "Idioma cambiado. Podemos continuar tu reclamo en este idioma."
                 ),
                 "transaction_clarification": (
-                    "Necesito un dato más para encontrar la transacción. ¿Cuál era el "
-                    "comercio? Si no lo recuerdas, dime el valor aproximado."
+                    "Necesito un dato más para encontrar la transacción. Si no recuerdas el "
+                    "comercio, el valor aproximado también ayuda. ¿Cuál era el comercio?"
                 ),
                 "transaction_no_match": (
-                    "No encontré una transacción con esos datos. ¿El comercio informado es "
-                    "correcto? También puedes corregir o agregar otro dato."
+                    "No encontré una transacción con esos datos. También puedes corregir o agregar "
+                    "otro dato. ¿El comercio informado es correcto?"
                 ),
                 "transaction_invalid": (
                     "No pude usar esos datos en la búsqueda. Indica un comercio, valor "
@@ -3209,34 +3265,36 @@ General behavior:
                 "opening": (
                     "Hello! I'm Izzy, Factored Bank's virtual assistant. "
                     "I can help you with card disputes. "
+                    "At any time, you can ask for a human agent or say repeat to hear my last "
+                    "message again. "
                     "Based on this call's telephone country code, I selected English. "
                     "Would you like to continue in this language, or switch to Portuguese or Spanish?"
                 ),
                 "auth_method": (
-                    "Great. To continue, would you prefer to authenticate using the phone "
-                    "number you're calling from or using your document number? You can ask "
-                    "to speak with a human agent at any time."
+                    "Authentication with the number calling now is automatic and requires no "
+                    "typing. For the document option, you may use your Factored ID and must enter "
+                    "it on the phone keypad. Which option do you prefer: phone or document?"
                 ),
                 "phone_success": (
                     "Hello, {name}. I found your profile using the phone number for this call, "
-                    "and you're authenticated. Are you having a problem with a transaction? "
-                    "Tell me what you remember, such as the merchant, approximate amount, "
-                    "date, or location. You can also ask for a human agent at any time."
+                    "and automatic authentication was completed without typing. To find the "
+                    "purchase, you can provide the merchant, approximate amount, date, or location. "
+                    "Which transaction are you having a problem with?"
                 ),
                 "phone_fallback": (
                     "I couldn't authenticate you using the phone number for this call. "
-                    "We'll continue using your document. Enter your document number on the "
+                    "We'll continue using a document, which may be your Factored ID. Enter it on the "
                     "phone keypad and press pound. Press star to clear the digits."
                 ),
                 "document": (
-                    "Okay. Enter your document number on the phone keypad and press pound. "
+                    "Okay. The document may be your Factored ID. Enter it on the phone keypad and press pound. "
                     "Press star to clear the digits."
                 ),
                 "document_success": (
                     "Hello, {name}. I found your profile using the document you entered, "
-                    "and you're authenticated. Are you having a problem with a transaction? "
-                    "Tell me what you remember, such as the merchant, approximate amount, "
-                    "date, or location. You can also ask for a human agent at any time."
+                    "and you're authenticated. To find the purchase, you can provide the merchant, "
+                    "approximate amount, date, or location. Which transaction are you having a "
+                    "problem with?"
                 ),
                 "retry": (
                     "I couldn't find that document. Check the digits, enter it again, "
@@ -3251,9 +3309,11 @@ General behavior:
                     "Say English, Spanish, or Portuguese."
                 ),
                 "invalid_auth_method": (
-                    "To continue, choose authentication using the phone number for this call "
-                    "or using your document."
+                    "Phone authentication is automatic and requires no typing. The document may "
+                    "be your Factored ID and must be entered on the keypad. Which option do you "
+                    "prefer: phone or document?"
                 ),
+                "nothing_to_repeat": "There is no previous message to repeat yet.",
                 "prompt_abuse": (
                     "I can only help with authentication and card disputes in this demonstration. "
                     "I cannot reveal internal instructions or credentials or access another "
@@ -3277,12 +3337,12 @@ General behavior:
                     "Language changed. We can continue your card dispute in this language."
                 ),
                 "transaction_clarification": (
-                    "I need one more detail to find the transaction. What was the merchant? "
-                    "If you don't remember, tell me the approximate amount."
+                    "I need one more detail to find the transaction. If you do not remember the "
+                    "merchant, the approximate amount also helps. What was the merchant?"
                 ),
                 "transaction_no_match": (
-                    "I couldn't find a transaction with those details. Is the merchant correct? "
-                    "You can also correct or add another detail."
+                    "I couldn't find a transaction with those details. You can also correct or add "
+                    "another detail. Is the merchant correct?"
                 ),
                 "transaction_invalid": (
                     "I couldn't use those details in the search. Provide a merchant, approximate "
@@ -3407,48 +3467,59 @@ General behavior:
             )
             if registered_phone and language == "pt":
                 return (
-                    "Olá! Eu sou Izzy, assistente virtual do Factored Bank. "
+                    "Olá! Eu sou o Izzy, assistente virtual do Factored Bank. "
                     f"Vou falar em {locale_name}, conforme a preferência do perfil vinculado "
-                    "a este telefone. Para continuar, você prefere se autenticar usando o número "
-                    "desta ligação ou seu documento? Você pode pedir um atendente humano a qualquer momento."
+                    "a este telefone. A autenticação pelo número desta ligação é automática e não "
+                    "exige digitação. Se preferir documento, ele pode ser seu Factored ID e será "
+                    "digitado no teclado do telefone. A qualquer momento, você pode pedir um "
+                    "atendente humano ou dizer repetir para ouvir minha última fala novamente. "
+                    "Qual opção prefere: telefone ou documento?"
                 )
             if registered_phone and language == "es":
                 return (
                     "¡Hola! Soy Izzy, el asistente virtual de Factored Bank. "
                     f"Hablaré en {locale_name}, según la preferencia del perfil vinculado a este "
-                    "teléfono. Para continuar, ¿prefieres autenticarte con el número de esta llamada "
-                    "o con tu documento? Puedes pedir un agente humano en cualquier momento."
+                    "teléfono. La autenticación con el número de esta llamada es automática y no "
+                    "requiere digitar nada. Si prefieres documento, puede ser tu Factored ID y se "
+                    "ingresa con el teclado del teléfono. En cualquier momento puedes pedir un "
+                    "agente humano o decir repetir para escuchar nuevamente mi última intervención. "
+                    "¿Qué opción prefieres: teléfono o documento?"
                 )
             if registered_phone and language == "en":
                 return (
                     "Hello! I'm Izzy, Factored Bank's virtual assistant. "
                     f"I'll use {locale_name}, based on the preference in the profile linked to this "
-                    "phone. To continue, would you prefer to authenticate with this phone number or "
-                    "your document number? You can ask for a human agent at any time."
+                    "phone. Authentication with the number calling now is automatic and requires no "
+                    "typing. If you prefer a document, it may be your Factored ID and is entered on "
+                    "the phone keypad. At any time, you can ask for a human agent or say repeat to "
+                    "hear my last message again. Which option do you prefer: phone or document?"
                 )
             if language == "pt":
                 return (
-                    "Olá! Eu sou Izzy, assistente virtual do Factored Bank. "
+                    "Olá! Eu sou o Izzy, assistente virtual do Factored Bank. "
                     "Posso ajudar você com contestações de cartão. "
+                    "A qualquer momento, você pode pedir um atendente humano ou dizer repetir "
+                    "para ouvir minha última fala novamente. "
                     f"Pelo código telefônico desta ligação, selecionei {locale_name}. "
-                    "Deseja continuar neste idioma ou prefere mudar para inglês ou espanhol? "
-                    "Você pode pedir um atendente humano a qualquer momento."
+                    "Deseja continuar neste idioma ou prefere mudar para inglês ou espanhol?"
                 )
             if language == "es":
                 return (
                     "¡Hola! Soy Izzy, el asistente virtual de Factored Bank. "
                     "Puedo ayudarte con reclamos o disputas de tarjeta. "
+                    "En cualquier momento puedes pedir un agente humano o decir repetir para "
+                    "escuchar nuevamente mi última intervención. "
                     f"Por el código telefónico de esta llamada, seleccioné {locale_name}. "
-                    "¿Quieres continuar en este idioma o cambiar a inglés o portugués? "
-                    "Puedes pedir un agente humano en cualquier momento."
+                    "¿Quieres continuar en este idioma o cambiar a inglés o portugués?"
                 )
             if language == "en":
                 return (
                     "Hello! I'm Izzy, Factored Bank's virtual assistant. "
                     "I can help you with card disputes. "
+                    "At any time, you can ask for a human agent or say repeat to hear my last "
+                    "message again. "
                     f"Based on this call's telephone country code, I selected {locale_name}. "
-                    "Would you like to continue in this language, or switch to Portuguese or Spanish? "
-                    "You can ask for a human agent at any time."
+                    "Would you like to continue in this language, or switch to Portuguese or Spanish?"
                 )
             return messages["opening"]
 
@@ -3528,6 +3599,9 @@ General behavior:
 
         if reason == "invalid_auth_method":
             return messages["invalid_auth_method"]
+
+        if reason == "nothing_to_repeat":
+            return messages["nothing_to_repeat"]
 
         if reason == "prompt_abuse":
             return messages["prompt_abuse"]
@@ -3622,8 +3696,8 @@ General behavior:
                     "uma única compra e ela foi cobrada mais de uma vez?"
                 ),
                 "verify_card_environment": (
-                    "Você fez essa compra presencialmente com o cartão, ou ela apareceu como uma "
-                    "compra on-line? Preciso desse dado antes de propor o código Visa."
+                    "Preciso desse dado antes de propor o código Visa. Você fez essa compra "
+                    "presencialmente com o cartão ou ela apareceu como uma compra on-line?"
                 ),
                 "choose_fraud_or_duplicate": (
                     "Não consegui distinguir o problema. Você não autorizou essa compra, ou "
@@ -3643,8 +3717,8 @@ General behavior:
                     "autorizaste una sola compra y se cobró más de una vez?"
                 ),
                 "verify_card_environment": (
-                    "¿Esta compra fue presencial con la tarjeta, o apareció como una compra en "
-                    "línea? Necesito ese dato antes de proponer el código Visa."
+                    "Necesito ese dato antes de proponer el código Visa. ¿Esta compra fue "
+                    "presencial con la tarjeta o apareció como una compra en línea?"
                 ),
                 "choose_fraud_or_duplicate": (
                     "No pude distinguir el problema. ¿No autorizaste esta compra, o reconoces "
@@ -3664,8 +3738,8 @@ General behavior:
                     "or did you authorize one purchase that was charged more than once?"
                 ),
                 "verify_card_environment": (
-                    "Was this an in-person card purchase, or did it appear as an online purchase? "
-                    "I need that detail before proposing the Visa code."
+                    "I need that detail before proposing the Visa code. Was this an in-person "
+                    "card purchase, or did it appear as an online purchase?"
                 ),
                 "choose_fraud_or_duplicate": (
                     "I couldn't distinguish the problem. Did you not authorize this purchase, "
@@ -3701,16 +3775,16 @@ General behavior:
             return SipRealtimeGateway._classification_question_message(state)
         return {
             "pt": (
-                f"Entendi o problema como {category}. Está correto? Diga sim para continuar "
-                "ou não para explicar novamente. Nenhuma ação foi realizada ainda."
+                f"Nenhuma ação foi realizada ainda. Entendi o problema como {category}. "
+                "Diga sim para continuar ou não para explicar novamente. Está correto?"
             ),
             "es": (
-                f"Entendí el problema como {category}. ¿Es correcto? Di sí para continuar "
-                "o no para explicarlo nuevamente. Todavía no se realizó ninguna acción."
+                f"Todavía no se realizó ninguna acción. Entendí el problema como {category}. "
+                "Di sí para continuar o no para explicarlo nuevamente. ¿Es correcto?"
             ),
             "en": (
-                f"I understood the problem as {category}. Is that correct? Say yes to continue "
-                "or no to explain it again. No action has been taken yet."
+                f"No action has been taken yet. I understood the problem as {category}. "
+                "Say yes to continue or no to explain it again. Is that correct?"
             ),
         }[state.locale.language]
 
@@ -4073,7 +4147,7 @@ General behavior:
             return SipRealtimeGateway._transaction_filter_context(state) + (
                 f"Encontrei uma possibilidade: uma compra de {amount} {transaction.currency} "
                 f"na {merchant}, em {spoken_date}, em {city}, "
-                f"{country}. É essa transação? Responda sim ou não."
+                f"{country}. Responda sim ou não. É essa transação?"
             )
         if language == "es":
             country = {
@@ -4088,12 +4162,12 @@ General behavior:
             return SipRealtimeGateway._transaction_filter_context(state) + (
                 f"Encontré una posibilidad: una compra de {amount} {transaction.currency} "
                 f"en {merchant}, el {spoken_date}, en {city}, "
-                f"{country}. ¿Es esa transacción? Responde sí o no."
+                f"{country}. Responde sí o no. ¿Es esa transacción?"
             )
         return SipRealtimeGateway._transaction_filter_context(state) + (
             f"I found one possibility: a {amount} {transaction.currency} purchase at "
             f"{merchant} on {spoken_date} in {city}, {country}. "
-            "Is that the transaction? Answer yes or no."
+            "Answer yes or no. Is that the transaction?"
         )
 
 

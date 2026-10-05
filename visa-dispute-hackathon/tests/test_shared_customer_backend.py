@@ -55,8 +55,10 @@ def test_known_phone_uses_profile_locale_and_skips_language_question() -> None:
     opening = SipRealtimeGateway._message_for(state, "opening")
     assert "português brasileiro" in opening
     assert "prefere mudar" not in opening
-    assert "número desta ligação ou seu documento" in opening
-    assert "atendente humano a qualquer momento" in opening
+    assert "autenticação pelo número desta ligação é automática" in opening
+    assert "Factored ID" in opening
+    assert opening.endswith("Qual opção prefere: telefone ou documento?")
+    assert "pode pedir um atendente humano" in opening
 
 
 def test_document_authentication_uses_same_shared_backend_profile() -> None:

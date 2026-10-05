@@ -198,11 +198,11 @@ WEB_TEXTS: dict[str, dict[str, str]] = {
             "aproximado, a data ou o local."
         ),
         "greeting": (
-            "Olá, {name}. Eu sou Izzy, assistente virtual do Factored Bank. Posso ajudar você a "
+            "Olá, {name}. Eu sou o Izzy, assistente virtual do Factored Bank. Posso ajudar você a "
             "encontrar uma compra no cartão e abrir uma contestação. Qual transação está "
             "causando o problema? Diga o estabelecimento, o valor aproximado, a data ou o local."
         ),
-        "greeting_with_transaction": "Olá, {name}. Eu sou Izzy, assistente virtual do Factored Bank.",
+        "greeting_with_transaction": "Olá, {name}. Eu sou o Izzy, assistente virtual do Factored Bank.",
         "restarted": (
             "Certo, vamos recomeçar. Qual transação está causando o problema? Diga o "
             "estabelecimento, o valor aproximado, a data ou o local."
@@ -223,20 +223,20 @@ WEB_TEXTS: dict[str, dict[str, str]] = {
         ),
         "empty": "Não recebi nenhuma mensagem. Diga qual transação está causando o problema.",
         "rate_limited": (
-            "Este chat atingiu o limite de mensagens. Inicie um novo chat ou ligue para a Izzy "
+            "Este chat atingiu o limite de mensagens. Inicie um novo chat ou ligue para o Izzy "
             "no {phone}."
         ),
         "unavailable": (
             "Não consigo processar mensagens agora. Tente novamente em instantes ou ligue para "
-            "a Izzy no {phone}. Seu progresso foi salvo."
+            "o Izzy no {phone}. Seu progresso foi salvo."
         ),
         "conversation_closed": (
             "Esta conversa foi encerrada. Inicie um novo chat se precisar de ajuda com outra "
-            "transação, ou ligue para a Izzy no {phone}."
+            "transação, ou ligue para o Izzy no {phone}."
         ),
         "handoff": (
             "Vou manter tudo o que conversamos. O atendimento humano não está disponível nesta "
-            "demonstração do chat web, então ligue para a Izzy no {phone} para continuar com "
+            "demonstração do chat web, então ligue para o Izzy no {phone} para continuar com "
             "uma pessoa."
         ),
         "cancelled": "Certo, parei por aqui e não registrei nada novo. Você pode iniciar um novo chat quando quiser.",
@@ -435,7 +435,7 @@ def required_tokens(facts: dict[str, Any]) -> tuple[str, ...]:
 
 LANGUAGE_NAMES = {"en": "English", "es": "Spanish (Latin America)", "pt": "Brazilian Portuguese"}
 
-REPLY_PROMPT = """You are Izzy, Factored Bank's virtual assistant, writing the next message in a \
+REPLY_PROMPT = """You are Izzy, Factored Bank's male virtual assistant, writing the next message in a \
 web chat with an authenticated customer. Reply in {language_name}.
 
 Write 1 to 3 short sentences and ask at most one question. Plain text only, no markdown, no lists.

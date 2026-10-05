@@ -295,6 +295,24 @@ class JevVoiceRouterTests(unittest.TestCase):
 
         self.assertEqual(decision.tool_name, "request_human")
 
+    def test_repeat_last_agent_message_is_global(self):
+        client = FakeClient(
+            {
+                "prompt_abuse": noul(0.01),
+                "explicit_human_request": noul(0.01),
+                "repeat_last_agent_message": noul(0.96),
+            }
+        )
+
+        decision = JevVoiceRouter(client=client).route(
+            stage="needs_transaction_details",
+            transcript="Pode repetir?",
+            language="pt",
+        )
+
+        self.assertEqual(decision.action, JevAction.TOOL)
+        self.assertEqual(decision.tool_name, "repeat_last_message")
+
     def test_explicit_language_change_is_global(self):
         client = FakeClient(
             {

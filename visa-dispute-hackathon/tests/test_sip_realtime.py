@@ -513,7 +513,34 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls.referrals, [])
         spoken = json.dumps(websocket.sent, ensure_ascii=False)
         self.assertIn("O áudio chegou incompleto ou com muito ruído", spoken)
-        self.assertIn("escolha autenticação pelo número de telefone", spoken)
+        self.assertIn("autenticação pelo telefone é automática", spoken)
+
+    async def test_jev_repeat_replays_exact_last_message_without_advancing_stage(self):
+        events = [
+            *opened_session_events(),
+            completed_transcript_event(speaker="customer", transcript="Pode repetir?"),
+        ]
+        router = FakeJevRouter(
+            JevVoiceDecision(
+                JevAction.TOOL,
+                0.97,
+                tool_name="repeat_last_message",
+                model="jev-test",
+            )
+        )
+        gateway, websocket, _ = self._gateway(events, jev_router=router)
+
+        await gateway.accept_and_control("call_repeat", "+5511999990001")
+
+        spoken = [
+            event["response"]["instructions"]
+            for event in websocket.sent
+            if event.get("type") == "response.create"
+            and event.get("response", {}).get("output_modalities") == ["audio"]
+        ]
+        self.assertGreaterEqual(len(spoken), 2)
+        self.assertEqual(spoken[-1], spoken[-2])
+        self.assertEqual(gateway.calls.get("call_repeat").stage, "needs_auth_method")
 
     async def test_ambiguous_back_request_preserves_stage_and_asks_for_intent(self):
         events = [
@@ -950,6 +977,23 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Factored Bank", instructions)
         self.assertEqual(opening["response"]["tool_choice"], "none")
 
+    def test_registered_phone_opening_explains_authentication_once_and_ends_with_question(self):
+        gateway, _, _ = self._gateway([])
+        state = gateway.calls.start("+5511999990001", call_id="call_opening_copy")
+
+        opening = gateway._message_for(state, "opening")
+        auth_retry = gateway._message_for(state, "auth_method_prompt")
+
+        self.assertIn("Eu sou o Izzy", opening)
+        self.assertIn("automática", opening)
+        self.assertIn("não exige digitação", opening)
+        self.assertIn("Factored ID", opening)
+        self.assertIn("dizer repetir", opening)
+        self.assertEqual(opening.count("atendente humano"), 1)
+        self.assertTrue(opening.endswith("?"))
+        self.assertNotIn("atendente humano", auth_retry)
+        self.assertTrue(auth_retry.endswith("?"))
+
     async def test_opening_clears_noise_then_enables_non_interruptible_vad(self):
         events = [
             session_updated_event(),
@@ -1307,7 +1351,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(state.identity)
         outbound = json.dumps(websocket.sent, ensure_ascii=False)
         self.assertIn(
-            "escolha autenticação pelo número de telefone desta ligação ou pelo documento",
+            "autenticação pelo telefone é automática e não exige digitação",
             outbound,
         )
 
@@ -1349,7 +1393,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             outbound,
         )
         self.assertNotIn(
-            "would you prefer to authenticate using the phone number",
+            "Which option do you prefer: phone or document?",
             outbound,
         )
 
@@ -1940,20 +1984,35 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gateway._tool_choice_for(state), "required")
         self.assertEqual(
             {tool["name"] for tool in gateway._tools_for(state)},
-            {"set_authentication_method", "request_human", "clarify_navigation"},
+            {
+                "set_authentication_method",
+                "request_human",
+                "repeat_last_message",
+                "clarify_navigation",
+            },
         )
 
         state = gateway.calls.confirm_language(state.call_id)
         self.assertEqual(gateway._tool_choice_for(state), "required")
         self.assertEqual(
             {tool["name"] for tool in gateway._tools_for(state)},
-            {"set_authentication_method", "request_human", "clarify_navigation"},
+            {
+                "set_authentication_method",
+                "request_human",
+                "repeat_last_message",
+                "clarify_navigation",
+            },
         )
         state = gateway.calls.choose_authentication_method(state.call_id, method="phone")
         self.assertEqual(gateway._tool_choice_for(state), "required")
         self.assertEqual(
             {tool["name"] for tool in gateway._tools_for(state)},
-            {"search_transactions", "request_human", "clarify_navigation"},
+            {
+                "search_transactions",
+                "request_human",
+                "repeat_last_message",
+                "clarify_navigation",
+            },
         )
         clarification = gateway.calls.search_transactions(
             state.call_id,
@@ -1962,7 +2021,12 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gateway._tool_choice_for(clarification.state), "required")
         self.assertEqual(
             {tool["name"] for tool in gateway._tools_for(clarification.state)},
-            {"search_transactions", "request_human", "clarify_navigation"},
+            {
+                "search_transactions",
+                "request_human",
+                "repeat_last_message",
+                "clarify_navigation",
+            },
         )
         selection = gateway.calls.search_transactions(
             state.call_id,
@@ -1971,7 +2035,12 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gateway._tool_choice_for(selection.state), "required")
         self.assertEqual(
             {tool["name"] for tool in gateway._tools_for(selection.state)},
-            {"confirm_transaction", "request_human", "clarify_navigation"},
+            {
+                "confirm_transaction",
+                "request_human",
+                "repeat_last_message",
+                "clarify_navigation",
+            },
         )
 
         confirmed = gateway.calls.resolve_transaction_candidate(
@@ -1981,7 +2050,12 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gateway._tool_choice_for(confirmed.state), "required")
         self.assertEqual(
             {tool["name"] for tool in gateway._tools_for(confirmed.state)},
-            {"classify_dispute", "request_human", "clarify_navigation"},
+            {
+                "classify_dispute",
+                "request_human",
+                "repeat_last_message",
+                "clarify_navigation",
+            },
         )
 
         classified = gateway.calls.classify_dispute(
@@ -1996,6 +2070,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             {
                 "confirm_dispute_classification",
                 "request_human",
+                "repeat_last_message",
                 "clarify_navigation",
             },
         )
@@ -2007,7 +2082,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gateway._tool_choice_for(completed), "auto")
         self.assertEqual(
             {tool["name"] for tool in gateway._tools_for(completed)},
-            {"request_human"},
+            {"request_human", "repeat_last_message"},
         )
 
     async def test_asr_distorted_sim_reaches_problem_classification_question(self):
