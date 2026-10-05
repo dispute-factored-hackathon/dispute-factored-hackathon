@@ -4,6 +4,16 @@
     z-index: 20;
 }
 
+.bank-home-icon {
+    width: 1.35rem;
+    height: 1.35rem;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
 .guided-tour-active {
     overflow: hidden;
 }

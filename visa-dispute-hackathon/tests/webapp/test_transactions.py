@@ -81,10 +81,34 @@ def test_transactions_page_is_available() -> None:
     assert "transactions.js" in response.text
     assert 'class="back-link"' in response.text
     assert 'href="/home"' in response.text
-    assert "history-back.js?v=2" in response.text
+    assert 'class="bank-home-icon"' in response.text
+    assert 'aria-label="Factored Bank home"' in response.text
+    assert "data-history-back" not in response.text
+    assert "history-back.js" not in response.text
 
-    history_back = client.get("/static/js/components/history-back.js").text
-    assert 'get("return") === "home"' in history_back
+
+def test_bank_header_home_controls_never_follow_browser_history() -> None:
+    client = TestClient(app)
+
+    for route in (
+        "/agent",
+        "/cards",
+        "/complaints",
+        "/complaints/CASE-DEMO-123",
+        "/profile",
+        "/transactions",
+        "/transactions/TRX-DEMO-123",
+    ):
+        response = client.get(route)
+
+        assert response.status_code == 200
+        assert 'href="/home"' in response.text
+        assert 'class="bank-home-icon"' in response.text
+        assert 'aria-label="Factored Bank home"' in response.text
+        assert "data-history-back" not in response.text
+        assert "history-back.js" not in response.text
+
+    assert client.get("/static/js/components/history-back.js").status_code == 404
 
 
 def test_transaction_detail_page_is_available() -> None:

@@ -29,7 +29,7 @@
 
     <link
         rel="stylesheet"
-        href="/static/css/components.css?v=4"
+        href="/static/css/components.css?v=5"
     >
 
     <link
@@ -47,11 +47,13 @@
         <header class="app-header">
             <a
                 class="back-link"
-                href="/transactions"
-                aria-label="Back to transactions"
-                data-history-back
+                href="/home"
+                aria-label="Factored Bank home"
             >
-                ←
+                <svg class="bank-home-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M3 10.5 12 3l9 7.5"></path>
+                    <path d="M5.5 9.5V21h13V9.5M9 21v-7h6v7"></path>
+                </svg>
             </a>
 
             <a
@@ -209,8 +211,6 @@
             aria-label="Primary navigation"
         ></nav>
     </main>
-
-    <script type="module" src="/static/js/components/history-back.js?v=1"></script>
 
     <script
         type="module"

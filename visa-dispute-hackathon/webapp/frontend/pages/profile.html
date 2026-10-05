@@ -9,15 +9,18 @@
 
     <link rel="stylesheet" href="/static/css/tokens.css">
     <link rel="stylesheet" href="/static/css/global.css">
-    <link rel="stylesheet" href="/static/css/components.css?v=4">
+    <link rel="stylesheet" href="/static/css/components.css?v=5">
     <link rel="stylesheet" href="/static/css/pages/profile.css">
 </head>
 
 <body>
     <main id="profile-page" class="profile-page" hidden>
         <header class="app-header">
-            <a class="back-link" href="/home" aria-label="Back to menu" data-history-back>
-                ←
+            <a class="back-link" href="/home" aria-label="Factored Bank home">
+                <svg class="bank-home-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M3 10.5 12 3l9 7.5"></path>
+                    <path d="M5.5 9.5V21h13V9.5M9 21v-7h6v7"></path>
+                </svg>
             </a>
 
             <a class="brand-name" href="/home" aria-label="Factored Bank home">
@@ -130,7 +133,6 @@
         <nav id="bottom-nav" class="bottom-nav" aria-label="Primary navigation"></nav>
     </main>
 
-    <script type="module" src="/static/js/components/history-back.js?v=1"></script>
     <script type="module" src="/static/js/pages/profile.js?v=20261001-i18n1"></script>
 </body>
 </html>
