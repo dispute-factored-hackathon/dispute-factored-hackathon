@@ -1,0 +1,22 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Private, versioned storage for DuckDB files (Factored dispute hackathon).
+Resources:
+  DuckDbBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: dispute-factored-duckdb-832271495954-sa-east-1
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Project
+          Value: dispute-factored
+Outputs:
+  BucketArn:
+    Value: !GetAtt DuckDbBucket.Arn
