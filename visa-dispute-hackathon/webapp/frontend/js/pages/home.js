@@ -13,7 +13,7 @@ import {
 
 import {
     initializeGuidedTour,
-} from "../components/guided-tour.js?v=11";
+} from "../components/guided-tour.js?v=12";
 
 
 const homePage =
@@ -82,7 +82,11 @@ async function openShadyBusiness(event) {
 
 async function restoreShadyBusinessStart() {
     const state = await apiRequest("/onboarding/tour", { method: "GET" });
-    if (state.status === "completed" && state.last_completed_step === "finish") {
+    const firstExperienceEnded =
+        (state.status === "completed" && state.last_completed_step === "finish")
+        || (state.status === "skipped"
+            && state.last_completed_step === "first-experience-skipped");
+    if (firstExperienceEnded) {
         showShadyBusinessStart();
     }
 }

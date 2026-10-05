@@ -310,7 +310,7 @@ def test_empty_transaction_history_has_truthful_tour_copy() -> None:
         assert "shady business" in combined
 
 
-def test_first_tour_completion_prompts_shady_business_after_overlay_closes() -> None:
+def test_first_tour_end_prompts_shady_business_after_overlay_closes() -> None:
     client = TestClient(app)
     javascript = client.get("/static/js/components/guided-tour.js").text
     home_javascript = client.get("/static/js/pages/home.js").text
@@ -318,9 +318,12 @@ def test_first_tour_completion_prompts_shady_business_after_overlay_closes() -> 
     css = client.get("/static/css/pages/home.css").text
 
     assert 'const FIRST_EXPERIENCE = "first-experience"' in javascript
+    assert 'const FIRST_EXPERIENCE_SKIPPED = "first-experience-skipped"' in javascript
     assert 'CustomEvent("factored:shady-start")' in javascript
+    assert 'window.location.assign("/home")' in javascript
     assert 'last_completed_step: "shady-business-started"' in home_javascript
     assert 'state.last_completed_step === "finish"' in home_javascript
+    assert 'state.last_completed_step === "first-experience-skipped"' in home_javascript
     assert 'id="shady-start-hint"' in home
     assert "Start here" in home
     assert ".shady-business-start" in css
@@ -334,6 +337,7 @@ def test_replayed_tour_does_not_restore_first_login_store_prompt() -> None:
 
     assert 'const completedStep = mode === REPLAY ? "replay-finish"' in javascript
     assert "mode === FIRST_EXPERIENCE" in javascript
+    assert "mode === FIRST_EXPERIENCE\n        ? FIRST_EXPERIENCE_SKIPPED" in javascript
 
 
 def test_shady_business_prompt_state_is_accepted_and_persisted() -> None:
@@ -345,12 +349,18 @@ def test_shady_business_prompt_state_is_accepted_and_persisted() -> None:
         "/api/onboarding/tour",
         json={"status": "completed", "last_completed_step": "finish"},
     )
+    skipped = client.patch(
+        "/api/onboarding/tour",
+        json={"status": "skipped", "last_completed_step": "first-experience-skipped"},
+    )
     started = client.patch(
         "/api/onboarding/tour",
         json={"status": "completed", "last_completed_step": "shady-business-started"},
     )
 
     assert finished.status_code == 200
+    assert skipped.status_code == 200
+    assert skipped.json()["last_completed_step"] == "first-experience-skipped"
     assert started.status_code == 200
     assert started.json()["last_completed_step"] == "shady-business-started"
     stored = customer_repository.get_by_id(created["customer_id"])
@@ -435,13 +445,13 @@ def test_complaint_details_resume_the_contextual_tour() -> None:
     client = TestClient(app)
     content = client.get("/static/js/pages/complaint-detail.js").text
 
-    assert 'from "../components/guided-tour.js?v=11"' in content
+    assert 'from "../components/guided-tour.js?v=12"' in content
     assert "await initializeGuidedTour();" in content
 
 
 def test_pages_load_the_cache_busted_empty_account_tour() -> None:
     client = TestClient(app)
-    expected_version = "v=20261005-onboarding-empty3"
+    expected_version = "v=20261005-onboarding-empty4"
 
     for page in (
         "home",

@@ -83,6 +83,7 @@ const SAVE_ATTEMPTS = 3;
 const MOBILE_BREAKPOINT = 600;
 const TOUR_MODE_KEY = "factored_tour_mode";
 const FIRST_EXPERIENCE = "first-experience";
+const FIRST_EXPERIENCE_SKIPPED = "first-experience-skipped";
 const REPLAY = "replay";
 
 let active = false;
@@ -557,11 +558,20 @@ async function finishTour() {
 }
 
 async function skipTour(source) {
-    const lastCompleted = currentIndex > 0 ? STEPS[currentIndex - 1].id : null;
+    const mode = window.sessionStorage.getItem(TOUR_MODE_KEY);
+    const lastCompleted = mode === FIRST_EXPERIENCE
+        ? FIRST_EXPERIENCE_SKIPPED
+        : (currentIndex > 0 ? STEPS[currentIndex - 1].id : null);
     await saveProgress("skipped", lastCompleted);
     emitMetric("skipped", { source });
     removeLayer();
     window.sessionStorage.removeItem(TOUR_MODE_KEY);
+    if (mode !== FIRST_EXPERIENCE) return;
+    if (window.location.pathname === "/home") {
+        window.dispatchEvent(new CustomEvent("factored:shady-start"));
+        return;
+    }
+    window.location.assign("/home");
 }
 
 function indexAfter(lastCompletedStep) {
