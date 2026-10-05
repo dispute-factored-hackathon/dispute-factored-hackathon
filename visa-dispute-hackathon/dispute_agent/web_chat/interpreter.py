@@ -156,7 +156,7 @@ Rules:
   "fraude" or "golpe"). A question, hypothesis, or generic discussion about fraud is not enough.
   Use DUPLICATE_PROCESSING when they recognize one purchase but say it was charged more than once;
   use INSUFFICIENT_INFO when it is unclear. Set card_environment only if they said how it was paid.
-- In stage needs_dispute_classification: yes/no to the problem Izzy suggested is
+- In stage confirm_suggested_problem: yes/no to the problem Izzy suggested is
   confirm_transaction / deny_transaction; an answer about how it was paid (online, in person)
   is report_problem with card_environment set and allegation null.
 - In stage confirm_complaint, confirm_transaction means yes, file the dispute now, and
@@ -177,6 +177,10 @@ ALLOWED_INTENTS: dict[str, tuple[ChatIntent, ...]] = {
         ChatIntent.CONFIRM_TRANSACTION,
         ChatIntent.DENY_TRANSACTION,
         ChatIntent.DESCRIBE_TRANSACTION,
+    ),
+    "confirm_suggested_problem": (
+        ChatIntent.CONFIRM_TRANSACTION,
+        ChatIntent.DENY_TRANSACTION,
     ),
     "needs_dispute_classification": (
         ChatIntent.REPORT_PROBLEM,

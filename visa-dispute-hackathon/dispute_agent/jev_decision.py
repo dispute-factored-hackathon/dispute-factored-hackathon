@@ -481,6 +481,16 @@ class JevVoiceRouter:
                 ),
                 "UNCLEAR": "Neither confirmation nor denial is sufficiently clear.",
             },
+            "confirm_suggested_problem": {
+                "CONFIRM": (
+                    "Confirms that Izzy's suggested problem applies to the selected purchase. "
+                    "This includes a plain yes, sim, sí, correct, or equivalent answer."
+                ),
+                "DENY": (
+                    "Rejects Izzy's suggested problem and wants to describe a different issue."
+                ),
+                "UNCLEAR": "Neither confirmation nor denial is sufficiently clear.",
+            },
             "needs_dispute_classification": {
                 "UNAUTHORIZED_CARD": (
                     "Explicitly denies making, approving, or authorizing the selected transaction; "
@@ -569,6 +579,11 @@ class JevVoiceRouter:
         if stage == "confirm_transaction":
             if choice == "DENY_WITH_DETAILS":
                 return None
+            if choice not in {"CONFIRM", "DENY", "UNCLEAR"}:
+                return None
+            return "confirm_transaction", {"confirmation_intent": choice}
+
+        if stage == "confirm_suggested_problem":
             if choice not in {"CONFIRM", "DENY", "UNCLEAR"}:
                 return None
             return "confirm_transaction", {"confirmation_intent": choice}

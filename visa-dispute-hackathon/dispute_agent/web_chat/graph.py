@@ -363,6 +363,11 @@ class IzzyChatGraph:
 
         if self.service.awaiting_complaint_confirmation(workflow_state):
             return "confirm_complaint"
+        if (
+            workflow_state.stage is VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION
+            and self.service.pending_suggestion(workflow_state.call_id)
+        ):
+            return "confirm_suggested_problem"
         return workflow_state.stage.value
 
     @staticmethod

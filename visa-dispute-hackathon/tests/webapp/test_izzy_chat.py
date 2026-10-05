@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 
-from dispute_agent.jev_decision import JevVoiceRouter
+from dispute_agent.jev_decision import JevAction, JevVoiceDecision, JevVoiceRouter
 from dispute_agent.web_chat import (
     ChatSessionNotFoundError,
     ChatTurnInterpreter,
@@ -90,6 +90,26 @@ class ScriptedReplies:
             messages
         ):
             yield chunk
+
+
+class ConfirmingJevRouter:
+    """High-confidence Jev stand-in for a plain affirmative answer."""
+
+    enabled = True
+
+    def __init__(self) -> None:
+        self.stages: list[str] = []
+
+    def route(self, *, stage, transcript, language):
+        del transcript, language
+        self.stages.append(stage)
+        return JevVoiceDecision(
+            JevAction.TOOL,
+            0.99,
+            tool_name="confirm_transaction",
+            arguments={"confirmation_intent": "CONFIRM"},
+            model="jev-test",
+        )
 
 
 @pytest.fixture
@@ -683,6 +703,38 @@ def test_a_flagged_purchase_is_suggested_as_unauthorized(chat_setup):
     _, text = run_turn(chat, opening.session_id, "yes, it wasn't me")
     assert "10.3" in text and "file this dispute" in text
     assert repositories.products.list_by_customer(GABRIEL)[0].product_status == "Blocked"
+
+
+@pytest.mark.parametrize(
+    ("kind", "expected_code"),
+    [
+        ("fraud", "10.3"),
+        ("duplicate", "12.6.1"),
+    ],
+)
+def test_jev_understands_plain_yes_for_suggested_problem(chat_setup, kind, expected_code):
+    chat, repositories, customer, _, _ = chat_setup
+    if kind == "fraud":
+        transaction_id = "JEV-FRAUD"
+        add_purchase(repositories, transaction_id, is_fraud=True, channel="POS")
+    else:
+        original = demo_fruit_transactions(GABRIEL)[0]
+        transaction_id = original.transaction_id
+        add_purchase(
+            repositories,
+            "JEV-DUPLICATE",
+            transaction_date=original.transaction_date + timedelta(hours=2),
+        )
+
+    router = ConfirmingJevRouter()
+    chat.chat.interpreter.jev_router = router
+    opening = chat.open_session(customer, locale="pt-BR", transaction_id=transaction_id)
+
+    _, text = run_turn(chat, opening.session_id, "sim")
+
+    assert router.stages == ["confirm_suggested_problem"]
+    assert expected_code in text
+    assert "registre esta contestação" in text.casefold()
 
 
 def test_a_repeated_charge_is_suggested_and_a_no_asks_the_open_question(chat_setup):
