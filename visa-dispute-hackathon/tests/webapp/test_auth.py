@@ -511,6 +511,8 @@ def test_login_page_uses_accessible_searchable_demo_selector() -> None:
     assert "prefillFactoredId();" in script
     assert 'setLoginMethod("factored-id")' in script
     assert "factored:demo-login-metric" in script
+
+
 def test_signup_warns_that_a_registered_phone_replaces_the_demo_account() -> None:
     page = TestClient(app).get("/signup").text
 
