@@ -20,6 +20,10 @@ Parameters:
     Type: String
     Description: ARN of the JSON secret containing OpenAI credentials.
 
+  TwilioSecretArn:
+    Type: String
+    Description: ARN of the JSON secret containing restricted Twilio credentials.
+
   OpenAIProjectId:
     Type: String
     Default: proj_5tTah5HzJGr5gXEQbAZkBKYP
@@ -108,6 +112,7 @@ Resources:
                 Action: secretsmanager:GetSecretValue
                 Resource:
                   - !Ref OpenAISecretArn
+                  - !Ref TwilioSecretArn
                   - !Ref LangSmithSecretArn
                   - !Ref DatabaseAppSecretArn
                   - !Ref MotherDuckSecretArn
@@ -199,6 +204,7 @@ Resources:
       Environment:
         Variables:
           OPENAI_SECRET_ARN: !Ref OpenAISecretArn
+          TWILIO_SECRET_ARN: !Ref TwilioSecretArn
           LANGSMITH_SECRET_ARN: !Ref LangSmithSecretArn
           DATABASE_APP_SECRET_ARN: !Ref DatabaseAppSecretArn
           MOTHERDUCK_SECRET_ARN: !Ref MotherDuckSecretArn

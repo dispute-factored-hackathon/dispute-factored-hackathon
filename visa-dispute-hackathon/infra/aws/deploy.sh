@@ -10,6 +10,7 @@ DATABASE_STACK="${PROJECT_NAME}-database"
 GIT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo local)"
 IMAGE_TAG="${IMAGE_TAG:-${GIT_SHA}-$(date +%Y%m%d%H%M%S)}"
 LANGSMITH_SECRET_ID="${LANGSMITH_SECRET_ID:-${PROJECT_NAME}/langsmith}"
+TWILIO_SECRET_ID="${TWILIO_SECRET_ID:-${PROJECT_NAME}/twilio}"
 LANGSMITH_PROJECT="${LANGSMITH_PROJECT:-${PROJECT_NAME}}"
 HUMAN_HANDOFF_NUMBER="${HUMAN_HANDOFF_NUMBER:-+5511981020050}"
 VOICE_SNAPSTART_APPLY_ON="${VOICE_SNAPSTART_APPLY_ON:-PublishedVersions}"
@@ -54,6 +55,11 @@ elif [[ "${ACTION}" == "application" || "${ACTION}" == "all" ]]; then
   fi
   REPOSITORY_URI="$(stack_output "${BOOTSTRAP_STACK}" RepositoryUri)"
   OPENAI_SECRET_ARN="$(stack_output "${BOOTSTRAP_STACK}" OpenAISecretArn)"
+  TWILIO_SECRET_ARN="$(aws secretsmanager describe-secret \
+    --region "${AWS_REGION}" \
+    --secret-id "${TWILIO_SECRET_ID}" \
+    --query ARN \
+    --output text)"
 
   if [[ -z "${REPOSITORY_URI}" || "${REPOSITORY_URI}" == "None" ]]; then
     echo "Bootstrap stack did not return RepositoryUri." >&2
@@ -118,6 +124,7 @@ elif [[ "${ACTION}" == "application" || "${ACTION}" == "all" ]]; then
       ProjectName="${PROJECT_NAME}" \
       ContainerImageUri="${IMAGE_URI}" \
       OpenAISecretArn="${OPENAI_SECRET_ARN}" \
+      TwilioSecretArn="${TWILIO_SECRET_ARN}" \
       LangSmithSecretArn="${LANGSMITH_SECRET_ARN}" \
       DatabaseHost="${DATABASE_HOST}" \
       DatabasePort="${DATABASE_PORT}" \

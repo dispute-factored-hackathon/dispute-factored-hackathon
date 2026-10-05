@@ -14,7 +14,8 @@ from webapp.backend.aws_runtime import configure_application_runtime
 from webapp.backend.config import get_settings
 from webapp.backend.repositories.postgres import open_repositories
 
-from .sip_realtime import SipRealtimeGateway, _value, extract_caller_phone
+from .sip_realtime import SipRealtimeGateway, _value, extract_caller_phone, extract_twilio_call_sid
+from .twilio_handoff import TwilioCallHandoff, TwilioHandoffCredentials
 from .voice_call import voice_repository_arguments
 
 LOGGER = logging.getLogger(__name__)
@@ -99,6 +100,32 @@ def _load_openai_secret() -> dict[str, str]:
     )
 
 
+def _load_twilio_handoff() -> TwilioCallHandoff:
+    """Load the least-privilege Twilio credentials used for human handoff."""
+
+    names = {
+        "TWILIO_ACCOUNT_SID",
+        "TWILIO_API_KEY_SID",
+        "TWILIO_API_KEY_SECRET",
+        "TWILIO_CALLER_ID",
+    }
+    configured = {name: os.environ.get(name, "").strip() for name in names}
+    if not all(configured.values()):
+        configured = _load_json_secret(
+            "TWILIO_SECRET_ARN",
+            required_keys=names,
+            secret_name="twilio",
+        )
+    return TwilioCallHandoff(
+        TwilioHandoffCredentials(
+            account_sid=configured["TWILIO_ACCOUNT_SID"],
+            api_key_sid=configured["TWILIO_API_KEY_SID"],
+            api_key_secret=configured["TWILIO_API_KEY_SECRET"],
+            caller_id=configured["TWILIO_CALLER_ID"],
+        )
+    )
+
+
 def _configure_langsmith() -> None:
     """Load the LangSmith API key once per Lambda execution environment."""
 
@@ -152,6 +179,7 @@ def _get_gateway() -> SipRealtimeGateway:
             api_key=secret["OPENAI_API_KEY"],
             webhook_secret=secret["OPENAI_WEBHOOK_SECRET"],
             jev_api_key=secret.get("JEV_API_KEY"),
+            twilio_handoff=_load_twilio_handoff(),
         )
 
         _telemetry(
@@ -213,6 +241,7 @@ def _invoke_worker(
     *,
     call_id: str,
     caller_phone: str,
+    twilio_call_sid: str | None = None,
 ) -> None:
     """Invoke this Lambda asynchronously to own the Realtime sideband."""
 
@@ -223,6 +252,7 @@ def _invoke_worker(
         "call_id": call_id,
         "caller_phone": caller_phone,
         "accepted": True,
+        "twilio_call_sid": twilio_call_sid,
     }
 
     invoke_started = time.monotonic()
@@ -254,6 +284,7 @@ def _run_worker(event: dict[str, Any]) -> dict[str, Any]:
 
     call_id = str(event.get("call_id", ""))
     caller_phone = str(event.get("caller_phone", ""))
+    twilio_call_sid = str(event.get("twilio_call_sid", "")) or None
 
     if not call_id:
         LOGGER.error("Realtime worker invoked without call_id")
@@ -289,6 +320,7 @@ def _run_worker(event: dict[str, Any]) -> dict[str, Any]:
                 call_id,
                 caller_phone,
                 max_duration_seconds=MAX_CALL_SECONDS,
+                twilio_call_sid=twilio_call_sid,
             )
         )
     except Exception as error:
@@ -489,6 +521,8 @@ def _dispatch_event(
             },
         )
 
+    twilio_call_sid = extract_twilio_call_sid(webhook)
+
     LOGGER.info(
         "Incoming SIP call event_id=%s call_id=%s caller=%s",
         event_id,
@@ -533,6 +567,7 @@ def _dispatch_event(
             context,
             call_id=call_id,
             caller_phone=caller_phone,
+            twilio_call_sid=twilio_call_sid,
         )
 
     except Exception as error:

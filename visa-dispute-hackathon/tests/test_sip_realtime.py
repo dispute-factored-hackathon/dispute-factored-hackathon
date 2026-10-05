@@ -421,6 +421,15 @@ class FakeJevRouter:
         return self.decision
 
 
+class FakeTwilioHandoff:
+    def __init__(self):
+        self.transfers = []
+
+    def transfer(self, **request):
+        self.transfers.append(request)
+        return "CA" + "4" * 32
+
+
 class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     def _gateway(
@@ -431,6 +440,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         human_handoff_number=None,
         refer_error=None,
         jev_router=None,
+        twilio_handoff=None,
     ):
         websocket = FakeWebsocket(events)
         calls = FakeAcceptCalls(refer_error=refer_error)
@@ -446,6 +456,7 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             ),
             human_handoff_number=human_handoff_number,
             jev_router=jev_router,
+            twilio_handoff=twilio_handoff,
         )
         return gateway, websocket, calls
 
@@ -590,6 +601,41 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             if event.get("type") == "response.create" and "instructions" in event["response"]
         ]
         self.assertTrue(any("transferir você agora" in message for message in spoken))
+
+    async def test_aws_handoff_uses_twilio_controlled_dial_instead_of_sip_refer(self):
+        events = [
+            *opened_session_events(),
+            completed_transcript_event(
+                speaker="customer",
+                transcript="Quero falar com uma pessoa.",
+            ),
+            tool_call_event("request_human", "tool_human", {}),
+            *played_audio_response_events("resp_handoff_notice"),
+        ]
+        handoff = FakeTwilioHandoff()
+        gateway, _, calls = self._gateway(
+            events,
+            human_handoff_number="+5511981020050",
+            twilio_handoff=handoff,
+        )
+
+        await gateway.accept_and_control(
+            "call_human",
+            "+5511984348217",
+            twilio_call_sid="CA" + "5" * 32,
+        )
+
+        self.assertEqual(calls.referrals, [])
+        self.assertEqual(
+            handoff.transfers,
+            [
+                {
+                    "caller_phone": "+5511984348217",
+                    "target_phone": "+5511981020050",
+                    "call_sid": "CA" + "5" * 32,
+                }
+            ],
+        )
 
     async def test_handoff_waits_when_tool_call_arrives_before_transcript(self):
         events = [

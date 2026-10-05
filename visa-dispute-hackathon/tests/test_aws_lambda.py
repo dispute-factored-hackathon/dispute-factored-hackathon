@@ -6,6 +6,7 @@ from unittest.mock import patch
 from fakes import new_repositories
 
 from dispute_agent import aws_lambda
+from dispute_agent.sip_realtime import extract_twilio_call_sid
 from dispute_agent.transaction_search import RepositoryTransactionSearch
 
 
@@ -52,12 +53,14 @@ class FakeGateway:
         caller_phone: str,
         *,
         max_duration_seconds: int | None = None,
+        twilio_call_sid: str | None = None,
     ) -> None:
         self.controlled.append(
             (
                 call_id,
                 caller_phone,
                 max_duration_seconds,
+                twilio_call_sid,
             )
         )
 
@@ -86,6 +89,7 @@ class AwsLambdaTests(unittest.TestCase):
             patch.object(aws_lambda, "configure_application_runtime"),
             patch.object(aws_lambda, "_configure_langsmith"),
             patch.object(aws_lambda, "open_repositories", return_value=repositories),
+            patch.object(aws_lambda, "_load_twilio_handoff", return_value=object()),
             patch.object(
                 aws_lambda,
                 "_load_openai_secret",
@@ -114,6 +118,7 @@ class AwsLambdaTests(unittest.TestCase):
             arguments.kwargs["transaction_repository"].transactions, repositories.transactions
         )
         self.assertEqual(arguments.kwargs["jev_api_key"], "jev-test-key")
+        self.assertIsNotNone(arguments.kwargs["twilio_handoff"])
         # Regression: a hardcoded demo customer used to be seeded on every cold start.
         self.assertEqual(repositories.customers.search_by_full_name("", limit=10), [])
 
@@ -133,6 +138,7 @@ class AwsLambdaTests(unittest.TestCase):
             self.context,
             call_id="call_aws",
             caller_phone="+5511999990001",
+            twilio_call_sid=None,
         )
 
     def test_invalid_signature_has_no_side_effect(self):
@@ -170,7 +176,7 @@ class AwsLambdaTests(unittest.TestCase):
         self.assertEqual(gateway.accepted, [])
         self.assertEqual(
             gateway.controlled,
-            [("call_aws", "+5511999990001", aws_lambda.MAX_CALL_SECONDS)],
+            [("call_aws", "+5511999990001", aws_lambda.MAX_CALL_SECONDS, None)],
         )
 
     def test_worker_accepts_legacy_payload_before_control(self):
@@ -187,8 +193,14 @@ class AwsLambdaTests(unittest.TestCase):
         self.assertEqual(gateway.accepted, [("call_aws", "+5511999990001")])
         self.assertEqual(
             gateway.controlled,
-            [("call_aws", "+5511999990001", aws_lambda.MAX_CALL_SECONDS)],
+            [("call_aws", "+5511999990001", aws_lambda.MAX_CALL_SECONDS, None)],
         )
+
+    def test_extracts_twilio_call_sid_from_sip_headers(self):
+        event = incoming_event()
+        event["data"]["sip_headers"].append({"name": "X-Twilio-CallSid", "value": "CA" + "a" * 32})
+
+        self.assertEqual(extract_twilio_call_sid(event), "CA" + "a" * 32)
 
     def test_base64_function_url_body_is_decoded(self):
         encoded = "eyJvYmplY3QiOiAiZXZlbnQifQ=="

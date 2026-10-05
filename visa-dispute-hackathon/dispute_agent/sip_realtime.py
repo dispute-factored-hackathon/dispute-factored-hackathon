@@ -39,6 +39,7 @@ from .human_handoff import (
 )
 from .jev_decision import JevAction, JevDecisionError, JevVoiceRouter
 from .transaction_search import TransactionSearchCriteria, TransactionSearchRepository
+from .twilio_handoff import TwilioCallHandoff
 from .voice_call import (
     CardSecurityActionStatus,
     ComplaintFilingStatus,
@@ -680,6 +681,21 @@ def extract_caller_phone(event: Any) -> str:
     raise ValueError("incoming SIP event has no usable From phone number")
 
 
+def extract_twilio_call_sid(event: Any) -> str | None:
+    """Return a Twilio Call SID forwarded in the SIP headers, when present."""
+
+    data = _value(event, "data", {})
+    headers = _value(data, "sip_headers", []) or _value(data, "headers", []) or []
+    for header in headers:
+        name = str(_value(header, "name", "")).casefold().replace("-", "")
+        if name not in {"xtwiliocallsid", "twiliocallsid", "callsid"}:
+            continue
+        value = str(_value(header, "value", "")).strip()
+        if re.fullmatch(r"CA[0-9a-fA-F]{32}", value):
+            return value
+    return None
+
+
 class SipRealtimeGateway:
     """Accept SIP calls and enforce identity decisions through a sideband channel."""
 
@@ -705,6 +721,7 @@ class SipRealtimeGateway:
         human_handoff_number: str | None = None,
         jev_api_key: str | None = None,
         jev_router: JevVoiceRouter | None = None,
+        twilio_handoff: TwilioCallHandoff | None = None,
     ) -> None:
 
         self.api_key = api_key or os.getenv("OPENAI_API_KEY", "")
@@ -730,6 +747,7 @@ class SipRealtimeGateway:
             else os.getenv("HUMAN_HANDOFF_NUMBER")
         )
         self.handoff_policy = HumanHandoffPolicy(configured_handoff_number)
+        self.twilio_handoff = twilio_handoff
         self.jev_router = jev_router or JevVoiceRouter(api_key=jev_api_key)
         _telemetry("jev.router.configured", enabled=self.jev_router.enabled)
 
@@ -753,6 +771,7 @@ class SipRealtimeGateway:
 
         self._calls: VoiceCallService | None = None
         self._last_spoken_by_call: dict[str, str] = {}
+        self._twilio_call_sid_by_call: dict[str, str] = {}
 
         self._websocket_connect = websocket_connect
 
@@ -775,7 +794,13 @@ class SipRealtimeGateway:
 
         return self._calls
 
-    async def accept_and_control(self, call_id: str, caller_phone: str) -> None:
+    async def accept_and_control(
+        self,
+        call_id: str,
+        caller_phone: str,
+        *,
+        twilio_call_sid: str | None = None,
+    ) -> None:
         await self.accept_call(
             call_id,
             caller_phone,
@@ -784,6 +809,7 @@ class SipRealtimeGateway:
         await self.control_call(
             call_id,
             caller_phone,
+            twilio_call_sid=twilio_call_sid,
         )
 
     async def accept_call(self, call_id: str, caller_phone: str) -> None:
@@ -870,8 +896,12 @@ class SipRealtimeGateway:
         caller_phone: str,
         *,
         max_duration_seconds: int | None = None,
+        twilio_call_sid: str | None = None,
     ) -> None:
         """Initialize application state after SIP acceptance and control the call."""
+
+        if twilio_call_sid:
+            self._twilio_call_sid_by_call[call_id] = twilio_call_sid
 
         state_started = time.monotonic()
         _telemetry("voice.state.initialization.started", call_id=call_id)
@@ -933,6 +963,7 @@ class SipRealtimeGateway:
         finally:
             self.calls.finalize(call_id)
             self._last_spoken_by_call.pop(call_id, None)
+            self._twilio_call_sid_by_call.pop(call_id, None)
 
     def _connect(self, url: str) -> Any:
         connector = self._websocket_connect
@@ -1952,8 +1983,7 @@ class SipRealtimeGateway:
                         confirmation_result = self.calls.confirm_dispute_classification(
                             call_id,
                             confirmed=(
-                                confirmation_intent
-                                is TransactionConfirmationIntent.CONFIRM
+                                confirmation_intent is TransactionConfirmationIntent.CONFIRM
                             ),
                         )
                         state = confirmation_result.state
@@ -2243,7 +2273,7 @@ class SipRealtimeGateway:
         return "handoff_unavailable"
 
     async def _refer_call(self, call_id: str, plan: HumanHandoffPlan) -> bool:
-        """Relay one approved blind transfer after Izzy finishes the handoff message."""
+        """Transfer after Izzy finishes speaking, preferring Twilio-controlled dialing."""
 
         state = self.calls.get(call_id)
         if (
@@ -2263,19 +2293,32 @@ class SipRealtimeGateway:
 
         started = time.monotonic()
         try:
-            await asyncio.to_thread(
-                self.client.realtime.calls.refer,
-                call_id,
-                target_uri=plan.target_uri,
-            )
+            if self.twilio_handoff is not None:
+                target_phone = plan.target_uri.removeprefix("tel:")
+                twilio_call_sid = await asyncio.to_thread(
+                    self.twilio_handoff.transfer,
+                    caller_phone=state.caller_phone,
+                    target_phone=target_phone,
+                    call_sid=self._twilio_call_sid_by_call.get(call_id),
+                )
+                mechanism = "twilio_call_update"
+            else:
+                await asyncio.to_thread(
+                    self.client.realtime.calls.refer,
+                    call_id,
+                    target_uri=plan.target_uri,
+                )
+                twilio_call_sid = None
+                mechanism = "openai_sip_refer"
         except Exception as error:
             _telemetry(
                 "voice.handoff.failed",
                 call_id=call_id,
                 duration_ms=round((time.monotonic() - started) * 1000, 2),
                 error_type=type(error).__name__,
+                mechanism=("twilio_call_update" if self.twilio_handoff else "openai_sip_refer"),
             )
-            LOGGER.exception("OpenAI SIP REFER failed call_id=%s", call_id)
+            LOGGER.exception("Human handoff failed call_id=%s", call_id)
             return False
 
         _telemetry(
@@ -2283,6 +2326,8 @@ class SipRealtimeGateway:
             call_id=call_id,
             duration_ms=round((time.monotonic() - started) * 1000, 2),
             handoff_reason=self.calls.get(call_id).handoff_reason,
+            mechanism=mechanism,
+            twilio_call_sid=twilio_call_sid,
         )
         return True
 
