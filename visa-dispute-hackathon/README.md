@@ -4,6 +4,9 @@ Issuer-side Visa dispute intake through a multilingual telephone agent and a syn
 
 Project documentation is maintained in the [GitHub Wiki](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki).
 
+Explore the public [LATAM dispute-service analytics dashboard](https://dispute-factored-analytics.streamlit.app/)
+or review the executed [analytics notebook](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/blob/main/visa-dispute-hackathon/notebooks/latam_service_analytics.ipynb).
+
 ## Implementation map
 
 | Layer | Technologies | Responsibility |
@@ -355,14 +358,15 @@ Limitations: the data is synthetic, and the parody shop catalog is static copy. 
 
 ## Analytics notebook and public dashboard
 
-The executed [LATAM service analytics notebook](notebooks/latam_service_analytics.ipynb) reads the
+The executed [LATAM service analytics notebook](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/blob/main/visa-dispute-hackathon/notebooks/latam_service_analytics.ipynb) reads the
 treated `lakehouse.silver` tables directly through DuckDB/MotherDuck. It establishes comparable
 baselines for card-dispute intake, call-center outcomes, SLA performance, repeat complainants,
 resolution time, evidence coverage, data lineage, agent capacity and a duration-based labor-cost
 proxy. It explicitly reports missing source tables instead of fabricating survey or digital-event
 metrics.
 
-The Streamlit app in `analytics/streamlit_app.py` publishes the same aggregate analyses without
+The public [Streamlit analytics dashboard](https://dispute-factored-analytics.streamlit.app/),
+implemented in `analytics/streamlit_app.py`, publishes the same aggregate analyses without
 showing customer rows, transcript text, documents, contact details or card numbers. Run it locally:
 
 ```bash
