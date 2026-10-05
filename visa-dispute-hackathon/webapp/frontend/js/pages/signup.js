@@ -532,7 +532,7 @@ continueButton.addEventListener(
     "click",
     () => {
         window.location.assign(
-            "/login",
+            "/login?from=signup#login-button",
         );
     },
 );

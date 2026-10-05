@@ -50,6 +50,17 @@ function prefillFactoredId() {
     if (remembered) factoredIdInput.value = remembered;
 }
 
+function showLoginActionAfterSignup() {
+    const parameters = new URLSearchParams(window.location.search);
+    if (parameters.get("from") !== "signup") return;
+
+    loginButton.scrollIntoView({
+        behavior: "auto",
+        block: "end",
+    });
+    window.history.replaceState({}, "", "/login");
+}
+
 function emitMetric(name, detail = {}) {
     window.dispatchEvent(new CustomEvent("factored:demo-login-metric", {
         detail: { name, ...detail },
@@ -283,6 +294,7 @@ async function initializeLogin() {
     } catch (error) {
         console.error("Unable to check current session:", error);
     }
+    showLoginActionAfterSignup();
 }
 
 searchInput.addEventListener("focus", searchCustomers);

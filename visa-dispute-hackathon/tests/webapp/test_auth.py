@@ -567,3 +567,15 @@ def test_signup_warns_that_a_registered_phone_replaces_the_demo_account() -> Non
 
     assert "that account and its demo data will" in page
     assert "be replaced by this new account" in page
+
+
+def test_signup_return_scrolls_login_action_into_view() -> None:
+    client = TestClient(app)
+    signup_script = client.get("/static/js/pages/signup.js").text
+    login_script = client.get("/static/js/pages/login.js").text
+
+    assert '"/login?from=signup#login-button"' in signup_script
+    assert 'parameters.get("from") !== "signup"' in login_script
+    assert "loginButton.scrollIntoView" in login_script
+    assert 'block: "end"' in login_script
+    assert 'window.history.replaceState({}, "", "/login")' in login_script
