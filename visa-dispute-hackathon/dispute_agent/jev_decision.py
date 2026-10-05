@@ -465,6 +465,14 @@ class JevVoiceRouter:
                 ),
                 "INSUFFICIENT_INFO": "Neither claim is explicit, both conflict, or input is unrelated.",
             },
+            "confirm_dispute_classification": {
+                "CONFIRM": (
+                    "Explicitly confirms that Izzy correctly understood the proposed dispute "
+                    "category: unauthorized transaction or duplicate charge."
+                ),
+                "DENY": "Explicitly says the proposed dispute category is not correct.",
+                "UNCLEAR": "Neither confirmation nor denial is sufficiently clear.",
+            },
             "dispute_classified": {
                 "rating_1": "Rating 1: 1, one, um/uma, or uno/una, including a bare answer.",
                 "rating_2": "Rating 2: 2, two, dois/duas, or dos, including a bare answer.",
@@ -553,6 +561,11 @@ class JevVoiceRouter:
                 "customer_reports_duplicate": choice == "DUPLICATE_PROCESSING",
                 "customer_reported_card_environment": environment,
             }
+
+        if stage == "confirm_dispute_classification":
+            if choice not in {"CONFIRM", "DENY", "UNCLEAR"}:
+                return None
+            return "confirm_dispute_classification", {"confirmation_intent": choice}
 
         if stage == "dispute_classified":
             if choice.startswith("rating_") and choice[-1:] in {"1", "2", "3", "4", "5"}:

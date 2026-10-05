@@ -330,6 +330,11 @@ class VoiceCallServiceTests(unittest.TestCase):
             state.call_id,
             allegation="DUPLICATE_PROCESSING",
             customer_reports_duplicate=True,
+            await_customer_confirmation=True,
+        )
+        classified = self.calls.confirm_dispute_classification(
+            classified.state.call_id,
+            confirmed=True,
         )
         completed = self.calls.record_csat(classified.state.call_id, rating=1)
 
@@ -425,6 +430,23 @@ class VoiceCallServiceTests(unittest.TestCase):
             state.call_id,
             allegation="UNAUTHORIZED_CARD",
             customer_denies_authorization=True,
+            await_customer_confirmation=True,
+        )
+
+        self.assertEqual(
+            classified.outcome,
+            DisputeClassificationOutcome.AWAITING_CONFIRMATION,
+        )
+        self.assertEqual(
+            classified.state.stage,
+            VoiceCallStage.CONFIRM_DISPUTE_CLASSIFICATION,
+        )
+        self.assertIsNone(classified.state.card_security_action)
+        self.assertIsNone(classified.state.complaint_id)
+
+        classified = self.calls.confirm_dispute_classification(
+            classified.state.call_id,
+            confirmed=True,
         )
 
         self.assertEqual(classified.outcome, DisputeClassificationOutcome.CLASSIFIED)
@@ -472,6 +494,16 @@ class VoiceCallServiceTests(unittest.TestCase):
             state.call_id,
             allegation="DUPLICATE_PROCESSING",
             customer_reports_duplicate=True,
+            await_customer_confirmation=True,
+        )
+        self.assertEqual(
+            classified.outcome,
+            DisputeClassificationOutcome.AWAITING_CONFIRMATION,
+        )
+        self.assertIsNone(classified.state.complaint_filing_status)
+        classified = self.calls.confirm_dispute_classification(
+            classified.state.call_id,
+            confirmed=True,
         )
 
         self.assertEqual(classified.outcome, DisputeClassificationOutcome.CLASSIFIED)
@@ -532,6 +564,11 @@ class VoiceCallServiceTests(unittest.TestCase):
                 state.call_id,
                 allegation="UNAUTHORIZED_CARD",
                 customer_denies_authorization=True,
+                await_customer_confirmation=True,
+            )
+            classified = self.calls.confirm_dispute_classification(
+                classified.state.call_id,
+                confirmed=True,
             )
             self.assertEqual(classified.state.card_security_action, expected_status)
 
@@ -550,6 +587,11 @@ class VoiceCallServiceTests(unittest.TestCase):
             state.call_id,
             allegation="UNAUTHORIZED_CARD",
             customer_denies_authorization=True,
+            await_customer_confirmation=True,
+        )
+        classified = self.calls.confirm_dispute_classification(
+            classified.state.call_id,
+            confirmed=True,
         )
 
         self.assertEqual(
@@ -559,6 +601,41 @@ class VoiceCallServiceTests(unittest.TestCase):
         self.assertIsNone(classified.state.secured_card_last_four)
         self.assertEqual(
             self.calls.products.get_by_id(product_id).product_status,
+            "Active",
+        )
+
+    def test_rejected_dispute_category_returns_to_classification_without_side_effects(self):
+        state = self.authenticate_known_phone("call_reject_dispute_category")
+        self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(merchant_query="lemon"),
+        )
+        self.calls.resolve_transaction_candidate(state.call_id, confirmed=True)
+        proposed = self.calls.classify_dispute(
+            state.call_id,
+            allegation="UNAUTHORIZED_CARD",
+            customer_denies_authorization=True,
+            await_customer_confirmation=True,
+        )
+
+        rejected = self.calls.confirm_dispute_classification(
+            proposed.state.call_id,
+            confirmed=False,
+        )
+
+        self.assertEqual(
+            rejected.outcome,
+            DisputeClassificationOutcome.NEEDS_CLARIFICATION,
+        )
+        self.assertEqual(
+            rejected.state.stage,
+            VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION,
+        )
+        self.assertIsNone(rejected.state.dispute_classification)
+        self.assertIsNone(rejected.state.card_security_action)
+        self.assertIsNone(rejected.state.complaint_id)
+        self.assertEqual(
+            self.calls.products.get_by_id(demo_card_product_id("CLI-002")).product_status,
             "Active",
         )
 

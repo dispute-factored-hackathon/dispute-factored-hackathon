@@ -1612,6 +1612,8 @@ class SipRealtimeGateway:
                             result = self._message_for(state, "transaction_clarification")
                         elif state.stage is VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION:
                             result = self._message_for(state, "classification_question")
+                        elif state.stage is VoiceCallStage.CONFIRM_DISPUTE_CLASSIFICATION:
+                            result = self._message_for(state, "classification_confirmation")
                         elif state.stage is VoiceCallStage.DISPUTE_CLASSIFIED:
                             result = self._message_for(state, "classification_complete")
                         else:
@@ -1843,11 +1845,13 @@ class SipRealtimeGateway:
                         customer_denies_authorization=denies_authorization,
                         customer_reports_duplicate=reports_duplicate,
                         customer_reported_card_environment=reported_environment,
+                        await_customer_confirmation=True,
                     )
                     state = classification_result.state
                     reason = (
-                        "classification_complete"
-                        if classification_result.outcome is DisputeClassificationOutcome.CLASSIFIED
+                        "classification_confirmation"
+                        if classification_result.outcome
+                        is DisputeClassificationOutcome.AWAITING_CONFIRMATION
                         else "classification_clarification"
                     )
                     result = self._message_for(state, reason)
@@ -1871,6 +1875,38 @@ class SipRealtimeGateway:
                             else None
                         ),
                     }
+
+                elif tool_name == "confirm_dispute_classification":
+                    confirmation_intent = TransactionConfirmationIntent(
+                        arguments.get("confirmation_intent", "")
+                    )
+                    if confirmation_intent is TransactionConfirmationIntent.UNCLEAR:
+                        state = self.calls.get(call_id)
+                        result = self._message_for(
+                            state,
+                            "classification_confirmation_unclear",
+                        )
+                        tool_metadata = {"outcome": "confirmation_unclear"}
+                    else:
+                        confirmation_result = self.calls.confirm_dispute_classification(
+                            call_id,
+                            confirmed=(
+                                confirmation_intent
+                                is TransactionConfirmationIntent.CONFIRM
+                            ),
+                        )
+                        state = confirmation_result.state
+                        reason = (
+                            "classification_complete"
+                            if confirmation_result.outcome
+                            is DisputeClassificationOutcome.CLASSIFIED
+                            else "classification_question"
+                        )
+                        result = self._message_for(state, reason)
+                        tool_metadata = {
+                            "outcome": confirmation_result.outcome.value,
+                            "confirmation_intent": confirmation_intent.value,
+                        }
 
                 elif tool_name == "record_csat":
                     intent = CsatResponseIntent(arguments.get("response_intent", ""))
@@ -2595,6 +2631,30 @@ class SipRealtimeGateway:
         }
 
     @staticmethod
+    def _dispute_classification_confirmation_tool() -> dict[str, Any]:
+        return {
+            "type": "function",
+            "name": "confirm_dispute_classification",
+            "description": (
+                "Classify whether the caller confirms Izzy's proposed dispute category. "
+                "Use CONFIRM only for a clear confirmation, DENY for a clear correction or "
+                "rejection, and UNCLEAR otherwise. This confirmation is required before card "
+                "blocking or complaint filing."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "confirmation_intent": {
+                        "type": "string",
+                        "enum": ["CONFIRM", "DENY", "UNCLEAR"],
+                    }
+                },
+                "required": ["confirmation_intent"],
+                "additionalProperties": False,
+            },
+        }
+
+    @staticmethod
     def _csat_tool() -> dict[str, Any]:
         return {
             "type": "function",
@@ -2764,6 +2824,12 @@ Dispute-classification workflow:
 - A proposed Visa condition is a candidate for issuer review, not proof of fraud, a liability decision, or a submitted chargeback.
 - Call classify_dispute silently and wait for the authoritative server response.
 - At needs_dispute_classification, your response must contain only the classify_dispute tool call. Never produce audio before that tool call.
+- A valid category moves to confirm_dispute_classification. Summarize the proposed category and
+  ask the caller whether Izzy understood it correctly. No card or complaint action has happened yet.
+- At confirm_dispute_classification, call confirm_dispute_classification with CONFIRM only after
+  an explicit confirmation, DENY after an explicit rejection, and UNCLEAR otherwise.
+- At confirm_dispute_classification, your response must contain only the confirmation tool call.
+  Never claim a card was blocked or a complaint filed before its server response.
 
 Satisfaction workflow:
 - After the server reports the complaint result, it asks for an optional rating from 1 to 5.
@@ -2800,6 +2866,9 @@ General behavior:
             VoiceCallStage.NEEDS_TRANSACTION_DETAILS: (cls._transaction_search_tool,),
             VoiceCallStage.CONFIRM_TRANSACTION: (cls._transaction_confirmation_tool,),
             VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION: (cls._dispute_classification_tool,),
+            VoiceCallStage.CONFIRM_DISPUTE_CLASSIFICATION: (
+                cls._dispute_classification_confirmation_tool,
+            ),
             VoiceCallStage.DISPUTE_CLASSIFIED: (cls._csat_tool,),
             VoiceCallStage.COMPLETED: (),
             VoiceCallStage.HANDOFF: (),
@@ -2823,6 +2892,7 @@ General behavior:
             VoiceCallStage.NEEDS_TRANSACTION_DETAILS,
             VoiceCallStage.CONFIRM_TRANSACTION,
             VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION,
+            VoiceCallStage.CONFIRM_DISPUTE_CLASSIFICATION,
             VoiceCallStage.DISPUTE_CLASSIFIED,
         }
         if state.stage in required_stages:
@@ -2858,6 +2928,8 @@ General behavior:
             return audio_problem + messages["transaction_confirmation_unclear"]
         if state.stage is VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION:
             return audio_problem + SipRealtimeGateway._classification_clarification_message(state)
+        if state.stage is VoiceCallStage.CONFIRM_DISPUTE_CLASSIFICATION:
+            return audio_problem + SipRealtimeGateway._classification_confirmation_message(state)
         return audio_problem + messages["unclear_speech"]
 
     @staticmethod
@@ -2968,6 +3040,10 @@ General behavior:
                 "transaction_confirmation_unclear": (
                     "Não consegui identificar uma resposta clara. A transação ainda não foi "
                     "confirmada. Diga sim ou não. Você também pode corrigir um dos filtros."
+                ),
+                "classification_confirmation_unclear": (
+                    "Não consegui confirmar sua resposta. Diga sim se a descrição estiver correta, "
+                    "ou não para explicar o problema novamente."
                 ),
                 "transaction_handoff": (
                     "Não consegui identificar a transação depois de três tentativas. "
@@ -3093,6 +3169,10 @@ General behavior:
                     "No pude identificar una respuesta clara. La transacción todavía no está "
                     "confirmada. Di sí o no. También puedes corregir uno de los filtros."
                 ),
+                "classification_confirmation_unclear": (
+                    "No pude confirmar tu respuesta. Di sí si la descripción es correcta, "
+                    "o no para explicar el problema nuevamente."
+                ),
                 "transaction_handoff": (
                     "No pude identificar la transacción después de tres intentos. Normalmente "
                     "te transferiría a un especialista, pero los agentes humanos no están "
@@ -3209,6 +3289,10 @@ General behavior:
                 "transaction_confirmation_unclear": (
                     "I couldn't identify a clear answer. The transaction is not confirmed yet. "
                     "Say yes or no. You can also correct one of the filters."
+                ),
+                "classification_confirmation_unclear": (
+                    "I couldn't confirm your answer. Say yes if the description is correct, "
+                    "or no to explain the problem again."
                 ),
                 "transaction_handoff": (
                     "I couldn't identify the transaction after three attempts. I would normally "
@@ -3394,6 +3478,9 @@ General behavior:
         if reason == "classification_clarification":
             return SipRealtimeGateway._classification_clarification_message(state)
 
+        if reason == "classification_confirmation":
+            return SipRealtimeGateway._classification_confirmation_message(state)
+
         if reason == "classification_complete":
             return SipRealtimeGateway._classification_complete_message(state)
 
@@ -3417,6 +3504,9 @@ General behavior:
             "transaction_handoff",
         }:
             return messages[reason]
+
+        if reason == "classification_confirmation_unclear":
+            return messages["classification_confirmation_unclear"]
 
         if reason == "phone_auth_success":
             return messages["phone_success"].format(name=customer_name)
@@ -3479,6 +3569,9 @@ General behavior:
 
         if state.stage is VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION:
             return SipRealtimeGateway._classification_question_message(state)
+
+        if state.stage is VoiceCallStage.CONFIRM_DISPUTE_CLASSIFICATION:
+            return SipRealtimeGateway._classification_confirmation_message(state)
 
         if state.stage is VoiceCallStage.DISPUTE_CLASSIFIED:
             return SipRealtimeGateway._classification_complete_message(state)
@@ -3578,6 +3671,42 @@ General behavior:
             question_key,
             questions[state.locale.language]["choose_fraud_or_duplicate"],
         )
+
+    @staticmethod
+    def _classification_confirmation_message(state: VoiceCallState) -> str:
+        classification = state.dispute_classification
+        if classification is None:
+            return SipRealtimeGateway._classification_question_message(state)
+        category = {
+            "pt": {
+                "UNAUTHORIZED_CARD": "uma transação que você não fez nem autorizou",
+                "DUPLICATE_PROCESSING": "uma compra reconhecida que foi cobrada mais de uma vez",
+            },
+            "es": {
+                "UNAUTHORIZED_CARD": "una transacción que no hiciste ni autorizaste",
+                "DUPLICATE_PROCESSING": "una compra reconocida que se cobró más de una vez",
+            },
+            "en": {
+                "UNAUTHORIZED_CARD": "a transaction you did not make or authorize",
+                "DUPLICATE_PROCESSING": "a recognized purchase that was charged more than once",
+            },
+        }[state.locale.language].get(classification.allegation.value)
+        if category is None:
+            return SipRealtimeGateway._classification_question_message(state)
+        return {
+            "pt": (
+                f"Entendi o problema como {category}. Está correto? Diga sim para continuar "
+                "ou não para explicar novamente. Nenhuma ação foi realizada ainda."
+            ),
+            "es": (
+                f"Entendí el problema como {category}. ¿Es correcto? Di sí para continuar "
+                "o no para explicarlo nuevamente. Todavía no se realizó ninguna acción."
+            ),
+            "en": (
+                f"I understood the problem as {category}. Is that correct? Say yes to continue "
+                "or no to explain it again. No action has been taken yet."
+            ),
+        }[state.locale.language]
 
     @staticmethod
     def _classification_complete_message(state: VoiceCallState) -> str:

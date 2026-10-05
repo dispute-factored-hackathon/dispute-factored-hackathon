@@ -32,10 +32,15 @@ class CallInteractionPersistenceTests(unittest.TestCase):
             call_id, TransactionSearchCriteria(merchant_query="Lemon Drop Market")
         )
         self.calls.resolve_transaction_candidate(call_id, confirmed=True)
-        return self.calls.classify_dispute(
+        proposed = self.calls.classify_dispute(
             call_id,
             allegation="UNAUTHORIZED_CARD",
             customer_denies_authorization=True,
+            await_customer_confirmation=True,
+        )
+        return self.calls.confirm_dispute_classification(
+            proposed.state.call_id,
+            confirmed=True,
         ).state
 
     def test_authentication_creates_izzy_interaction_and_live_transcript(self):

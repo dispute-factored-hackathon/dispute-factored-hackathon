@@ -100,6 +100,25 @@ class JevVoiceRouterTests(unittest.TestCase):
         self.assertFalse(decision.arguments["customer_reports_duplicate"])
         self.assertEqual(decision.arguments["customer_reported_card_environment"], "CARD_ABSENT")
 
+    def test_dispute_category_confirmation_maps_to_dedicated_tool(self):
+        decision, _ = self._route(
+            "confirm_dispute_classification",
+            choice("CONFIRM"),
+        )
+
+        self.assertEqual(decision.action, JevAction.TOOL)
+        self.assertEqual(decision.tool_name, "confirm_dispute_classification")
+        self.assertEqual(decision.arguments, {"confirmation_intent": "CONFIRM"})
+
+    def test_dispute_category_rejection_does_not_confirm_actions(self):
+        decision, _ = self._route(
+            "confirm_dispute_classification",
+            choice("DENY"),
+        )
+
+        self.assertEqual(decision.tool_name, "confirm_dispute_classification")
+        self.assertEqual(decision.arguments, {"confirmation_intent": "DENY"})
+
     def test_csat_rating_maps_to_integer(self):
         decision, _ = self._route(
             "dispute_classified",

@@ -1580,6 +1580,15 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                     "customer_reports_duplicate": False,
                 },
             ),
+            completed_transcript_event(
+                speaker="customer",
+                transcript="Sim, está correto.",
+            ),
+            tool_call_event(
+                "confirm_dispute_classification",
+                "tool_confirm_classification",
+                {"confirmation_intent": "CONFIRM"},
+            ),
             completed_transcript_event(speaker="customer", transcript="Quatro."),
             tool_call_event(
                 "record_csat",
@@ -1668,6 +1677,15 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                     "customer_reports_duplicate": True,
                 },
             ),
+            completed_transcript_event(
+                speaker="customer",
+                transcript="Sim, está correto.",
+            ),
+            tool_call_event(
+                "confirm_dispute_classification",
+                "tool_confirm_classification",
+                {"confirmation_intent": "CONFIRM"},
+            ),
         ]
         transactions = fruit_search_repository("CLI-002")
         self.addCleanup(transactions.close)
@@ -1685,6 +1703,107 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(f"A reclamação {state.complaint_id} foi aberta", outbound)
         self.assertNotIn("cartão final", outbound)
         self.assertNotIn("foi bloqueado", outbound)
+
+    async def test_rejected_dispute_category_returns_to_problem_question(self):
+        events = [
+            *opened_session_events(),
+            tool_call_event("confirm_language", "tool_language", {}),
+            tool_call_event(
+                "set_authentication_method",
+                "tool_auth",
+                {"method": "phone"},
+            ),
+            tool_call_event(
+                "search_transactions",
+                "tool_search",
+                {"merchant_query": "lemon"},
+            ),
+            completed_transcript_event(speaker="customer", transcript="Sim."),
+            tool_call_event(
+                "confirm_transaction",
+                "tool_confirm_transaction",
+                {"confirmation_intent": "CONFIRM"},
+            ),
+            tool_call_event(
+                "classify_dispute",
+                "tool_classify",
+                {
+                    "allegation": "UNAUTHORIZED_CARD",
+                    "customer_denies_authorization": True,
+                    "customer_reports_duplicate": False,
+                },
+            ),
+            completed_transcript_event(
+                speaker="customer",
+                transcript="Não, não foi isso.",
+            ),
+            tool_call_event(
+                "confirm_dispute_classification",
+                "tool_reject_classification",
+                {"confirmation_intent": "DENY"},
+            ),
+        ]
+        transactions = fruit_search_repository("CLI-002")
+        self.addCleanup(transactions.close)
+        gateway, websocket, _ = self._gateway(events, transaction_repository=transactions)
+
+        await gateway.accept_and_control("call_reject_classification", "+5511999990001")
+
+        state = gateway.calls.get("call_reject_classification")
+        self.assertEqual(state.stage, "needs_dispute_classification")
+        self.assertIsNone(state.complaint_id)
+        self.assertIsNone(state.card_security_action)
+        outbound = json.dumps(websocket.sent, ensure_ascii=False)
+        self.assertIn("você não fez nem autorizou essa compra", outbound)
+        self.assertIn("Nenhuma ação foi realizada ainda", outbound)
+
+    async def test_unclear_dispute_category_confirmation_repeats_confirmation(self):
+        events = [
+            *opened_session_events(),
+            tool_call_event("confirm_language", "tool_language", {}),
+            tool_call_event(
+                "set_authentication_method",
+                "tool_auth",
+                {"method": "phone"},
+            ),
+            tool_call_event(
+                "search_transactions",
+                "tool_search",
+                {"merchant_query": "lemon"},
+            ),
+            completed_transcript_event(speaker="customer", transcript="Sim."),
+            tool_call_event(
+                "confirm_transaction",
+                "tool_confirm_transaction",
+                {"confirmation_intent": "CONFIRM"},
+            ),
+            tool_call_event(
+                "classify_dispute",
+                "tool_classify",
+                {
+                    "allegation": "DUPLICATE_PROCESSING",
+                    "customer_denies_authorization": False,
+                    "customer_reports_duplicate": True,
+                },
+            ),
+            completed_transcript_event(speaker="customer", transcript="Talvez."),
+            tool_call_event(
+                "confirm_dispute_classification",
+                "tool_unclear_classification",
+                {"confirmation_intent": "UNCLEAR"},
+            ),
+        ]
+        transactions = fruit_search_repository("CLI-002")
+        self.addCleanup(transactions.close)
+        gateway, websocket, _ = self._gateway(events, transaction_repository=transactions)
+
+        await gateway.accept_and_control("call_unclear_classification", "+5511999990001")
+
+        state = gateway.calls.get("call_unclear_classification")
+        self.assertEqual(state.stage, "confirm_dispute_classification")
+        self.assertIsNone(state.complaint_id)
+        outbound = json.dumps(websocket.sent, ensure_ascii=False)
+        self.assertIn("Diga sim se a descrição estiver correta", outbound)
 
     def test_complaint_storage_failure_is_disclosed_without_false_confirmation(self):
         transactions = fruit_search_repository("CLI-002")
@@ -1706,6 +1825,11 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             state.call_id,
             allegation="DUPLICATE_PROCESSING",
             customer_reports_duplicate=True,
+            await_customer_confirmation=True,
+        )
+        classified = gateway.calls.confirm_dispute_classification(
+            classified.state.call_id,
+            confirmed=True,
         )
 
         message = gateway._message_for(classified.state, "classification_complete")
@@ -1792,6 +1916,11 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             state.call_id,
             allegation="DUPLICATE_PROCESSING",
             customer_reports_duplicate=True,
+            await_customer_confirmation=True,
+        )
+        classified = gateway.calls.confirm_dispute_classification(
+            classified.state.call_id,
+            confirmed=True,
         )
 
         self.assertNotIn(
@@ -1859,6 +1988,20 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
             state.call_id,
             allegation="DUPLICATE_PROCESSING",
             customer_reports_duplicate=True,
+            await_customer_confirmation=True,
+        )
+        self.assertEqual(gateway._tool_choice_for(classified.state), "required")
+        self.assertEqual(
+            {tool["name"] for tool in gateway._tools_for(classified.state)},
+            {
+                "confirm_dispute_classification",
+                "request_human",
+                "clarify_navigation",
+            },
+        )
+        classified = gateway.calls.confirm_dispute_classification(
+            classified.state.call_id,
+            confirmed=True,
         )
         completed = gateway.calls.record_csat(classified.state.call_id, rating=1)
         self.assertEqual(gateway._tool_choice_for(completed), "auto")

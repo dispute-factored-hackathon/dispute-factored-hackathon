@@ -94,6 +94,7 @@ class VoiceCallStage(StrEnum):
     NEEDS_TRANSACTION_DETAILS = "needs_transaction_details"
     CONFIRM_TRANSACTION = "confirm_transaction"
     NEEDS_DISPUTE_CLASSIFICATION = "needs_dispute_classification"
+    CONFIRM_DISPUTE_CLASSIFICATION = "confirm_dispute_classification"
     DISPUTE_CLASSIFIED = "dispute_classified"
     COMPLETED = "completed"
     HANDOFF = "handoff"
@@ -114,6 +115,7 @@ class TransactionSelectionOutcome(StrEnum):
 
 class DisputeClassificationOutcome(StrEnum):
     NEEDS_CLARIFICATION = "needs_clarification"
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
     CLASSIFIED = "classified"
 
 
@@ -805,6 +807,7 @@ class VoiceCallService:
         customer_denies_authorization: bool = False,
         customer_reports_duplicate: bool = False,
         customer_reported_card_environment: CardEnvironment | str | None = None,
+        await_customer_confirmation: bool = False,
     ) -> DisputeClassificationResult:
         """Validate the allegation and store an auditable Visa condition candidate."""
         state = self.get(call_id)
@@ -826,15 +829,18 @@ class VoiceCallService:
                 ),
             ),
         )
-        outcome = (
-            DisputeClassificationOutcome.CLASSIFIED
-            if classification.status is ClassificationStatus.VISA_CODE_CANDIDATE
-            else DisputeClassificationOutcome.NEEDS_CLARIFICATION
-        )
+        if classification.status is not ClassificationStatus.VISA_CODE_CANDIDATE:
+            outcome = DisputeClassificationOutcome.NEEDS_CLARIFICATION
+        elif await_customer_confirmation:
+            outcome = DisputeClassificationOutcome.AWAITING_CONFIRMATION
+        else:
+            outcome = DisputeClassificationOutcome.CLASSIFIED
         updated = replace(
             state,
             stage=(
-                VoiceCallStage.DISPUTE_CLASSIFIED
+                VoiceCallStage.CONFIRM_DISPUTE_CLASSIFICATION
+                if outcome is DisputeClassificationOutcome.AWAITING_CONFIRMATION
+                else VoiceCallStage.DISPUTE_CLASSIFIED
                 if outcome is DisputeClassificationOutcome.CLASSIFIED
                 else VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION
             ),
@@ -856,6 +862,46 @@ class VoiceCallService:
             status=classification.status.value,
             visa_condition_code=classification.visa_condition_code,
             outcome=outcome.value,
+        )
+        return DisputeClassificationResult(updated, outcome)
+
+    def confirm_dispute_classification(
+        self,
+        call_id: str,
+        *,
+        confirmed: bool,
+    ) -> DisputeClassificationResult:
+        """Require customer confirmation before any card or complaint side effect."""
+        state = self.get(call_id)
+        if state.stage is not VoiceCallStage.CONFIRM_DISPUTE_CLASSIFICATION:
+            raise ValueError("dispute classification is not awaiting confirmation")
+        classification = state.dispute_classification
+        if classification is None or classification.visa_condition_code is None:
+            raise ValueError("the dispute classification candidate is missing")
+
+        if not confirmed:
+            updated = replace(
+                state,
+                stage=VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION,
+                dispute_classification=None,
+            )
+            outcome = DisputeClassificationOutcome.NEEDS_CLARIFICATION
+        else:
+            updated = replace(state, stage=VoiceCallStage.DISPUTE_CLASSIFIED)
+            if classification.allegation is DisputeAllegation.UNAUTHORIZED_CARD:
+                updated = self._block_confirmed_transaction_card(updated)
+            updated = self._file_classified_complaint(updated)
+            outcome = DisputeClassificationOutcome.CLASSIFIED
+
+        self._calls[call_id] = updated
+        self.call_interactions.sync(updated)
+        _telemetry(
+            "voice.dispute.classification_confirmation_processed",
+            call_id=call_id,
+            allegation=classification.allegation.value,
+            confirmed=confirmed,
+            outcome=outcome.value,
+            side_effects_applied=confirmed,
         )
         return DisputeClassificationResult(updated, outcome)
 
