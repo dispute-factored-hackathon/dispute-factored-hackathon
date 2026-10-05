@@ -84,14 +84,14 @@ const STEPS = [
     {
         id: "finish",
         route: "/home",
-        target: "[data-tour='shady-business']",
-        actionTarget: ".shady-link",
-        action: "finish-and-activate",
     },
 ];
 
 const SAVE_ATTEMPTS = 3;
 const MOBILE_BREAKPOINT = 600;
+const TOUR_MODE_KEY = "factored_tour_mode";
+const FIRST_EXPERIENCE = "first-experience";
+const REPLAY = "replay";
 
 let active = false;
 let currentIndex = 0;
@@ -177,7 +177,7 @@ function createLayer() {
 }
 
 function requiresTargetActivation(step = STEPS[currentIndex]) {
-    return ["activate", "finish-and-activate"].includes(step?.action);
+    return step?.action === "activate";
 }
 
 function focusableControls() {
@@ -523,13 +523,6 @@ async function activateTarget(target) {
     const step = STEPS[currentIndex];
     const completedId = step.id;
     emitMetric("target_activated");
-    if (step.action === "finish-and-activate") {
-        await saveProgress("completed", completedId);
-        emitMetric("completed");
-        removeLayer();
-        if (destination) window.location.assign(destination);
-        return;
-    }
     await saveProgress("in_progress", completedId);
     currentIndex += 1;
     if (destination) {
@@ -559,9 +552,15 @@ async function previousStep() {
 }
 
 async function finishTour() {
-    await saveProgress("completed", STEPS.at(-1).id);
+    const mode = window.sessionStorage.getItem(TOUR_MODE_KEY);
+    const completedStep = mode === REPLAY ? "replay-finish" : STEPS.at(-1).id;
+    await saveProgress("completed", completedStep);
     emitMetric("completed");
     removeLayer();
+    window.sessionStorage.removeItem(TOUR_MODE_KEY);
+    if (mode === FIRST_EXPERIENCE && window.location.pathname === "/home") {
+        window.dispatchEvent(new CustomEvent("factored:shady-start"));
+    }
 }
 
 async function skipTour(source) {
@@ -569,6 +568,7 @@ async function skipTour(source) {
     await saveProgress("skipped", lastCompleted);
     emitMetric("skipped", { source });
     removeLayer();
+    window.sessionStorage.removeItem(TOUR_MODE_KEY);
 }
 
 function indexAfter(lastCompletedStep) {
@@ -598,6 +598,12 @@ async function runGuidedTour() {
         || state.status === "in_progress"
         || (state.should_offer && window.location.pathname === "/home");
     if (!shouldRun) return;
+
+    if (restart) {
+        window.sessionStorage.setItem(TOUR_MODE_KEY, REPLAY);
+    } else if (state.status === "not_started") {
+        window.sessionStorage.setItem(TOUR_MODE_KEY, FIRST_EXPERIENCE);
+    }
 
     active = true;
     currentIndex = restart ? 0 : indexAfter(state.last_completed_step);

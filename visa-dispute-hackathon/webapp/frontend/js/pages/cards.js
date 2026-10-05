@@ -20,7 +20,7 @@ import {
 
 import {
     initializeGuidedTour,
-} from "../components/guided-tour.js?v=7";
+} from "../components/guided-tour.js?v=8";
 
 
 const cardsPage =
