@@ -40,6 +40,7 @@ analytics = [
     "matplotlib>=3.11.2",
     "pandas>=3.0.6",
     "seaborn>=0.13.2",
+    "streamlit>=1.50,<2",
     "wordcloud>=1.9.6",
 ]
 
@@ -47,6 +48,7 @@ analytics = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = [
+    "analytics*",
     "dispute_agent*",
     "webapp*",
 ]
