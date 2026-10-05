@@ -188,7 +188,8 @@ elif [[ "${ACTION}" == "application" || "${ACTION}" == "all" ]]; then
   echo "Voice SnapStart: ${SNAPSTART_STATUS} (version ${SIP_PUBLISHED_VERSION})"
   echo "Web warmup: ready (${WEB_FUNCTION_NAME})"
   echo "Application: $(stack_output "${APPLICATION_STACK}" ApplicationUrl)"
-  echo "Webhook: $(stack_output "${APPLICATION_STACK}" OpenAIWebhookUrl)"
+  echo "OpenAI webhook: $(stack_output "${APPLICATION_STACK}" OpenAIWebhookUrl)"
+  echo "Twilio voice webhook: $(stack_output "${APPLICATION_STACK}" TwilioVoiceWebhookUrl)"
 else
   echo "Usage: $0 bootstrap|database|application|all" >&2
   exit 2

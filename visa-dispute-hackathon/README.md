@@ -276,15 +276,21 @@ https://YOUR-LAMBDA-FUNCTION-URL/webhooks/openai
 
 Subscribe to `realtime.call.incoming` and copy its signing secret into the configured secret. Restart the local backend when using `.env`; for AWS, update Secrets Manager before the first call. Use the project ID shown under **Project → General** in the next step; it begins with `proj_`.
 
-### Connect a phone number
+### Connect a Twilio phone number
 
-In a SIP trunk provider such as Twilio, create an Elastic SIP Trunk, enable secure trunking, associate a telephone number, and set its Origination SIP URI to:
+The number must enter through **Twilio Programmable Voice**, rather than being directly attached to
+an Elastic SIP Trunk. Set the number's incoming-call webhook (HTTP `POST`) to the
+`TwilioVoiceWebhookUrl` CloudFormation output:
 
 ```text
-sip:YOUR_OPENAI_PROJECT_ID@sip.api.openai.com;transport=tls
+https://YOUR-LAMBDA-FUNCTION-URL/webhooks/twilio/voice
 ```
 
-The provider must send TLS signaling and SRTP media. Then call the number associated with the trunk. A trial provider account may require the calling number to be verified first.
+The webhook returns `<Dial><Sip>` for
+`sip:YOUR_OPENAI_PROJECT_ID@sip.api.openai.com;transport=tls`. This creates a controllable
+Programmable Voice parent call and a child SIP leg for OpenAI Realtime. The child retains the
+caller's telephone identity used by the authentication flow. A trial provider account may require
+the calling number to be verified first.
 
 ### Transfer to human support
 
@@ -296,16 +302,14 @@ same path automatically.
 
 The transfer destination comes only from the server-owned `HUMAN_HANDOFF_NUMBER` setting and is
 never accepted from caller speech or model arguments. The demo rejects a transfer when the fixed
-destination is the same as the calling phone, permits only the backend to execute the OpenAI
-Realtime `refer` operation, stores the interaction and transcript before transfer, and logs the
-result without the destination number. The current configuration targets `+5511981020050`; place
-the test call from a different telephone.
+destination is the same as the calling phone, stores the interaction and transcript first, resolves
+the child SIP leg's `parent_call_sid`, and redirects only that Programmable Voice parent. The
+outbound leg uses the Twilio-owned number as caller ID. The current configuration targets
+`+5511981020050`; place the test call from a different telephone.
 
-In the Twilio Elastic SIP Trunk console, enable **Call Transfer (SIP REFER)** and **Call transfers
-to the PSTN**. A successful REFER is a blind transfer: the human receives the live call, while the
-structured context remains in the demo repositories and logs. There is no contact-center desktop or
-agent whisper in this prototype. If the destination is missing, matches the caller, or the provider
-rejects the REFER, Izzy explains the limitation instead of claiming a successful transfer.
+There is no contact-center desktop or agent whisper in this prototype. If the destination is
+missing, matches the caller, or Twilio rejects the redirect, Izzy explains the limitation instead
+of claiming a successful transfer.
 
 With the local `tests/fixtures/customers.csv`, a real caller number normally will not match the fake phone values. The AWS image instead contains the complete supplied synthetic `customers.csv`; it still normally will not contain the caller's real number. The expected fallback test is therefore:
 
