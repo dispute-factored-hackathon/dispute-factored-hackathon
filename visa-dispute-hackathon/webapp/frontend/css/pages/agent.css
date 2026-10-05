@@ -26,15 +26,17 @@
     top: 0;
     z-index: 5;
 
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.agent-header-main {
     display: flex;
     align-items: center;
     gap: var(--space-3);
 
     padding: var(--space-3) var(--space-4);
     padding-top: max(var(--space-3), env(safe-area-inset-top));
-
-    background: var(--color-surface);
-    border-bottom: 1px solid var(--color-border);
 }
 
 .agent-back {
@@ -66,6 +68,10 @@
     align-items: center;
     gap: var(--space-3);
 
+    min-width: 0;
+}
+
+.agent-identity-copy {
     min-width: 0;
 }
 
@@ -106,9 +112,14 @@
 }
 
 .agent-call {
+    display: inline-flex;
     flex: none;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
 
-    padding: var(--space-2) var(--space-4);
+    min-height: 2.25rem;
+    padding: var(--space-2) var(--space-3);
 
     color: var(--color-primary);
     border: 1px solid var(--color-border);
@@ -120,18 +131,16 @@
 }
 
 .agent-phone-banner {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: auto minmax(max-content, 1fr) auto;
     align-items: center;
-    justify-content: center;
     gap: var(--space-2);
 
     margin: 0;
     padding: var(--space-2) var(--space-4);
 
     color: var(--color-text-secondary);
-    background: var(--color-surface);
-    border-bottom: 1px solid var(--color-border);
+    border-top: 1px solid var(--color-border);
 
     font-size: 0.8rem;
 }
@@ -141,6 +150,26 @@
 
     font-weight: 700;
     text-decoration: none;
+    white-space: nowrap;
+}
+
+@media (max-width: 359px) {
+    .agent-phone-prompt {
+        position: absolute;
+
+        width: 1px;
+        height: 1px;
+
+        overflow: hidden;
+
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+    }
+
+    .agent-phone-banner {
+        grid-template-columns: auto auto;
+        justify-content: center;
+    }
 }
 
 .agent-messages {
@@ -347,14 +376,13 @@
         --agent-nav-height: 6rem;
     }
 
-    .agent-header,
+    .agent-header-main,
     .agent-phone-banner {
         justify-content: center;
-    }
 
-    .agent-header > *,
-    .agent-phone-banner > * {
+        width: 100%;
         max-width: 36rem;
+        margin-inline: auto;
     }
 
     .agent-composer {

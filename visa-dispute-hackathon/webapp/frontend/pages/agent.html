@@ -34,7 +34,7 @@
 
     <link
         rel="stylesheet"
-        href="/static/css/pages/agent.css?v=4"
+        href="/static/css/pages/agent.css?v=5"
     >
 </head>
 
@@ -45,57 +45,60 @@
         hidden
     >
         <header class="agent-header">
-            <a
-                class="agent-back"
-                href="/home"
-                aria-label="Back to home"
-                data-history-back
-            >
-                <span aria-hidden="true">←</span>
-            </a>
-
-            <div class="agent-identity">
-                <span
-                    class="agent-avatar"
-                    aria-hidden="true"
+            <div class="agent-header-main">
+                <a
+                    class="agent-back"
+                    href="/home"
+                    aria-label="Back to home"
+                    data-history-back
                 >
-                    ✦
-                </span>
+                    <span aria-hidden="true">←</span>
+                </a>
 
-                <div>
-                    <h1 class="agent-name">
-                        Izzy
-                    </h1>
+                <div class="agent-identity">
+                    <span
+                        class="agent-avatar"
+                        aria-hidden="true"
+                    >
+                        ✦
+                    </span>
 
-                    <p class="agent-role">
-                        Virtual assistant · Card disputes
-                    </p>
+                    <div class="agent-identity-copy">
+                        <h1 class="agent-name">
+                            Izzy
+                        </h1>
+
+                        <p class="agent-role">
+                            Virtual assistant · Card disputes
+                        </p>
+                    </div>
                 </div>
             </div>
 
-            <a
-                id="agent-call"
-                class="agent-call"
-                href="tel:+16615779964"
-                aria-label="Call Izzy"
-            >
-                Call
-            </a>
+            <div class="agent-phone-banner">
+                <span class="agent-phone-prompt">
+                    Prefer to talk?
+                </span>
+
+                <a
+                    id="agent-phone-link"
+                    class="agent-phone-link"
+                    href="tel:+16615779964"
+                >
+                    +1 661 577 9964
+                </a>
+
+                <a
+                    id="agent-call"
+                    class="agent-call"
+                    href="tel:+16615779964"
+                    aria-label="Call Izzy"
+                >
+                    <span aria-hidden="true">☎</span>
+                    <span>Call</span>
+                </a>
+            </div>
         </header>
-
-        <p class="agent-phone-banner">
-            <span>
-                Prefer to talk?
-            </span>
-
-            <a
-                id="agent-phone-link"
-                class="agent-phone-link"
-                href="tel:+16615779964"
-            >
-                +1 661 577 9964
-            </a>
-        </p>
 
         <section
             id="agent-messages"

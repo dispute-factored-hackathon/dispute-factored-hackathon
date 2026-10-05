@@ -307,3 +307,20 @@ def test_agent_hidden_panels_stay_hidden_despite_display_rules() -> None:
     assert ".agent-page[hidden]," in styles
     assert ".agent-page [hidden] {" in styles
     assert "display: none !important;" in styles
+
+
+def test_agent_phone_and_call_action_remain_in_the_sticky_mobile_header() -> None:
+    client = TestClient(app)
+
+    page = client.get("/agent").text
+    styles = client.get("/static/css/pages/agent.css").text
+
+    header_start = page.index('<header class="agent-header">')
+    header_end = page.index("</header>", header_start)
+    header = page[header_start:header_end]
+
+    assert 'id="agent-phone-link"' in header
+    assert 'id="agent-call"' in header
+    assert "position: sticky;" in styles
+    assert "grid-template-columns: auto minmax(max-content, 1fr) auto;" in styles
+    assert "@media (max-width: 359px)" in styles
