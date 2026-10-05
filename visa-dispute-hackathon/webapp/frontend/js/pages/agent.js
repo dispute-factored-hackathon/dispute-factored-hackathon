@@ -5,7 +5,7 @@ import { formatCurrency, formatDate, getLocale, i18nReady, t, translateValue } f
 await i18nReady;
 
 import { renderBottomNavigation } from "../components/bottom-nav.js?v=4";
-import { initializeGuidedTour } from "../components/guided-tour.js?v=7";
+import { initializeGuidedTour } from "../components/guided-tour.js?v=8";
 
 
 const page = document.querySelector("#agent-page");
