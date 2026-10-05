@@ -71,6 +71,16 @@ class ProductRepository(Protocol):
     ) -> Product: ...
 
 
+class AccountRegistrationRepository(Protocol):
+    """Atomically create an account, replacing the owner of a reused phone."""
+
+    def register(
+        self,
+        customer: Customer,
+        product: Product,
+    ) -> tuple[Customer, Product]: ...
+
+
 class TransactionRepository(Protocol):
     def create(
         self,
@@ -188,6 +198,7 @@ class Repositories:
 
     customers: CustomerRepository
     products: ProductRepository
+    account_registration: AccountRegistrationRepository
     transactions: TransactionRepository
     complaints: ComplaintRepository
     sessions: SessionRepository

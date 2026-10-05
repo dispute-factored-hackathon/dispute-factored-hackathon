@@ -404,19 +404,93 @@ class InMemoryCardPurchaseRepository:
         return self._card_purchase(transaction)
 
 
+class InMemoryAccountRegistrationRepository:
+    """Test double for the transactional PostgreSQL account replacement."""
+
+    def __init__(
+        self,
+        *,
+        customers: InMemoryCustomerRepository,
+        products: InMemoryProductRepository,
+        transactions: InMemoryTransactionRepository,
+        complaints: InMemoryComplaintRepository,
+        sessions: InMemorySessionRepository,
+        interactions: InMemoryCallCenterInteractionRepository,
+        transcripts: InMemoryCallTranscriptRepository,
+        surveys: InMemorySatisfactionSurveyRepository,
+    ) -> None:
+        self.customers = customers
+        self.products = products
+        self.transactions = transactions
+        self.complaints = complaints
+        self.sessions = sessions
+        self.interactions = interactions
+        self.transcripts = transcripts
+        self.surveys = surveys
+        self._lock = Lock()
+
+    @staticmethod
+    def _remove_customer_items(items: dict[str, Any], customer_id: str) -> None:
+        for key, item in tuple(items.items()):
+            if item.customer_id == customer_id:
+                del items[key]
+
+    def register(self, customer: Customer, product: Product) -> tuple[Customer, Product]:
+        with self._lock:
+            document_owner = self.customers.get_by_document(customer.document_number)
+            phone_owner = (
+                self.customers.get_by_phone(customer.mobile_phone)
+                if customer.mobile_phone
+                else None
+            )
+            if document_owner is not None and document_owner != phone_owner:
+                raise ValueError("FACTORED_ID already exists.")
+
+            if phone_owner is not None:
+                customer_id = phone_owner.customer_id
+                self._remove_customer_items(self.surveys._surveys, customer_id)
+                self._remove_customer_items(self.transcripts._transcripts, customer_id)
+                self._remove_customer_items(self.interactions._interactions, customer_id)
+                self._remove_customer_items(self.complaints._complaints, customer_id)
+                self._remove_customer_items(self.transactions._transactions, customer_id)
+                self._remove_customer_items(self.products._products, customer_id)
+                self._remove_customer_items(self.sessions._sessions, customer_id)
+                del self.customers._customers[customer_id]
+
+            self.customers._customers[customer.customer_id] = customer
+            self.products._products[product.product_id] = product
+        return customer, product
+
+
 def new_repositories() -> Repositories:
+    customers = InMemoryCustomerRepository()
     products = InMemoryProductRepository()
     transactions = InMemoryTransactionRepository()
+    complaints = InMemoryComplaintRepository()
+    sessions = InMemorySessionRepository()
+    interactions = InMemoryCallCenterInteractionRepository()
+    transcripts = InMemoryCallTranscriptRepository()
+    surveys = InMemorySatisfactionSurveyRepository()
     return Repositories(
-        customers=InMemoryCustomerRepository(),
+        customers=customers,
         products=products,
+        account_registration=InMemoryAccountRegistrationRepository(
+            customers=customers,
+            products=products,
+            transactions=transactions,
+            complaints=complaints,
+            sessions=sessions,
+            interactions=interactions,
+            transcripts=transcripts,
+            surveys=surveys,
+        ),
         transactions=transactions,
-        complaints=InMemoryComplaintRepository(),
-        sessions=InMemorySessionRepository(),
+        complaints=complaints,
+        sessions=sessions,
         service_agents=InMemoryServiceAgentRepository(),
-        call_center_interactions=InMemoryCallCenterInteractionRepository(),
-        call_transcripts=InMemoryCallTranscriptRepository(),
-        satisfaction_surveys=InMemorySatisfactionSurveyRepository(),
+        call_center_interactions=interactions,
+        call_transcripts=transcripts,
+        satisfaction_surveys=surveys,
         card_purchases=InMemoryCardPurchaseRepository(transactions, products),
     )
 

@@ -4,4 +4,4 @@ Keep this constant in sync when adding an Alembic migration. Runtime processes i
 module instead of importing Alembic and SQLAlchemy during every cold start.
 """
 
-LATEST_SCHEMA_REVISION = "0002"
+LATEST_SCHEMA_REVISION = "0003"
