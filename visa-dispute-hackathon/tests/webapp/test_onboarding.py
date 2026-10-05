@@ -254,7 +254,7 @@ def test_contextual_tour_is_interactive_and_handles_empty_accounts() -> None:
         'id: "izzy"',
         "target: \"[data-tour='izzy']\"",
         'id: "complaints-link"',
-        'target: ".page-heading"',
+        'target: ".complaint-item, #empty-state"',
         'id: "profile-link"',
         'id: "finish"',
         'action: "activate"',
@@ -285,9 +285,9 @@ def test_empty_transaction_history_has_truthful_tour_copy() -> None:
     assert 'route: "/home",\n        target: "[data-tour=\'izzy\']"' in javascript
 
     expected_copy = {
-        "en": ("no purchases yet", "transaction history starts empty"),
-        "pt": ("ainda não tem compras", "histórico começa vazio"),
-        "es": ("todavía no tiene compras", "historial comienza vacío"),
+        "en": ("no purchases yet", "no transactions yet", "no complaints yet"),
+        "pt": ("ainda não tem compras", "nenhuma transação ainda", "nenhuma contestação ainda"),
+        "es": ("todavía no tiene compras", "aún no hay transacciones", "aún no hay reclamos"),
     }
     for language, phrases in expected_copy.items():
         catalog = client.get(f"/static/locales/v1/{language}.json").json()
@@ -297,6 +297,7 @@ def test_empty_transaction_history_has_truthful_tour_copy() -> None:
                 catalog["tour.transactions_link_body"],
                 catalog["tour.transactions_title"],
                 catalog["tour.transactions_body"],
+                catalog["tour.complaints_title"],
                 catalog["tour.complaints_body"],
                 catalog["tour.finish_body"],
             )
@@ -374,7 +375,7 @@ def test_empty_complaint_history_does_not_block_contextual_tour() -> None:
     assert client.get("/api/complaints").json() == []
     javascript = client.get("/static/js/components/guided-tour.js").text
     assert 'id: "complaints"' in javascript
-    assert 'target: ".page-heading"' in javascript
+    assert 'target: ".complaint-item, #empty-state"' in javascript
     assert 'id: "complaint-detail"' not in javascript
     assert 'target: ".complaint-item"' not in javascript
 
@@ -430,13 +431,13 @@ def test_complaint_details_resume_the_contextual_tour() -> None:
     client = TestClient(app)
     content = client.get("/static/js/pages/complaint-detail.js").text
 
-    assert 'from "../components/guided-tour.js?v=9"' in content
+    assert 'from "../components/guided-tour.js?v=10"' in content
     assert "await initializeGuidedTour();" in content
 
 
 def test_pages_load_the_cache_busted_empty_account_tour() -> None:
     client = TestClient(app)
-    expected_version = "v=20261005-onboarding-empty1"
+    expected_version = "v=20261005-onboarding-empty2"
 
     for page in (
         "home",
