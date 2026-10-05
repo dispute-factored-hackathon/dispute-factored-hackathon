@@ -462,3 +462,20 @@ def test_login_page_uses_accessible_searchable_demo_selector() -> None:
     assert "prefillFactoredId();" in script
     assert 'setLoginMethod("factored-id")' in script
     assert "factored:demo-login-metric" in script
+
+
+def test_login_makes_signup_the_obvious_first_step_for_new_judges() -> None:
+    client = TestClient(app)
+
+    page = client.get("/login").text
+    styles = client.get("/static/css/pages/login.css").text
+
+    signup_position = page.index('class="judge-start-action"')
+    login_form_position = page.index('id="login-form"')
+    assert signup_position < login_form_position
+    assert 'href="/signup"' in page[signup_position:login_form_position]
+    assert "NEW JUDGE?" in page
+    assert "Create your demo profile" in page
+    assert "Already have a demo profile?" in page
+    assert ".judge-start-card" in styles
+    assert ".judge-start-action" in styles

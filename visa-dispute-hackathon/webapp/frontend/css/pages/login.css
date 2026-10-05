@@ -68,6 +68,69 @@
     line-height: 1.55;
 }
 
+.judge-start-card {
+    display: grid;
+    gap: var(--space-3);
+
+    margin-bottom: var(--space-5);
+    padding: var(--space-5);
+
+    color: var(--color-surface);
+    background: var(--color-primary);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card);
+}
+
+.judge-start-eyebrow,
+.judge-start-card h2,
+.judge-start-card p {
+    margin: 0;
+}
+
+.judge-start-eyebrow {
+    font-size: 0.75rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+}
+
+.judge-start-card h2 {
+    font-family: var(--font-display);
+    font-size: 1.6rem;
+    letter-spacing: -0.035em;
+}
+
+.judge-start-card p:not(.judge-start-eyebrow) {
+    max-width: 30rem;
+    line-height: 1.5;
+    opacity: 0.9;
+}
+
+.judge-start-action {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+
+    min-height: 3.25rem;
+    padding: 0 var(--space-4);
+
+    color: var(--color-primary);
+    background: var(--color-surface);
+    border-radius: var(--radius-md);
+
+    font-weight: 800;
+    text-decoration: none;
+}
+
+.judge-start-action:hover {
+    background: var(--color-background);
+}
+
+.judge-start-action:focus-visible {
+    outline: 3px solid var(--color-accent);
+    outline-offset: 3px;
+}
+
 .login-card {
     padding: var(--space-5);
 
@@ -81,6 +144,28 @@
     border-radius: var(--radius-lg);
 
     box-shadow: var(--shadow-card);
+}
+
+.returning-customer-heading {
+    margin-bottom: var(--space-5);
+}
+
+.returning-customer-heading h2,
+.returning-customer-heading p {
+    margin: 0;
+}
+
+.returning-customer-heading h2 {
+    font-family: var(--font-display);
+    font-size: 1.2rem;
+    letter-spacing: -0.025em;
+}
+
+.returning-customer-heading p {
+    margin-top: var(--space-2);
+    color: var(--color-text-secondary);
+    font-size: 0.88rem;
+    line-height: 1.45;
 }
 
 .login-form {
@@ -280,34 +365,6 @@
 
 .form-error[hidden] {
     display: none;
-}
-
-.signup-link {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2);
-
-    margin-top: var(--space-6);
-    padding-top: var(--space-5);
-
-    color: var(--color-text-secondary);
-
-    border-top:
-        1px
-        solid
-        var(--color-border);
-
-    font-size: 0.9rem;
-}
-
-.signup-link a {
-    color: var(--color-primary);
-    font-weight: 700;
-    text-decoration: none;
-}
-
-.signup-link a:hover {
-    text-decoration: underline;
 }
 
 @media (min-width: 640px) {

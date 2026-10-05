@@ -29,7 +29,7 @@
 
     <link
         rel="stylesheet"
-        href="/static/css/pages/login.css?v=20261001"
+        href="/static/css/pages/login.css?v=20261004"
     >
 </head>
 
@@ -58,7 +58,36 @@
                 </p>
             </div>
 
+            <section class="judge-start-card" aria-labelledby="judge-start-title">
+                <p class="judge-start-eyebrow">
+                    NEW JUDGE?
+                </p>
+
+                <h2 id="judge-start-title">
+                    Start here
+                </h2>
+
+                <p>
+                    Create a demo profile first to receive a Factored ID and unlock the guided experience.
+                </p>
+
+                <a class="judge-start-action" href="/signup">
+                    Create your demo profile
+                    <span aria-hidden="true">→</span>
+                </a>
+            </section>
+
             <div class="login-card">
+                <div class="returning-customer-heading">
+                    <h2>
+                        Already have a demo profile?
+                    </h2>
+
+                    <p>
+                        Sign in below with your Factored ID or a synthetic customer.
+                    </p>
+                </div>
+
                 <form
                     id="login-form"
                     class="login-form"
@@ -100,12 +129,6 @@
                         <strong>Demo access only.</strong>
                         No password is required because every profile and transaction is synthetic.
                         Never use this pattern for real banking access.
-                    </div>
-
-                    <div class="demo-warning" role="note">
-                        <strong>Judges:</strong>
-                        create a profile, then sign in with its Factored ID for the guided first experience.
-                        Choosing a customer opens the demo without onboarding.
                     </div>
 
                     <div
@@ -184,16 +207,6 @@
                         Sign in
                     </button>
                 </form>
-
-                <div class="signup-link">
-                    <span>
-                        Don't have a demo account?
-                    </span>
-
-                    <a href="/signup">
-                        Create one
-                    </a>
-                </div>
             </div>
 
         </section>
