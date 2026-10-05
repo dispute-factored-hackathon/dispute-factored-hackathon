@@ -478,6 +478,8 @@ def test_login_makes_signup_the_obvious_first_step_for_new_judges() -> None:
     assert "NEW JUDGE?" in page
     assert "Create your demo profile" in page
     assert "Already have a demo profile?" in page
+    assert "Welcome to Factored Bank." in page
+    assert "Welcome back." not in page
     assert ".judge-start-card" in styles
     assert ".judge-start-action" in styles
 
