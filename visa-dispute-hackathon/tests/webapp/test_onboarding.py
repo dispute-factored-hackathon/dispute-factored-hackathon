@@ -240,7 +240,7 @@ def test_new_tutorial_version_is_offered_again() -> None:
     }
 
 
-def test_contextual_tour_is_interactive_and_english_only() -> None:
+def test_contextual_tour_is_interactive_and_handles_empty_accounts() -> None:
     client = TestClient(app)
     response = client.get("/static/js/components/guided-tour.js")
 
@@ -250,25 +250,59 @@ def test_contextual_tour_is_interactive_and_english_only() -> None:
         'id: "cards-link"',
         'target: ".bank-card.is-active"',
         'id: "transactions"',
-        'id: "report-transaction"',
+        'target: ".transaction-item, #empty-state"',
         'id: "izzy"',
+        "target: \"[data-tour='izzy']\"",
         'id: "complaints-link"',
         'target: ".page-heading"',
         'id: "profile-link"',
         'id: "finish"',
         'action: "activate"',
-        'actionTarget: "#report-button"',
         "element.addEventListener",
         "guided-tour-no-target",
     ):
         assert expected in content
     assert "pt:" not in content
     assert "es:" not in content
+    assert 'id: "report-transaction"' not in content
+    assert "transactionDetailRoute" not in content
     assert 'id: "complaint-detail"' not in content
     assert 'target: ".complaint-item"' not in content
     finish_step = content.split('id: "finish"', 1)[1].split("},", 1)[0]
     assert "target:" not in finish_step
     assert "action:" not in finish_step
+
+
+def test_empty_transaction_history_has_truthful_tour_copy() -> None:
+    client = TestClient(app)
+    create_customer(client)
+    login(client)
+    transaction_repository._transactions.clear()
+
+    assert client.get("/api/transactions").json() == []
+    javascript = client.get("/static/js/components/guided-tour.js").text
+    assert 'target: ".transaction-item, #empty-state"' in javascript
+    assert 'route: "/home",\n        target: "[data-tour=\'izzy\']"' in javascript
+
+    expected_copy = {
+        "en": ("no purchases yet", "transaction history starts empty"),
+        "pt": ("ainda não tem compras", "histórico começa vazio"),
+        "es": ("todavía no tiene compras", "historial comienza vacío"),
+    }
+    for language, phrases in expected_copy.items():
+        catalog = client.get(f"/static/locales/v1/{language}.json").json()
+        combined = " ".join(
+            (
+                catalog["tour.welcome_body"],
+                catalog["tour.transactions_link_body"],
+                catalog["tour.transactions_title"],
+                catalog["tour.transactions_body"],
+                catalog["tour.complaints_body"],
+                catalog["tour.finish_body"],
+            )
+        ).lower()
+        assert all(phrase in combined for phrase in phrases)
+        assert "shady business" in combined
 
 
 def test_first_tour_completion_prompts_shady_business_after_overlay_closes() -> None:
@@ -396,7 +430,7 @@ def test_complaint_details_resume_the_contextual_tour() -> None:
     client = TestClient(app)
     content = client.get("/static/js/pages/complaint-detail.js").text
 
-    assert 'from "../components/guided-tour.js?v=8"' in content
+    assert 'from "../components/guided-tour.js?v=9"' in content
     assert "await initializeGuidedTour();" in content
 
 
