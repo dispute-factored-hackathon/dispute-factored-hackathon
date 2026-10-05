@@ -172,6 +172,7 @@ class JevVoiceRouter:
         stage: str,
         transcript: str,
         language: str,
+        prompt_context: str = "",
     ) -> JevVoiceDecision:
         """Choose a bounded action or explicitly defer to the Realtime model."""
 
@@ -182,6 +183,7 @@ class JevVoiceRouter:
         payload = self.client.decide(
             state={
                 "customer_utterance": transcript,
+                "previous_agent_prompt": prompt_context,
                 "workflow_stage": stage,
                 "conversation_language": language,
             },
@@ -358,8 +360,16 @@ class JevVoiceRouter:
                 "unclear": "No explicit supported-language choice or unrelated input.",
             },
             "needs_auth_method": {
-                "phone": "Explicitly chooses authentication using the calling phone number.",
-                "document": "Explicitly chooses authentication using a document number.",
+                "phone": (
+                    "Chooses the phone, telephone, this number, calling number, or automatic "
+                    "phone-number authentication. Interpret the answer in the context of Izzy's "
+                    "immediately preceding authentication-method question, including imperfect "
+                    "speech transcription such as 'through phone number' or 'your phone number'."
+                ),
+                "document": (
+                    "Chooses a document number, identification number, or Factored ID, interpreted "
+                    "in the context of Izzy's immediately preceding authentication-method question."
+                ),
                 "unclear": "No explicit authentication-method choice or unrelated input.",
             },
             "confirm_transaction": {
@@ -373,12 +383,19 @@ class JevVoiceRouter:
             },
             "needs_dispute_classification": {
                 "UNAUTHORIZED_CARD": (
-                    "Explicitly denies making, approving, or authorizing the selected transaction."
+                    "Says the selected purchase is fraud, a scam, not recognized, not theirs, or "
+                    "that they did not make, approve, or authorize it. Equivalent meanings in "
+                    "English, Portuguese, or Spanish count even when phrased briefly."
                 ),
                 "DUPLICATE_PROCESSING": (
                     "Recognizes the purchase but says that same purchase was charged more than once."
                 ),
                 "INSUFFICIENT_INFO": "Neither claim is explicit, both conflict, or input is unrelated.",
+            },
+            "confirm_dispute_classification": {
+                "CONFIRM": "Confirms that Izzy's proposed dispute category is correct.",
+                "DENY": "Rejects or corrects Izzy's proposed dispute category.",
+                "UNCLEAR": "Does not clearly accept or reject the proposed dispute category.",
             },
             "dispute_classified": {
                 "rating_1": "Rating 1: 1, one, um/uma, or uno/una, including a bare answer.",
@@ -468,6 +485,11 @@ class JevVoiceRouter:
                 "customer_reports_duplicate": choice == "DUPLICATE_PROCESSING",
                 "customer_reported_card_environment": environment,
             }
+
+        if stage == "confirm_dispute_classification":
+            if choice not in {"CONFIRM", "DENY", "UNCLEAR"}:
+                return None
+            return "confirm_dispute_classification", {"confirmation_intent": choice}
 
         if stage == "dispute_classified":
             if choice.startswith("rating_") and choice[-1:] in {"1", "2", "3", "4", "5"}:

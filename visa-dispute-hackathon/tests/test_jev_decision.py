@@ -82,6 +82,30 @@ class JevVoiceRouterTests(unittest.TestCase):
         self.assertEqual(decision.tool_name, "set_authentication_method")
         self.assertEqual(decision.arguments, {"method": "document"})
 
+    def test_previous_agent_prompt_is_sent_with_customer_answer(self):
+        client = FakeClient(
+            {
+                "prompt_abuse": noul(0.01),
+                "explicit_human_request": noul(0.01),
+                "speech_clarity": choice("clear"),
+                "stage_intent": choice("phone"),
+            }
+        )
+
+        JevVoiceRouter(client=client).route(
+            stage="needs_auth_method",
+            transcript="Through phone number.",
+            language="en",
+            prompt_context="Would you like phone or document authentication?",
+        )
+
+        sent_state = client.requests[0]["state"]
+        self.assertEqual(sent_state["customer_utterance"], "Through phone number.")
+        self.assertEqual(
+            sent_state["previous_agent_prompt"],
+            "Would you like phone or document authentication?",
+        )
+
     def test_transaction_confirmation_with_new_details_falls_back_for_extraction(self):
         decision, _ = self._route("confirm_transaction", choice("DENY_WITH_DETAILS"))
 
@@ -99,6 +123,15 @@ class JevVoiceRouterTests(unittest.TestCase):
         self.assertTrue(decision.arguments["customer_denies_authorization"])
         self.assertFalse(decision.arguments["customer_reports_duplicate"])
         self.assertEqual(decision.arguments["customer_reported_card_environment"], "CARD_ABSENT")
+
+    def test_dispute_classification_confirmation_maps_to_confirmation_tool(self):
+        decision, _ = self._route(
+            "confirm_dispute_classification",
+            choice("CONFIRM"),
+        )
+
+        self.assertEqual(decision.tool_name, "confirm_dispute_classification")
+        self.assertEqual(decision.arguments, {"confirmation_intent": "CONFIRM"})
 
     def test_csat_rating_maps_to_integer(self):
         decision, _ = self._route(
