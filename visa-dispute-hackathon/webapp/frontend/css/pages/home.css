@@ -463,12 +463,12 @@
     scroll-margin-top: calc(5rem + env(safe-area-inset-top));
 }
 
-.shady-start-hint {
+.shady-business .shady-start-hint {
     display: inline-flex;
     margin: 0 0 var(--space-3);
     padding: 0.35rem 0.7rem;
-    color: #171815;
-    background: #f8e55b;
+    color: #11110f;
+    background: #ffef70;
     border-radius: 999px;
     font-size: 0.82rem;
     font-weight: 900;
@@ -476,7 +476,7 @@
     text-transform: uppercase;
 }
 
-.shady-start-hint[hidden] {
+.shady-business .shady-start-hint[hidden] {
     display: none;
 }
 

@@ -1,3 +1,5 @@
+import re
+
 from fakes import (
     complaint_repository,
     customer_repository,
@@ -327,7 +329,10 @@ def test_first_tour_end_prompts_shady_business_after_overlay_closes() -> None:
     assert 'id="shady-start-hint"' in home
     assert "Start here" in home
     assert ".shady-business-start" in css
-    assert ".shady-start-hint[hidden]" in css
+    assert ".shady-business .shady-start-hint[hidden]" in css
+    assert "function scrollToShadyBusinessStart()" in home_javascript
+    assert "window.requestAnimationFrame" in home_javascript
+    assert 'scrollIntoView({ block: "center", behavior })' in home_javascript
     assert "prefers-reduced-motion" in css
 
 
@@ -378,6 +383,37 @@ def test_start_here_copy_exists_in_all_supported_languages() -> None:
     for language, copy in expected.items():
         catalog = client.get(f"/static/locales/v1/{language}.json").json()
         assert catalog["home.start_here"] == copy
+
+
+def test_start_here_badge_meets_wcag_aa_text_contrast() -> None:
+    client = TestClient(app)
+    css = client.get("/static/css/pages/home.css").text
+    badge = re.search(
+        r"\.shady-business \.shady-start-hint \{(?P<rules>.*?)\n\}",
+        css,
+        re.DOTALL,
+    )
+
+    assert badge is not None
+    rules = badge.group("rules")
+    foreground = re.search(r"color: (?P<color>#[0-9a-f]{6});", rules)
+    background = re.search(r"background: (?P<color>#[0-9a-f]{6});", rules)
+    assert foreground is not None
+    assert background is not None
+
+    def luminance(color: str) -> float:
+        channels = [int(color[index : index + 2], 16) / 255 for index in (1, 3, 5)]
+        linear = [
+            value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+            for value in channels
+        ]
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+    lighter, darker = sorted(
+        (luminance(foreground.group("color")), luminance(background.group("color"))),
+        reverse=True,
+    )
+    assert (lighter + 0.05) / (darker + 0.05) >= 4.5
 
 
 def test_empty_complaint_history_does_not_block_contextual_tour() -> None:
@@ -453,8 +489,10 @@ def test_pages_load_the_cache_busted_empty_account_tour() -> None:
     client = TestClient(app)
     expected_version = "v=20261005-onboarding-empty4"
 
+    home = client.get("/static/pages/home.html").text
+    assert "v=20261005-onboarding-empty5" in home
+
     for page in (
-        "home",
         "cards",
         "transactions",
         "agent",
