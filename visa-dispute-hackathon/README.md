@@ -15,6 +15,7 @@ Project documentation is maintained in the [GitHub Wiki](https://github.com/disp
 | Domain | Python services, deterministic policies and Pydantic tool schemas | Customer scope, transaction ranking, Visa mapping, card block, complaint creation and handoff preconditions |
 | Persistence | Repository contracts, PostgreSQL 16, psycopg/pool and Alembic | Shared web/voice operational data, schema evolution and replaceable test adapters |
 | Data ingestion | MotherDuck, Python seed pipeline and Pydantic mapping | Read-only synthetic source, validation, masking and idempotent PostgreSQL loads |
+| Analytics | DuckDB, MotherDuck, pandas, Jupyter and Streamlit | Aggregate baselines, operational diagnostics and a public decision dashboard |
 | Cloud | Lambda, Function URLs, EventBridge, ECR, Secrets Manager, CloudWatch, IAM and CloudFormation | Cost-conscious runtime, warm-up scheduling, secret retrieval, logs and repeatable infrastructure in `sa-east-1` |
 | Observability | Structured CloudWatch events, LangSmith, PostgreSQL telemetry, Twilio/OpenAI consoles and GitHub Actions | Call reconstruction, model/tool traces, interaction state, provider diagnosis and delivery evidence |
 | Engineering | `uv`, Docker, Pytest, Ruff, Coverage.py, Radon, Semgrep and optional SonarQube/Gitleaks | Reproducible environments, tests, code quality, security checks and deployment |
@@ -351,6 +352,27 @@ The same creation is enforced by `seed_izzy_agent()` during every AWS database b
 The deployed AWS database was verified on 4 October 2026 with 100 customers, 159 cards, 1,925 transactions and 56 complaints after the lakehouse seed. The bootstrap returned `status=ready` and `service_agent_id=AGENT-IZZY`. These counts describe the current synthetic sample and will grow when Shady Business purchases or new complaints are created.
 
 Limitations: the data is synthetic, and the parody shop catalog is static copy. Purchases and complaints written by the app or by calls exist only in PostgreSQL; they are not synchronized back to the lakehouse yet.
+
+## Analytics notebook and public dashboard
+
+The executed [LATAM service analytics notebook](notebooks/latam_service_analytics.ipynb) reads the
+treated `lakehouse.silver` tables directly through DuckDB/MotherDuck. It establishes comparable
+baselines for card-dispute intake, call-center outcomes, SLA performance, repeat complainants,
+resolution time, evidence coverage, data lineage, agent capacity and a duration-based labor-cost
+proxy. It explicitly reports missing source tables instead of fabricating survey or digital-event
+metrics.
+
+The Streamlit app in `analytics/streamlit_app.py` publishes the same aggregate analyses without
+showing customer rows, transcript text, documents, contact details or card numbers. Run it locally:
+
+```bash
+uv sync --extra analytics
+uv run --extra analytics streamlit run analytics/streamlit_app.py
+```
+
+Deployment and the lower-cost Streamlit-versus-QuickSight decision are documented in
+[`analytics/README.md`](analytics/README.md). Store `MOTHERDUCK_TOKEN` only in local environment
+variables or the hosting platform's encrypted secrets.
 
 ## Izzy web chat (`/agent`)
 
