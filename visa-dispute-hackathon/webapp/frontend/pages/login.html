@@ -29,7 +29,7 @@
 
     <link
         rel="stylesheet"
-        href="/static/css/pages/login.css?v=20261004"
+        href="/static/css/pages/login.css?v=20261004-id1"
     >
 </head>
 
@@ -125,19 +125,25 @@
                         </button>
                     </div>
 
-                    <div class="demo-warning" role="note">
-                        <strong>Demo access only.</strong>
-                        No password is required because every profile and transaction is synthetic.
-                        Never use this pattern for real banking access.
-                    </div>
-
                     <div
                         id="factored-id-login-panel"
                         class="form-field"
                         role="tabpanel"
                         aria-labelledby="factored-id-method"
                     >
-                        <label for="factored-id">Factored ID</label>
+                        <div class="factored-id-explainer" role="note">
+                            <span class="factored-id-example" aria-hidden="true">
+                                123456
+                            </span>
+
+                            <p>
+                                <strong>What is a Factored ID?</strong>
+                                It is the six-digit demo login code you receive after creating a profile.
+                                <a href="/signup">Create a profile to get one.</a>
+                            </p>
+                        </div>
+
+                        <label for="factored-id">Factored ID — six-digit code</label>
                         <input
                             id="factored-id"
                             name="factoredId"
@@ -149,7 +155,7 @@
                             placeholder="123456"
                         >
                         <p class="field-help">
-                            Enter the six-digit ID generated when the demo account was created.
+                            Find it on the confirmation screen shown after account creation. No password is needed.
                         </p>
                     </div>
 
@@ -194,6 +200,12 @@
                             Search ignores capitalization and accents. A short profile label distinguishes
                             customers with the same name without exposing document numbers.
                         </p>
+                    </div>
+
+                    <div class="demo-warning" role="note">
+                        <strong>Demo access only.</strong>
+                        No password is required because every profile and transaction is synthetic.
+                        Never use this pattern for real banking access.
                     </div>
 
                     <button

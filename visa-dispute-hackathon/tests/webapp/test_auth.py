@@ -480,3 +480,19 @@ def test_login_makes_signup_the_obvious_first_step_for_new_judges() -> None:
     assert "Already have a demo profile?" in page
     assert ".judge-start-card" in styles
     assert ".judge-start-action" in styles
+
+
+def test_login_explains_factored_id_where_it_is_requested() -> None:
+    client = TestClient(app)
+
+    page = client.get("/login").text
+    styles = client.get("/static/css/pages/login.css").text
+    panel = page.split('id="factored-id-login-panel"', 1)[1].split("</div>", 2)[0]
+
+    assert "What is a Factored ID?" in panel
+    assert "six-digit demo login code" in panel
+    assert 'href="/signup"' in panel
+    assert "Factored ID — six-digit code" in page
+    assert "No password is needed" in page
+    assert ".factored-id-explainer" in styles
+    assert ".factored-id-example" in styles
