@@ -34,7 +34,7 @@
 
     <link
         rel="stylesheet"
-        href="/static/css/pages/agent.css?v=5"
+        href="/static/css/pages/agent.css?v=6"
     >
 </head>
 
@@ -117,13 +117,24 @@
                 This conversation has ended.
             </p>
 
-            <button
-                id="agent-new-chat"
-                class="button button-primary"
-                type="button"
-            >
-                Start a new chat
-            </button>
+            <div class="agent-closed-actions">
+                <a
+                    id="agent-view-complaints"
+                    class="button button-primary"
+                    href="/complaints"
+                    hidden
+                >
+                    View complaints
+                </a>
+
+                <button
+                    id="agent-new-chat"
+                    class="button button-secondary"
+                    type="button"
+                >
+                    Start another complaint
+                </button>
+            </div>
         </section>
 
         <form
@@ -169,7 +180,7 @@
 
     <script
         type="module"
-        src="/static/js/pages/agent.js?v=6"
+        src="/static/js/pages/agent.js?v=7"
     ></script>
 </body>
 </html>

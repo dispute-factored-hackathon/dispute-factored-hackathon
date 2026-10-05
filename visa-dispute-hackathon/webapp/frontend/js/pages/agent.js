@@ -15,6 +15,7 @@ const input = document.querySelector("#agent-input");
 const sendButton = document.querySelector("#agent-send");
 const closedPanel = document.querySelector("#agent-closed");
 const newChatButton = document.querySelector("#agent-new-chat");
+const complaintsButton = document.querySelector("#agent-view-complaints");
 const callButton = document.querySelector("#agent-call");
 const phoneLink = document.querySelector("#agent-phone-link");
 const bottomNav = document.querySelector("#bottom-nav");
@@ -52,8 +53,14 @@ function setComposerEnabled(enabled) {
     if (enabled) input.focus();
 }
 
-function showClosed(text) {
+function showClosed(text, { complaintsPrimary = false } = {}) {
     if (text) closedPanel.querySelector("p").textContent = text;
+    complaintsButton.hidden = !complaintsPrimary;
+    newChatButton.classList.toggle("button-primary", !complaintsPrimary);
+    newChatButton.classList.toggle("button-secondary", complaintsPrimary);
+    newChatButton.textContent = t(
+        complaintsPrimary ? "izzy.another_complaint" : "izzy.new_chat",
+    );
     closedPanel.hidden = false;
     composer.hidden = true;
 }
@@ -230,6 +237,7 @@ async function sendTurn({ text = "", selectedTransactionId = null, rejectOptions
     const reply = addTypingBubble();
     let replyText = "";
     let closed = false;
+    let complaintsAvailable = false;
     let pendingOptions = null;
 
     const render = (value, links = []) => {
@@ -303,6 +311,9 @@ async function sendTurn({ text = "", selectedTransactionId = null, rejectOptions
             } else if (name === "state") {
                 closed = Boolean(payload.closed);
                 if (payload.links?.length) render(replyText, payload.links);
+                complaintsAvailable = Boolean(
+                    payload.links?.some((link) => link.href === "/complaints"),
+                );
                 if (payload.stage !== "confirm_transaction") disableOptions();
             }
         });
@@ -310,7 +321,7 @@ async function sendTurn({ text = "", selectedTransactionId = null, rejectOptions
         if (!replyText) render(t("izzy.unavailable"));
         // Options appear under Izzy's message so the question comes first.
         if (pendingOptions) renderOptions(pendingOptions);
-        if (closed) showClosed();
+        if (closed) showClosed(null, { complaintsPrimary: complaintsAvailable });
     } catch (error) {
         console.error("Unable to reach Izzy:", error);
         render(t("izzy.unavailable"));

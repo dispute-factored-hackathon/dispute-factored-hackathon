@@ -378,6 +378,8 @@
   "izzy.conversation_label": "Conversación con Izzy",
   "izzy.closed": "Esta conversación terminó.",
   "izzy.new_chat": "Iniciar un chat nuevo",
+  "izzy.view_complaints": "Ver reclamos",
+  "izzy.another_complaint": "Iniciar otro reclamo",
   "izzy.message_label": "Mensaje para Izzy",
   "izzy.placeholder": "Describe la transacción…",
   "izzy.send": "Enviar mensaje",

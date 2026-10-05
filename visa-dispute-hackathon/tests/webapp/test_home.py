@@ -324,3 +324,18 @@ def test_agent_phone_and_call_action_remain_in_the_sticky_mobile_header() -> Non
     assert "position: sticky;" in styles
     assert "grid-template-columns: auto minmax(max-content, 1fr) auto;" in styles
     assert "@media (max-width: 359px)" in styles
+
+
+def test_finished_chat_prioritizes_the_complaints_page() -> None:
+    client = TestClient(app)
+
+    page = client.get("/agent").text
+    script = client.get("/static/js/pages/agent.js").text
+
+    complaints_position = page.index('id="agent-view-complaints"')
+    another_complaint_position = page.index('id="agent-new-chat"')
+    assert complaints_position < another_complaint_position
+    assert 'class="button button-primary"' in page[complaints_position:another_complaint_position]
+    assert 'href="/complaints"' in page[complaints_position:another_complaint_position]
+    assert 'link.href === "/complaints"' in script
+    assert "complaintsPrimary: complaintsAvailable" in script
