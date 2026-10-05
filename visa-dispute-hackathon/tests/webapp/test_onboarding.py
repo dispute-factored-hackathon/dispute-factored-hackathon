@@ -351,11 +351,24 @@ def test_tour_script_retries_transient_progress_failures_and_keeps_mobile_contro
     assert "100dvh" in css
 
 
+def test_active_card_step_reserves_readable_space_on_short_mobile_screens() -> None:
+    client = TestClient(app)
+    javascript = client.get("/static/js/components/guided-tour.js").text
+    css = client.get("/static/css/components.css").text
+
+    assert 'mobilePlacement: "above"' in javascript
+    assert 'layer.dataset.step = step.id' in javascript
+    assert 'block: viewportSize().width <= MOBILE_BREAKPOINT ? mobileBlock : "center"' in javascript
+    assert '@media (max-width: 600px) and (max-height: 700px)' in css
+    assert '.guided-tour[data-step="cards"] .guided-tour-tooltip' in css
+    assert 'grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr)' in css
+
+
 def test_complaint_details_resume_the_contextual_tour() -> None:
     client = TestClient(app)
     content = client.get("/static/js/pages/complaint-detail.js").text
 
-    assert 'from "../components/guided-tour.js?v=8"' in content
+    assert 'from "../components/guided-tour.js?v=9"' in content
     assert "await initializeGuidedTour();" in content
 
 

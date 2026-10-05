@@ -40,6 +40,7 @@ const STEPS = [
         route: "/cards",
         target: ".bank-card.is-active",
         allowMissingTarget: true,
+        mobilePlacement: "above",
     },
     {
         id: "transactions-link",
@@ -323,7 +324,7 @@ function viewportSize() {
     };
 }
 
-function positionMobileTooltip(tooltip, rect, viewport) {
+function positionMobileTooltip(tooltip, rect, viewport, preferredPlacement = null) {
     const margin = 12;
     const gap = 16;
     tooltip.style.width = `${viewport.width - margin * 2}px`;
@@ -332,7 +333,7 @@ function positionMobileTooltip(tooltip, rect, viewport) {
 
     const spaceAbove = rect.top - viewport.top - margin - gap;
     const spaceBelow = viewport.top + viewport.height - rect.bottom - margin - gap;
-    if (spaceAbove > spaceBelow) {
+    if (preferredPlacement === "above" || spaceAbove > spaceBelow) {
         tooltip.style.maxHeight = `${Math.max(140, spaceAbove)}px`;
         tooltip.style.top = `${viewport.top + margin}px`;
         tooltip.style.bottom = "auto";
@@ -367,7 +368,12 @@ function positionTour() {
     spotlight.style.setProperty("--tour-height", `${Math.min(viewport.height - 16, rect.height + padding * 2)}px`);
 
     if (viewport.width <= MOBILE_BREAKPOINT) {
-        positionMobileTooltip(tooltip, rect, viewport);
+        positionMobileTooltip(
+            tooltip,
+            rect,
+            viewport,
+            STEPS[currentIndex]?.mobilePlacement,
+        );
         return;
     }
 
@@ -459,13 +465,15 @@ async function showCurrentStep() {
         }
     }
     if (target) {
+        const mobileBlock = step.mobilePlacement === "above" ? "end" : "start";
         target.scrollIntoView({
-            block: viewportSize().width <= MOBILE_BREAKPOINT ? "start" : "center",
+            block: viewportSize().width <= MOBILE_BREAKPOINT ? mobileBlock : "center",
             behavior: "auto",
         });
     }
     setTarget(target, step);
     if (!layer) layer = createLayer();
+    layer.dataset.step = step.id;
 
     const [titleKey, bodyKey] = COPY.steps[step.id];
     layer.querySelector(".guided-tour-progress").textContent = t(
