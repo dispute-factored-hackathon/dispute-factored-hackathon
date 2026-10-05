@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 from fakes import (
     complaint_repository,
@@ -12,7 +13,12 @@ from fakes import (
 from fastapi.testclient import TestClient
 
 from webapp.backend.main import app
-from webapp.backend.services.localization import locale_for_country
+from webapp.backend.services.localization import (
+    CountryIsLookup,
+    country_for_request,
+    country_lookup,
+    locale_for_country,
+)
 
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "webapp" / "frontend"
 LOCALES_DIR = FRONTEND_DIR / "locales" / "v1"
@@ -75,6 +81,94 @@ def test_locale_context_falls_back_to_english_without_country() -> None:
     assert response.status_code == 200
     assert response.json()["locale"] == "en-US"
     assert response.json()["source"] == "default"
+
+
+def test_locale_context_uses_country_is_for_a_public_client_ip(monkeypatch) -> None:
+    seen_ips: list[str | None] = []
+
+    def lookup(client_ip: str | None) -> str | None:
+        seen_ips.append(client_ip)
+        return "MX"
+
+    monkeypatch.setattr(country_lookup, "lookup", lookup)
+    response = TestClient(app, client=("8.8.8.8", 50000)).get(
+        "/api/localization/context"
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "locale": "es-MX",
+        "language": "es",
+        "country_code": "MX",
+        "source": "country.is",
+    }
+    assert seen_ips == ["8.8.8.8"]
+
+
+def test_country_is_lookup_is_cached_and_uses_a_short_timeout() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"ip": "8.8.8.8", "country": "BR"})
+
+    lookup = CountryIsLookup(
+        client=httpx.Client(
+            base_url="https://api.country.is",
+            transport=httpx.MockTransport(handler),
+        ),
+        timeout_seconds=0.2,
+        cache_ttl_seconds=3600,
+    )
+
+    assert lookup.lookup("8.8.8.8") == "BR"
+    assert lookup.lookup("8.8.8.8") == "BR"
+    assert len(requests) == 1
+    assert requests[0].url == httpx.URL("https://api.country.is/8.8.8.8")
+    assert requests[0].extensions["timeout"]["read"] == 0.2
+
+
+def test_country_headers_take_priority_over_external_lookup() -> None:
+    class FailingLookup:
+        @staticmethod
+        def lookup(_client_ip: str | None) -> str | None:
+            raise AssertionError("country.is must not be called when an edge header exists")
+
+    country_code, source = country_for_request(
+        {"cf-ipcountry": "CO"},
+        "8.8.8.8",
+        lookup=FailingLookup(),  # type: ignore[arg-type]
+    )
+
+    assert country_code == "CO"
+    assert source == "cf-ipcountry"
+
+
+def test_country_is_failure_and_non_public_ip_fall_back_to_english() -> None:
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(503)
+
+    lookup = CountryIsLookup(
+        client=httpx.Client(
+            base_url="https://api.country.is",
+            transport=httpx.MockTransport(handler),
+        ),
+        timeout_seconds=0.2,
+        failure_ttl_seconds=60,
+    )
+
+    private_result = country_for_request({}, "127.0.0.1", lookup=lookup)
+    failed_result = country_for_request({}, "8.8.4.4", lookup=lookup)
+    cached_failure = country_for_request({}, "8.8.4.4", lookup=lookup)
+
+    assert private_result == (None, "default")
+    assert failed_result == (None, "default")
+    assert cached_failure == (None, "default")
+    assert calls == 1
 
 
 def test_all_locale_resources_have_the_same_message_keys() -> None:

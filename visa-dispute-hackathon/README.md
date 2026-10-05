@@ -392,6 +392,8 @@ The web interface offers two paths: a searchable synthetic-customer selector for
 
 This shortcut is controlled impersonation for the hackathon demo, not production authentication. The selector searches the customers loaded by `dispute-db-seed-lakehouse` into PostgreSQL. The selected profile exposes a regional locale (`pt-BR`, `es-CO`, `es-MX`, `es-AR`, or `en-US`) for the interface-localization layer.
 
+Before login, interface localization first uses a trusted country header supplied by an edge provider. The direct AWS Function URL does not provide one, so the backend can query `country.is` with only the validated public client IP. Successful results are cached for 24 hours; failures are cached for five minutes to avoid repeated delays. The lookup has a 0.6-second timeout, never blocks access, and falls back to English on errors, invalid/private IPs, or unsupported countries. After Factored ID login, the locale stored in the customer profile remains authoritative. The optional timeout and cache controls are documented in `.env.example`; no external API key is required.
+
 ## Shady Business purchase simulator
 
 Authenticated demo customers can open `/shop`, browse a humorous synthetic catalog, manage a browser-session cart, and pay with one of their active mock credit cards. The server resolves authoritative catalog prices, validates card ownership and status, and writes the approved purchase to the same PostgreSQL transactions table used by Factored Bank.
