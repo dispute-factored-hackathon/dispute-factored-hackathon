@@ -13,6 +13,13 @@ if (backLink) {
             return;
         }
 
+        // The store receipt deliberately sends customers to their newly created
+        // transactions. From there, the bank back arrow must leave the store journey
+        // and use its safe /home href instead of replaying browser history.
+        if (new URLSearchParams(window.location.search).get("return") === "home") {
+            return;
+        }
+
         // Keep direct links and external referrers inside Factored Bank. When the customer came
         // from another application page, preserve their real navigation path instead of forcing
         // every back arrow to /home or a hard-coded list page.

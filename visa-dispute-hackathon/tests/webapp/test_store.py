@@ -120,6 +120,12 @@ def setup_function() -> None:
     use_anomaly_strategy(DuplicateStrategy())
 
 
+def test_store_receipt_sends_transactions_back_to_bank_home() -> None:
+    page = TestClient(app).get("/shop/cart").text
+
+    assert 'href="/transactions?return=home"' in page
+
+
 def teardown_function() -> None:
     clear_repositories()
     app.dependency_overrides.pop(get_store_service, None)

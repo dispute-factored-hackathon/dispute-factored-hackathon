@@ -79,6 +79,12 @@ def test_transactions_page_is_available() -> None:
     assert response.status_code == 200
     assert "Transactions" in response.text
     assert "transactions.js" in response.text
+    assert 'class="back-link"' in response.text
+    assert 'href="/home"' in response.text
+    assert "history-back.js?v=2" in response.text
+
+    history_back = client.get("/static/js/components/history-back.js").text
+    assert 'get("return") === "home"' in history_back
 
 
 def test_transaction_detail_page_is_available() -> None:
