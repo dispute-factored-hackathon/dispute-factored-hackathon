@@ -87,7 +87,16 @@ class ChatTurnInterpretation(BaseModel):
             "category",
         ]
     ]
-    allegation: Literal["UNAUTHORIZED_CARD", "DUPLICATE_PROCESSING", "INSUFFICIENT_INFO"] | None
+    allegation: Literal["UNAUTHORIZED_CARD", "DUPLICATE_PROCESSING", "INSUFFICIENT_INFO"] | None = (
+        Field(
+            description=(
+                "UNAUTHORIZED_CARD when the customer denies authorizing the purchase or "
+                "affirmatively calls that purchase fraud or a scam; DUPLICATE_PROCESSING when "
+                "one recognized purchase was charged more than once; otherwise "
+                "INSUFFICIENT_INFO. Questions or hypothetical fraud concerns are insufficient."
+            )
+        )
+    )
     card_environment: Literal["CARD_PRESENT", "CARD_ABSENT", "UNKNOWN"] | None
     rating: int | None = Field(description="1 to 5, only for an explicit satisfaction rating.")
 
@@ -142,8 +151,10 @@ Rules:
   option_number to its number. confirm_transaction: a plain "yes" when one purchase is offered.
 - deny_transaction: none of the offered purchases is the right one. If they add new details in the
   same message, fill in the new filters too.
-- report_problem: the customer says whether they did not authorize the purchase
-  (UNAUTHORIZED_CARD) or were charged more than once for one purchase (DUPLICATE_PROCESSING);
+- report_problem: use UNAUTHORIZED_CARD when the customer explicitly denies authorizing the
+  purchase or affirmatively identifies that selected purchase as fraud or a scam (including
+  "fraude" or "golpe"). A question, hypothesis, or generic discussion about fraud is not enough.
+  Use DUPLICATE_PROCESSING when they recognize one purchase but say it was charged more than once;
   use INSUFFICIENT_INFO when it is unclear. Set card_environment only if they said how it was paid.
 - In stage needs_dispute_classification: yes/no to the problem Izzy suggested is
   confirm_transaction / deny_transaction; an answer about how it was paid (online, in person)

@@ -458,7 +458,10 @@ class JevVoiceRouter:
             },
             "needs_dispute_classification": {
                 "UNAUTHORIZED_CARD": (
-                    "Explicitly denies making, approving, or authorizing the selected transaction."
+                    "Explicitly denies making, approving, or authorizing the selected transaction; "
+                    "or affirmatively identifies that transaction as fraud or a scam (for example, "
+                    "fraude or golpe), which means it was not legitimately authorized. A question, "
+                    "hypothesis, or generic discussion about fraud is not enough."
                 ),
                 "DUPLICATE_PROCESSING": (
                     "Recognizes the purchase but says that same purchase was charged more than once."

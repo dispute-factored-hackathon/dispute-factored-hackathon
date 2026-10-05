@@ -100,6 +100,17 @@ class JevVoiceRouterTests(unittest.TestCase):
         self.assertFalse(decision.arguments["customer_reports_duplicate"])
         self.assertEqual(decision.arguments["customer_reported_card_environment"], "CARD_ABSENT")
 
+    def test_dispute_classification_instructions_treat_fraud_and_scam_as_unauthorized(self):
+        criteria = JevVoiceRouter._questions_for("needs_dispute_classification")["stage_intent"][
+            "criteria"
+        ]["UNAUTHORIZED_CARD"]
+
+        self.assertIn("fraud", criteria)
+        self.assertIn("scam", criteria)
+        self.assertIn("fraude", criteria)
+        self.assertIn("golpe", criteria)
+        self.assertIn("question", criteria)
+
     def test_dispute_category_confirmation_maps_to_dedicated_tool(self):
         decision, _ = self._route(
             "confirm_dispute_classification",

@@ -2579,8 +2579,10 @@ class SipRealtimeGateway:
             "name": "classify_dispute",
             "description": (
                 "Classify the caller's problem with the confirmed transaction. Use "
-                "UNAUTHORIZED_CARD only when the caller explicitly says they did not make or "
-                "authorize it. Use DUPLICATE_PROCESSING only when the caller recognizes the "
+                "UNAUTHORIZED_CARD when the caller explicitly says they did not make or "
+                "authorize it, or affirmatively identifies that transaction as fraud or a scam "
+                "(including fraude or golpe). A question or hypothesis about fraud is not enough. "
+                "Use DUPLICATE_PROCESSING only when the caller recognizes the "
                 "purchase but says the same purchase was charged more than once. Otherwise use "
                 "INSUFFICIENT_INFO. Call this tool immediately and silently: do not acknowledge, "
                 "summarize, or promise to classify before the call. The server response is the "
@@ -2600,8 +2602,9 @@ class SipRealtimeGateway:
                     "customer_denies_authorization": {
                         "type": "boolean",
                         "description": (
-                            "True only when the caller explicitly says they did not make, "
-                            "approve, or authorize the selected transaction."
+                            "True when the caller explicitly says they did not make, approve, or "
+                            "authorize the selected transaction, or affirmatively identifies that "
+                            "transaction as fraud or a scam. False for questions or hypotheses."
                         ),
                     },
                     "customer_reports_duplicate": {
@@ -2816,7 +2819,10 @@ Question discipline:
 Dispute-classification workflow:
 - Classification starts only at needs_dispute_classification, after the caller confirms the transaction.
 - Ask whether the caller did not make or authorize this transaction, or recognizes the purchase but was charged more than once for the same purchase.
-- Call classify_dispute with UNAUTHORIZED_CARD only after an explicit authorization denial.
+- Call classify_dispute with UNAUTHORIZED_CARD after an explicit authorization denial or when the
+  caller affirmatively identifies the selected transaction as fraud or a scam (including "fraude"
+  or "golpe"). Treat that affirmative allegation as customer_denies_authorization=true. A question,
+  hypothesis, or generic discussion about fraud is not enough.
 - Call classify_dispute with DUPLICATE_PROCESSING only after an explicit statement that the same recognized purchase was charged more than once.
 - For ambiguity, uncertainty, both claims at once, or unrelated input, call classify_dispute with INSUFFICIENT_INFO and both evidence flags false.
 - Set customer_reported_card_environment only when the caller explicitly says the purchase was in person with the card or online/remote; otherwise use UNKNOWN.

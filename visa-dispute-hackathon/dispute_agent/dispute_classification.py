@@ -42,6 +42,8 @@ class CardEnvironment(StrEnum):
 class DisputeEvidence:
     """Facts supplied by the customer and the selected transaction record."""
 
+    # This evidence includes an explicit denial and an affirmative customer allegation that the
+    # selected transaction is fraud/a scam; both mean the customer rejects legitimate authorization.
     customer_denies_authorization: bool = False
     customer_reports_duplicate: bool = False
     customer_reported_card_environment: CardEnvironment | None = None
