@@ -27,7 +27,7 @@ router = APIRouter(
 
 
 def get_signup_service(repositories: RepositoriesDependency) -> SignupService:
-    return SignupService(repositories.customers, repositories.products)
+    return SignupService(repositories.account_registration)
 
 
 def get_profile_service(repositories: RepositoriesDependency) -> CustomerProfileService:

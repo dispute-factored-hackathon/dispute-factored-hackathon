@@ -174,6 +174,63 @@ def test_customers_without_a_phone_can_coexist(backend: Backend):
     assert customers.get_by_id("C2") is not None
 
 
+def test_account_registration_replaces_phone_owner_and_owned_data(backend: Backend):
+    repositories = backend.repos
+    previous_id = "CLI-DEMO-OLD"
+    previous_product_id = "PRD-DEMO-OLD"
+    replacement_id = "CLI-DEMO-NEW"
+    previous = make_customer(previous_id, mobile_phone="+5511981020050")
+    previous_card = make_product(previous_product_id, customer_id=previous_id)
+    repositories.account_registration.register(previous, previous_card)
+    repositories.transactions.create(
+        make_transaction(customer_id=previous_id, product_id=previous_product_id)
+    )
+    repositories.complaints.create(make_complaint(customer_id=previous_id))
+    repositories.sessions.create(make_session(customer_id=previous_id))
+
+    replacement = make_customer(
+        replacement_id,
+        document_number="DOC-C2",
+        mobile_phone="+5511981020050",
+    )
+    replacement_card = make_product("PRD-DEMO-NEW", customer_id=replacement_id)
+    repositories.account_registration.register(replacement, replacement_card)
+
+    assert repositories.customers.get_by_id(previous_id) is None
+    assert repositories.products.list_by_customer(previous_id) == []
+    assert repositories.transactions.list_by_customer(previous_id) == []
+    assert repositories.complaints.list_by_customer(previous_id) == []
+    assert repositories.sessions.get("sess-1") is None
+    assert repositories.customers.get_by_phone("5511981020050") == replacement
+    assert repositories.products.list_by_customer(replacement_id) == [replacement_card]
+
+
+def test_failed_account_replacement_is_atomic(backend: Backend):
+    repositories = backend.repos
+    previous_id = "CLI-DEMO-OLD"
+    previous_product = make_product("PRD-DEMO-OLD", customer_id=previous_id)
+    previous = make_customer(previous_id, mobile_phone="+5511981020050")
+    repositories.account_registration.register(previous, previous_product)
+    repositories.customers.create(
+        make_customer("C2", document_number="CONFLICT", mobile_phone="+573001112233")
+    )
+
+    replacement = make_customer(
+        "CLI-DEMO-NEW",
+        document_number="CONFLICT",
+        mobile_phone="+5511981020050",
+    )
+    with pytest.raises(ValueError, match=r"FACTORED_ID already exists."):
+        repositories.account_registration.register(
+            replacement,
+            make_product("PRD-DEMO-NEW", customer_id="CLI-DEMO-NEW"),
+        )
+
+    assert repositories.customers.get_by_id(previous_id) == previous
+    assert repositories.products.list_by_customer(previous_id) == [previous_product]
+    assert repositories.customers.get_by_id("CLI-DEMO-NEW") is None
+
+
 def test_concurrent_signups_with_the_same_document_create_exactly_one_customer(backend: Backend):
     customers = backend.repos.customers
     outcomes: list[str] = []

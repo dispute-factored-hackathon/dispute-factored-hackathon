@@ -11,6 +11,7 @@ from enum import Enum
 from typing import Any, Generic, TypeVar
 
 from psycopg import errors, sql
+from psycopg.types.json import Jsonb
 from pydantic import BaseModel
 
 from webapp.backend.config import Settings
@@ -197,6 +198,33 @@ class PostgresCustomerRepository(_Table[Customer]):
         except errors.UniqueViolation as error:
             raise self._unique_error(error) from error
         return customer
+
+
+class PostgresAccountRegistrationRepository:
+    """Replace a phone owner and create its new account and card atomically."""
+
+    def __init__(self, database: Database) -> None:
+        self.database = database
+        self.customers = PostgresCustomerRepository(database)
+        self.products = PostgresProductRepository(database)
+
+    def register(self, customer: Customer, product: Product) -> tuple[Customer, Product]:
+        customer_values = customer.model_dump(mode="json")
+        customer_values["search_name"] = normalize_search_name(
+            f"{customer.first_name} {customer.last_name}"
+        )
+        product_values = product.model_dump(mode="json")
+
+        try:
+            with self.database.cursor() as cursor:
+                cursor.execute(
+                    "SELECT register_demo_account(%s, %s)",
+                    (Jsonb(customer_values), Jsonb(product_values)),
+                )
+        except errors.UniqueViolation as error:
+            raise self.customers._unique_error(error) from error
+
+        return customer, product
 
 
 class PostgresProductRepository(_Table[Product]):
@@ -550,6 +578,7 @@ def open_repositories(settings: Settings) -> Repositories:
     return Repositories(
         customers=PostgresCustomerRepository(database),
         products=PostgresProductRepository(database),
+        account_registration=PostgresAccountRegistrationRepository(database),
         transactions=PostgresTransactionRepository(database),
         complaints=PostgresComplaintRepository(database),
         sessions=PostgresSessionRepository(database),

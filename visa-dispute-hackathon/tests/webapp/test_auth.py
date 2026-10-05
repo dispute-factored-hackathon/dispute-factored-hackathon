@@ -103,6 +103,55 @@ def test_login_with_valid_factored_id() -> None:
     assert customer["onboarding_eligible"] is True
 
 
+def test_signup_with_registered_phone_replaces_previous_account() -> None:
+    previous_session = TestClient(app)
+    replacement_session = TestClient(app)
+    previous = create_customer(
+        previous_session,
+        factored_id="111111",
+        first_name="Previous",
+        phone="+5511981020050",
+    )
+    assert login(previous_session, factored_id="111111").status_code == 200
+
+    replacement = create_customer(
+        replacement_session,
+        factored_id="222222",
+        first_name="Replacement",
+        phone="+5511981020050",
+    )
+
+    assert replacement["customer_id"] != previous["customer_id"]
+    assert customer_repository.get_by_id(previous["customer_id"]) is None
+    assert product_repository.list_by_customer(previous["customer_id"]) == []
+    assert previous_session.get("/api/auth/me").status_code == 401
+    assert login(replacement_session, factored_id="222222").status_code == 200
+    assert replacement_session.get("/api/auth/me").json()["first_name"] == "Replacement"
+
+
+def test_failed_replacement_preserves_previous_phone_owner() -> None:
+    client = TestClient(app)
+    previous = create_customer(client, factored_id="111111", phone="+5511981020050")
+    create_customer(client, factored_id="222222", phone="+573001112233")
+
+    response = client.post(
+        "/api/customers",
+        json={
+            "first_name": "Conflicting",
+            "last_name": "Document",
+            "date_of_birth": "2000-01-01",
+            "gender": "male",
+            "mobile_phone": "+5511981020050",
+            "preferred_accent": "portuguese",
+            "factored_id": "222222",
+        },
+    )
+
+    assert response.status_code == 409
+    assert customer_repository.get_by_id(previous["customer_id"]) is not None
+    assert customer_repository.get_by_phone("5511981020050").customer_id == previous["customer_id"]
+
+
 def test_seeded_non_judge_profile_is_not_onboarding_eligible() -> None:
     client = TestClient(app)
     seed_demo_customers(customer_repository, product_repository)
@@ -462,3 +511,8 @@ def test_login_page_uses_accessible_searchable_demo_selector() -> None:
     assert "prefillFactoredId();" in script
     assert 'setLoginMethod("factored-id")' in script
     assert "factored:demo-login-metric" in script
+def test_signup_warns_that_a_registered_phone_replaces_the_demo_account() -> None:
+    page = TestClient(app).get("/signup").text
+
+    assert "that account and its demo data will" in page
+    assert "be replaced by this new account" in page

@@ -77,7 +77,7 @@
   "signup.prefer_not": "Prefer not to say",
   "signup.mobile": "Mobile phone",
   "signup.optional": "· optional",
-  "signup.phone_help": "Include your country code. We'll format the number automatically. This number can also be used to authenticate when calling Izzy.",
+  "signup.phone_help": "Include your country code. We'll format the number automatically. This number can also be used to authenticate when calling Izzy. If another demo account already uses this number, that account and its demo data will be replaced by this new account.",
   "signup.language": "Preferred language and accent",
   "signup.english": "American English",
   "signup.portuguese": "Brazilian Portuguese",
