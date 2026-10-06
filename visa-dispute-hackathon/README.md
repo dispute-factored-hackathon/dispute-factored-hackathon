@@ -4,6 +4,10 @@ Issuer-side Visa dispute intake through a multilingual telephone agent and a syn
 
 Project documentation is maintained in the [GitHub Wiki](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki).
 
+Try the public [Factored Bank application](https://dispute-factored-hackathon.github.io/dispute-factored-hackathon/),
+explore the [LATAM dispute-service analytics dashboard](https://dispute-factored-analytics.streamlit.app/),
+or review the executed [analytics notebook](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/blob/main/visa-dispute-hackathon/notebooks/latam_service_analytics.ipynb).
+
 ## Implementation map
 
 | Layer | Technologies | Responsibility |
@@ -15,6 +19,7 @@ Project documentation is maintained in the [GitHub Wiki](https://github.com/disp
 | Domain | Python services, deterministic policies and Pydantic tool schemas | Customer scope, transaction ranking, Visa mapping, card block, complaint creation and handoff preconditions |
 | Persistence | Repository contracts, PostgreSQL 16, psycopg/pool and Alembic | Shared web/voice operational data, schema evolution and replaceable test adapters |
 | Data ingestion | MotherDuck, Python seed pipeline and Pydantic mapping | Read-only synthetic source, validation, masking and idempotent PostgreSQL loads |
+| Analytics | DuckDB, MotherDuck, pandas, Jupyter and Streamlit | Aggregate baselines, operational diagnostics and a public decision dashboard |
 | Cloud | Lambda, Function URLs, EventBridge, ECR, Secrets Manager, CloudWatch, IAM and CloudFormation | Cost-conscious runtime, warm-up scheduling, secret retrieval, logs and repeatable infrastructure in `sa-east-1` |
 | Observability | Structured CloudWatch events, LangSmith, PostgreSQL telemetry, Twilio/OpenAI consoles and GitHub Actions | Call reconstruction, model/tool traces, interaction state, provider diagnosis and delivery evidence |
 | Engineering | `uv`, Docker, Pytest, Ruff, Coverage.py, Radon, Semgrep and optional SonarQube/Gitleaks | Reproducible environments, tests, code quality, security checks and deployment |
@@ -58,6 +63,8 @@ This remains a synthetic demonstration. A SIP `From` header can be spoofed and i
 ### Hybrid Jev and Realtime decision boundary
 
 The call worker sends each completed synthetic caller transcript to TypeSafe Jev before asking the Realtime model to act. Jev handles only bounded decisions with typed probabilities: prompt abuse, an explicit human request, initial language choice, authentication method, transaction confirmation, fraud-versus-duplicate classification, card environment, and the optional satisfaction rating. High-confidence decisions call the existing server-owned tools directly. Low-confidence, unavailable, open-ended, or composite cases fall back to Realtime without failing the call.
+
+Every Jev request carries the current workflow stage, conversation language, the customer's current answer and Izzy's immediately preceding question. Context-dependent stages—including language and authentication choices, transaction and dispute confirmations, complaint filing, and CSAT—fail closed to the channel's structured fallback when that preceding question is unavailable; Jev is never asked to interpret an isolated “yes”, “no”, or number. Only the minimum conversational context is sent: full history, customer identity and transaction records remain in the application.
 
 OpenAI Realtime remains responsible for speech recognition, speech generation, contextual questions, and extracting variable transaction-search fields such as merchant, approximate amount, date, and location. A denial that also contains corrected transaction details deliberately falls back so Realtime can extract those details; Jev still provides the global abuse and human-request guard. The backend continues to own identity, transaction access, Visa mapping, card blocking, complaint filing, and human transfer.
 
@@ -351,6 +358,29 @@ The same creation is enforced by `seed_izzy_agent()` during every AWS database b
 The deployed AWS database was verified on 4 October 2026 with 100 customers, 159 cards, 1,925 transactions and 56 complaints after the lakehouse seed. The bootstrap returned `status=ready` and `service_agent_id=AGENT-IZZY`. These counts describe the current synthetic sample and will grow when Shady Business purchases or new complaints are created.
 
 Limitations: the data is synthetic, and the parody shop catalog is static copy. Purchases and complaints written by the app or by calls exist only in PostgreSQL; they are not synchronized back to the lakehouse yet.
+
+## Analytics notebook and public dashboard
+
+The executed [LATAM service analytics notebook](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/blob/main/visa-dispute-hackathon/notebooks/latam_service_analytics.ipynb) reads the
+treated `lakehouse.silver` tables directly through DuckDB/MotherDuck. It establishes comparable
+baselines for card-dispute intake, call-center outcomes, SLA performance, repeat complainants,
+resolution time, evidence coverage, data lineage, agent capacity and a duration-based labor-cost
+proxy. It explicitly reports missing source tables instead of fabricating survey or digital-event
+metrics.
+
+The public [Streamlit analytics dashboard](https://dispute-factored-analytics.streamlit.app/),
+implemented in `analytics/streamlit_app.py`, publishes the same aggregate analyses without
+showing customer rows, transcript text, documents, contact details or card numbers. Run it locally:
+
+```bash
+uv sync --extra analytics
+uv run --extra analytics streamlit run analytics/streamlit_app.py
+```
+
+Deployment and the lower-cost Streamlit-versus-QuickSight decision are documented in
+[`analytics/README.md`](analytics/README.md). The preferred source is the private, versioned
+DuckDB file in S3; MotherDuck remains a compatibility fallback. Store all database credentials
+only in local environment variables or the hosting platform's encrypted secrets.
 
 ## Izzy web chat (`/agent`)
 

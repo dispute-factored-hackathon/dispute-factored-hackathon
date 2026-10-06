@@ -1441,6 +1441,12 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                     "customer_reports_duplicate": False,
                 },
             ),
+            completed_transcript_event(speaker="customer", transcript="Sim."),
+            tool_call_event(
+                "confirm_dispute_classification",
+                "tool_confirm_classification",
+                {"confirmation_intent": "CONFIRM"},
+            ),
             completed_transcript_event(speaker="customer", transcript="Quatro."),
             tool_call_event(
                 "record_csat",
@@ -1528,6 +1534,12 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
                     "customer_denies_authorization": False,
                     "customer_reports_duplicate": True,
                 },
+            ),
+            completed_transcript_event(speaker="customer", transcript="Sim."),
+            tool_call_event(
+                "confirm_dispute_classification",
+                "tool_confirm_classification",
+                {"confirmation_intent": "CONFIRM"},
             ),
         ]
         transactions = fruit_search_repository("CLI-002")

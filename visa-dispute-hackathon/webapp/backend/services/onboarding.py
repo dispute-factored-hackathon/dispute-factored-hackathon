@@ -19,6 +19,9 @@ TUTORIAL_STEP_IDS = (
     "profile-link",
     "profile",
     "finish",
+    "replay-finish",
+    "first-experience-skipped",
+    "shady-business-started",
 )
 
 

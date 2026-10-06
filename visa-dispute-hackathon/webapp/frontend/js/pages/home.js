@@ -13,7 +13,7 @@ import {
 
 import {
     initializeGuidedTour,
-} from "../components/guided-tour.js?v=7";
+} from "../components/guided-tour.js?v=14";
 
 
 const homePage =
@@ -36,6 +36,72 @@ const bottomNav =
 
 const tutorialReplay =
     document.querySelector("#tutorial-replay");
+
+const shadyBusiness =
+    document.querySelector("#shady-business");
+
+const shadyStartHint =
+    document.querySelector("#shady-start-hint");
+
+const shadyLink =
+    shadyBusiness?.querySelector(".shady-link");
+
+let shadyStartVisible = false;
+
+
+function scrollToShadyBusinessStart() {
+    const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth";
+    window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+            shadyBusiness.scrollIntoView({ block: "center", behavior });
+            shadyLink?.focus({ preventScroll: true });
+        });
+    });
+}
+
+
+function showShadyBusinessStart() {
+    if (!shadyBusiness || !shadyStartHint || shadyStartVisible) return;
+    shadyStartVisible = true;
+    shadyBusiness.classList.add("shady-business-start");
+    shadyStartHint.hidden = false;
+    scrollToShadyBusinessStart();
+}
+
+
+async function openShadyBusiness(event) {
+    if (!shadyStartVisible) return;
+    event.preventDefault();
+    const destination = shadyLink.href;
+    shadyBusiness.classList.remove("shady-business-start");
+    shadyStartHint.hidden = true;
+    try {
+        await apiRequest("/onboarding/tour", {
+            method: "PATCH",
+            body: JSON.stringify({
+                status: "completed",
+                last_completed_step: "shady-business-started",
+            }),
+        });
+    } catch (error) {
+        console.warn("Unable to save the Shady Business starting point:", error);
+    }
+    window.location.assign(destination);
+}
+
+
+async function restoreShadyBusinessStart() {
+    const state = await apiRequest("/onboarding/tour", { method: "GET" });
+    const firstExperienceEnded =
+        (state.status === "completed" && state.last_completed_step === "finish")
+        || (state.status === "skipped"
+            && state.last_completed_step === "first-experience-skipped");
+    if (firstExperienceEnded) {
+        showShadyBusinessStart();
+    }
+}
 
 
 function greetingForCurrentTime() {
@@ -107,6 +173,8 @@ async function initializeHome() {
 
         displayIzzyPhone();
 
+        await restoreShadyBusinessStart();
+
         await initializeGuidedTour(
             customer,
         );
@@ -145,6 +213,9 @@ logoutButton.addEventListener(
     "click",
     handleLogout,
 );
+
+shadyLink?.addEventListener("click", openShadyBusiness);
+window.addEventListener("factored:shady-start", showShadyBusinessStart);
 
 
 initializeHome();

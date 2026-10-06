@@ -76,6 +76,12 @@ class TransactionConfirmationIntent(StrEnum):
     UNCLEAR = "UNCLEAR"
 
 
+class DisputeClassificationConfirmationIntent(StrEnum):
+    CONFIRM = "CONFIRM"
+    DENY = "DENY"
+    UNCLEAR = "UNCLEAR"
+
+
 class LanguageSelectionIntent(StrEnum):
     KEEP = "keep"
     ENGLISH = "en"
@@ -1312,6 +1318,8 @@ class SipRealtimeGateway:
                             result = self._message_for(state, "transaction_clarification")
                         elif state.stage is VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION:
                             result = self._message_for(state, "classification_question")
+                        elif state.stage is VoiceCallStage.CONFIRM_DISPUTE_CLASSIFICATION:
+                            result = self._message_for(state, "classification_confirmation")
                         elif state.stage is VoiceCallStage.DISPUTE_CLASSIFIED:
                             result = self._message_for(state, "classification_complete")
                         else:
@@ -1504,10 +1512,11 @@ class SipRealtimeGateway:
                         customer_denies_authorization=denies_authorization,
                         customer_reports_duplicate=reports_duplicate,
                         customer_reported_card_environment=reported_environment,
+                        require_confirmation=True,
                     )
                     state = classification_result.state
                     reason = (
-                        "classification_complete"
+                        "classification_confirmation"
                         if classification_result.outcome is DisputeClassificationOutcome.CLASSIFIED
                         else "classification_clarification"
                     )
@@ -1529,6 +1538,39 @@ class SipRealtimeGateway:
                         "complaint_filing_status": (
                             state.complaint_filing_status.value
                             if state.complaint_filing_status is not None
+                            else None
+                        ),
+                    }
+
+                elif tool_name == "confirm_dispute_classification":
+                    confirmation_intent = DisputeClassificationConfirmationIntent(
+                        arguments.get("confirmation_intent", "")
+                    )
+                    if confirmation_intent is DisputeClassificationConfirmationIntent.UNCLEAR:
+                        state = self.calls.get(call_id)
+                        result = self._message_for(state, "classification_confirmation")
+                        outcome = "confirmation_unclear"
+                    elif confirmation_intent is DisputeClassificationConfirmationIntent.DENY:
+                        state = self.calls.confirm_dispute_classification(
+                            call_id,
+                            confirmed=False,
+                        )
+                        result = self._message_for(state, "classification_question")
+                        outcome = "classification_rejected"
+                    else:
+                        state = self.calls.confirm_dispute_classification(
+                            call_id,
+                            confirmed=True,
+                        )
+                        result = self._message_for(state, "classification_complete")
+                        outcome = "classification_confirmed"
+                    tool_metadata = {
+                        "outcome": outcome,
+                        "confirmation_intent": confirmation_intent.value,
+                        "complaint_id": state.complaint_id,
+                        "card_security_action": (
+                            state.card_security_action.value
+                            if state.card_security_action is not None
                             else None
                         ),
                     }
@@ -1685,6 +1727,22 @@ class SipRealtimeGateway:
 
         return pending_handoff
 
+    def _jev_prompt_context(self, state: VoiceCallState) -> str:
+        """Give Jev the question that makes short spoken answers meaningful."""
+
+        reason_by_stage = {
+            VoiceCallStage.NEEDS_LANGUAGE_CONFIRMATION: "opening",
+            VoiceCallStage.NEEDS_AUTH_METHOD: "auth_method_prompt",
+            VoiceCallStage.AUTHENTICATED: "phone_auth_success",
+            VoiceCallStage.NEEDS_TRANSACTION_DETAILS: "transaction_clarification",
+            VoiceCallStage.CONFIRM_TRANSACTION: "transaction_candidate",
+            VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION: "classification_question",
+            VoiceCallStage.CONFIRM_DISPUTE_CLASSIFICATION: "classification_confirmation",
+            VoiceCallStage.DISPUTE_CLASSIFIED: "classification_complete",
+        }
+        reason = reason_by_stage.get(state.stage)
+        return self._message_for(state, reason) if reason is not None else ""
+
     async def _handle_jev_turn(
         self,
         *,
@@ -1705,6 +1763,7 @@ class SipRealtimeGateway:
                 stage=state.stage.value,
                 transcript=transcript,
                 language=state.locale.language,
+                prompt_context=self._jev_prompt_context(state),
             )
         except JevDecisionError as error:
             _telemetry(
@@ -2204,8 +2263,9 @@ class SipRealtimeGateway:
             "name": "classify_dispute",
             "description": (
                 "Classify the caller's problem with the confirmed transaction. Use "
-                "UNAUTHORIZED_CARD only when the caller explicitly says they did not make or "
-                "authorize it. Use DUPLICATE_PROCESSING only when the caller recognizes the "
+                "UNAUTHORIZED_CARD when the caller says they did not make, recognize, approve, "
+                "or authorize it, or describes it as fraud or a scam. Use "
+                "DUPLICATE_PROCESSING only when the caller recognizes the "
                 "purchase but says the same purchase was charged more than once. Otherwise use "
                 "INSUFFICIENT_INFO. Call this tool immediately and silently: do not acknowledge, "
                 "summarize, or promise to classify before the call. The server response is the "
@@ -2251,6 +2311,30 @@ class SipRealtimeGateway:
                     "customer_reports_duplicate",
                     "customer_reported_card_environment",
                 ],
+                "additionalProperties": False,
+            },
+        }
+
+    @staticmethod
+    def _dispute_classification_confirmation_tool() -> dict[str, Any]:
+        return {
+            "type": "function",
+            "name": "confirm_dispute_classification",
+            "description": (
+                "Classify the caller's answer to Izzy's proposed dispute category. CONFIRM "
+                "means the proposed category is correct, DENY means it is not, and UNCLEAR "
+                "means the answer does not clearly accept or reject it. Use the meaning of "
+                "the full answer in context, not keyword matching. Call this tool silently."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "confirmation_intent": {
+                        "type": "string",
+                        "enum": ["CONFIRM", "DENY", "UNCLEAR"],
+                    }
+                },
+                "required": ["confirmation_intent"],
                 "additionalProperties": False,
             },
         }
@@ -2394,7 +2478,9 @@ Transaction-search workflow:
 Dispute-classification workflow:
 - Classification starts only at needs_dispute_classification, after the caller confirms the transaction.
 - Ask whether the caller did not make or authorize this transaction, or recognizes the purchase but was charged more than once for the same purchase.
-- Call classify_dispute with UNAUTHORIZED_CARD only after an explicit authorization denial.
+- Treat a statement that the purchase is fraud, a scam, not recognized, not theirs, or was not
+  made/approved/authorized by them as an explicit UNAUTHORIZED_CARD allegation.
+- Call classify_dispute with UNAUTHORIZED_CARD for those explicit unauthorized-purchase meanings.
 - Call classify_dispute with DUPLICATE_PROCESSING only after an explicit statement that the same recognized purchase was charged more than once.
 - For ambiguity, uncertainty, both claims at once, or unrelated input, call classify_dispute with INSUFFICIENT_INFO and both evidence flags false.
 - Set customer_reported_card_environment only when the caller explicitly says the purchase was in person with the card or online/remote; otherwise use UNKNOWN.
@@ -2402,6 +2488,10 @@ Dispute-classification workflow:
 - A proposed Visa condition is a candidate for issuer review, not proof of fraud, a liability decision, or a submitted chargeback.
 - Call classify_dispute silently and wait for the authoritative server response.
 - At needs_dispute_classification, your response must contain only the classify_dispute tool call. Never produce audio before that tool call.
+- At confirm_dispute_classification, the server has proposed either unauthorized transaction or
+  duplicate processing and is asking the caller to confirm it. Call
+  confirm_dispute_classification with CONFIRM, DENY, or UNCLEAR based on the answer in context.
+- Do not block a card or file a complaint until that proposed category is explicitly confirmed.
 
 Satisfaction workflow:
 - After the server reports the complaint result, it asks for an optional rating from 1 to 5.
@@ -2435,6 +2525,9 @@ General behavior:
             VoiceCallStage.NEEDS_TRANSACTION_DETAILS: (cls._transaction_search_tool,),
             VoiceCallStage.CONFIRM_TRANSACTION: (cls._transaction_confirmation_tool,),
             VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION: (cls._dispute_classification_tool,),
+            VoiceCallStage.CONFIRM_DISPUTE_CLASSIFICATION: (
+                cls._dispute_classification_confirmation_tool,
+            ),
             VoiceCallStage.DISPUTE_CLASSIFIED: (cls._csat_tool,),
             VoiceCallStage.COMPLETED: (),
             VoiceCallStage.HANDOFF: (),
@@ -2456,6 +2549,7 @@ General behavior:
             VoiceCallStage.NEEDS_TRANSACTION_DETAILS,
             VoiceCallStage.CONFIRM_TRANSACTION,
             VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION,
+            VoiceCallStage.CONFIRM_DISPUTE_CLASSIFICATION,
             VoiceCallStage.DISPUTE_CLASSIFIED,
         }
         if state.stage in required_stages:
@@ -2491,6 +2585,8 @@ General behavior:
             return audio_problem + messages["transaction_confirmation_unclear"]
         if state.stage is VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION:
             return audio_problem + SipRealtimeGateway._classification_clarification_message(state)
+        if state.stage is VoiceCallStage.CONFIRM_DISPUTE_CLASSIFICATION:
+            return audio_problem + SipRealtimeGateway._classification_confirmation_message(state)
         return audio_problem + messages["unclear_speech"]
 
     @staticmethod
@@ -2510,16 +2606,15 @@ General behavior:
                     "Deseja continuar neste idioma ou prefere mudar para inglês ou espanhol?"
                 ),
                 "auth_method": (
-                    "Perfeito. Para continuar, você prefere se autenticar usando "
-                    "o número de telefone desta ligação ou usando seu documento? "
-                    "Você pode pedir para falar com um atendente humano a qualquer momento."
+                    "Para continuar, você prefere a autenticação automática pelo número "
+                    "desta ligação, sem digitar nada, ou pelo documento, que pode ser seu "
+                    "Factored ID?"
                 ),
                 "phone_success": (
                     "Olá, {name}. Encontrei seu cadastro usando o número de telefone "
                     "desta ligação e sua autenticação foi concluída. "
                     "Você está com algum problema em uma transação? Diga o que lembrar, "
-                    "como estabelecimento, valor aproximado, data ou local. Se preferir, "
-                    "você pode pedir um atendente humano a qualquer momento."
+                    "como estabelecimento, valor aproximado, data ou local."
                 ),
                 "phone_fallback": (
                     "Não consegui autenticar você usando o número de telefone desta ligação. "
@@ -2535,8 +2630,7 @@ General behavior:
                 "document_success": (
                     "Olá, {name}. Encontrei seu cadastro usando o documento informado "
                     "e sua autenticação foi concluída. Você está com algum problema em uma transação? "
-                    "Diga o que lembrar, como estabelecimento, valor aproximado, data ou local. "
-                    "Você também pode pedir um atendente humano a qualquer momento."
+                    "Diga o que lembrar, como estabelecimento, valor aproximado, data ou local."
                 ),
                 "retry": (
                     "Não localizei esse documento. Confira os números, digite novamente "
@@ -2632,16 +2726,15 @@ General behavior:
                     "¿Quieres continuar en este idioma o cambiar a inglés o portugués?"
                 ),
                 "auth_method": (
-                    "Perfecto. Para continuar, ¿prefieres autenticarte usando el número "
-                    "de teléfono de esta llamada o usando tu documento? Puedes pedir hablar "
-                    "con un agente humano en cualquier momento."
+                    "Para continuar, ¿prefieres la autenticación automática con el número "
+                    "de esta llamada, sin ingresar nada, o con tu documento, que puede ser tu "
+                    "Factored ID?"
                 ),
                 "phone_success": (
                     "Hola, {name}. Encontré tu registro usando el número de teléfono "
                     "de esta llamada y tu autenticación está completa. "
                     "¿Tienes algún problema con una transacción? Dime lo que recuerdes, "
-                    "como el comercio, el valor aproximado, la fecha o el lugar. Si lo prefieres, "
-                    "puedes pedir un agente humano en cualquier momento."
+                    "como el comercio, el valor aproximado, la fecha o el lugar."
                 ),
                 "phone_fallback": (
                     "No pude autenticarte usando el número de teléfono de esta llamada. "
@@ -2658,7 +2751,7 @@ General behavior:
                     "Hola, {name}. Encontré tu registro usando el documento ingresado "
                     "y tu autenticación está completa. ¿Tienes algún problema con una transacción? "
                     "Dime lo que recuerdes, como el comercio, el valor aproximado, la fecha "
-                    "o el lugar. También puedes pedir un agente humano en cualquier momento."
+                    "o el lugar."
                 ),
                 "retry": (
                     "No encontré ese documento. Verifica los números, ingrésalos otra vez "
@@ -2750,15 +2843,15 @@ General behavior:
                     "Would you like to continue in this language, or switch to Portuguese or Spanish?"
                 ),
                 "auth_method": (
-                    "Great. To continue, would you prefer to authenticate using the phone "
-                    "number you're calling from or using your document number? You can ask "
-                    "to speak with a human agent at any time."
+                    "To continue, would you prefer automatic authentication with the number "
+                    "used for this call, with nothing to enter, or a document number, which "
+                    "can be your Factored ID?"
                 ),
                 "phone_success": (
                     "Hello, {name}. I found your profile using the phone number for this call, "
                     "and you're authenticated. Are you having a problem with a transaction? "
                     "Tell me what you remember, such as the merchant, approximate amount, "
-                    "date, or location. You can also ask for a human agent at any time."
+                    "date, or location."
                 ),
                 "phone_fallback": (
                     "I couldn't authenticate you using the phone number for this call. "
@@ -2773,7 +2866,7 @@ General behavior:
                     "Hello, {name}. I found your profile using the document you entered, "
                     "and you're authenticated. Are you having a problem with a transaction? "
                     "Tell me what you remember, such as the merchant, approximate amount, "
-                    "date, or location. You can also ask for a human agent at any time."
+                    "date, or location."
                 ),
                 "retry": (
                     "I couldn't find that document. Check the digits, enter it again, "
@@ -2937,22 +3030,27 @@ General behavior:
                 return (
                     "Olá! Eu sou Izzy, assistente virtual do Factored Bank. "
                     f"Vou falar em {locale_name}, conforme a preferência do perfil vinculado "
-                    "a este telefone. Para continuar, você prefere se autenticar usando o número "
-                    "desta ligação ou seu documento? Você pode pedir um atendente humano a qualquer momento."
+                    "a este telefone. A autenticação pelo número desta ligação é automática e "
+                    "não exige digitação. Como alternativa, você pode digitar um documento, "
+                    "inclusive seu Factored ID. Você pode pedir um atendente humano a qualquer "
+                    "momento. Qual método prefere?"
                 )
             if registered_phone and language == "es":
                 return (
                     "¡Hola! Soy Izzy, el asistente virtual de Factored Bank. "
                     f"Hablaré en {locale_name}, según la preferencia del perfil vinculado a este "
-                    "teléfono. Para continuar, ¿prefieres autenticarte con el número de esta llamada "
-                    "o con tu documento? Puedes pedir un agente humano en cualquier momento."
+                    "teléfono. La autenticación con el número de esta llamada es automática y no "
+                    "requiere ingresar nada. Como alternativa, puedes ingresar un documento, "
+                    "incluido tu Factored ID. Puedes pedir un agente humano en cualquier momento. "
+                    "¿Qué método prefieres?"
                 )
             if registered_phone and language == "en":
                 return (
                     "Hello! I'm Izzy, Factored Bank's virtual assistant. "
                     f"I'll use {locale_name}, based on the preference in the profile linked to this "
-                    "phone. To continue, would you prefer to authenticate with this phone number or "
-                    "your document number? You can ask for a human agent at any time."
+                    "phone. Authentication with this call's number is automatic, with nothing to "
+                    "enter. Alternatively, you can enter a document number, including your "
+                    "Factored ID. You can ask for a human agent at any time. Which method do you prefer?"
                 )
             if language == "pt":
                 return (
@@ -3011,6 +3109,9 @@ General behavior:
 
         if reason == "classification_clarification":
             return SipRealtimeGateway._classification_clarification_message(state)
+
+        if reason == "classification_confirmation":
+            return SipRealtimeGateway._classification_confirmation_message(state)
 
         if reason == "classification_complete":
             return SipRealtimeGateway._classification_complete_message(state)
@@ -3087,6 +3188,9 @@ General behavior:
 
         if state.stage is VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION:
             return SipRealtimeGateway._classification_question_message(state)
+
+        if state.stage is VoiceCallStage.CONFIRM_DISPUTE_CLASSIFICATION:
+            return SipRealtimeGateway._classification_confirmation_message(state)
 
         if state.stage is VoiceCallStage.DISPUTE_CLASSIFIED:
             return SipRealtimeGateway._classification_complete_message(state)
@@ -3186,6 +3290,45 @@ General behavior:
             question_key,
             questions[state.locale.language]["choose_fraud_or_duplicate"],
         )
+
+    @staticmethod
+    def _classification_confirmation_message(state: VoiceCallState) -> str:
+        classification = state.dispute_classification
+        if classification is None:
+            return SipRealtimeGateway._classification_question_message(state)
+        messages = {
+            "pt": {
+                DisputeAllegation.UNAUTHORIZED_CARD: (
+                    "Entendi que você não fez nem autorizou esta compra e que ela deve ser "
+                    "tratada como uma possível transação não autorizada. Está correto?"
+                ),
+                DisputeAllegation.DUPLICATE_PROCESSING: (
+                    "Entendi que você reconhece a compra, mas foi cobrado mais de uma vez pela "
+                    "mesma compra, indicando possível duplicidade. Está correto?"
+                ),
+            },
+            "es": {
+                DisputeAllegation.UNAUTHORIZED_CARD: (
+                    "Entendí que no hiciste ni autorizaste esta compra y que debe tratarse como "
+                    "una posible transacción no autorizada. ¿Es correcto?"
+                ),
+                DisputeAllegation.DUPLICATE_PROCESSING: (
+                    "Entendí que reconoces la compra, pero te cobraron más de una vez por la "
+                    "misma compra, lo que indica una posible duplicación. ¿Es correcto?"
+                ),
+            },
+            "en": {
+                DisputeAllegation.UNAUTHORIZED_CARD: (
+                    "I understand that you did not make or authorize this purchase and it should "
+                    "be treated as a possible unauthorized transaction. Is that correct?"
+                ),
+                DisputeAllegation.DUPLICATE_PROCESSING: (
+                    "I understand that you recognize the purchase but were charged more than once "
+                    "for the same purchase, indicating a possible duplicate. Is that correct?"
+                ),
+            },
+        }
+        return messages[state.locale.language][classification.allegation]
 
     @staticmethod
     def _classification_complete_message(state: VoiceCallState) -> str:

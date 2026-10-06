@@ -489,6 +489,64 @@ class VoiceCallServiceTests(unittest.TestCase):
             "Active",
         )
 
+    def test_voice_classification_waits_for_confirmation_before_actions(self):
+        state = self.authenticate_known_phone("call_confirm_classification")
+        self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(merchant_query="lemon"),
+        )
+        self.calls.resolve_transaction_candidate(state.call_id, confirmed=True)
+
+        proposed = self.calls.classify_dispute(
+            state.call_id,
+            allegation="UNAUTHORIZED_CARD",
+            customer_denies_authorization=True,
+            require_confirmation=True,
+        )
+
+        self.assertEqual(
+            proposed.state.stage,
+            VoiceCallStage.CONFIRM_DISPUTE_CLASSIFICATION,
+        )
+        self.assertIsNone(proposed.state.card_security_action)
+        self.assertIsNone(proposed.state.complaint_id)
+        self.assertEqual(
+            self.calls.products.get_by_id(demo_card_product_id("CLI-002")).product_status,
+            "Active",
+        )
+
+        confirmed = self.calls.confirm_dispute_classification(
+            state.call_id,
+            confirmed=True,
+        )
+
+        self.assertEqual(confirmed.stage, VoiceCallStage.DISPUTE_CLASSIFIED)
+        self.assertEqual(confirmed.card_security_action, CardSecurityActionStatus.BLOCKED)
+        self.assertEqual(confirmed.complaint_filing_status, ComplaintFilingStatus.FILED)
+
+    def test_rejected_voice_classification_returns_to_problem_question(self):
+        state = self.authenticate_known_phone("call_reject_classification")
+        self.calls.search_transactions(
+            state.call_id,
+            TransactionSearchCriteria(merchant_query="lemon"),
+        )
+        self.calls.resolve_transaction_candidate(state.call_id, confirmed=True)
+        self.calls.classify_dispute(
+            state.call_id,
+            allegation="DUPLICATE_PROCESSING",
+            customer_reports_duplicate=True,
+            require_confirmation=True,
+        )
+
+        rejected = self.calls.confirm_dispute_classification(
+            state.call_id,
+            confirmed=False,
+        )
+
+        self.assertEqual(rejected.stage, VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION)
+        self.assertIsNone(rejected.dispute_classification)
+        self.assertIsNone(rejected.complaint_id)
+
     def test_insufficient_classification_does_not_block_card(self):
         state = self.authenticate_known_phone("call_insufficient_no_block")
         self.calls.search_transactions(

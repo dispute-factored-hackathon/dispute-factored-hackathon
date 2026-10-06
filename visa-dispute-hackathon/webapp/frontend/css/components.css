@@ -38,6 +38,23 @@
     scroll-margin-top: calc(4.75rem + env(safe-area-inset-top));
 }
 
+.guided-tour-target-action {
+    outline-color: #ffcf5c;
+    box-shadow:
+        0 0 0 9px rgba(255, 207, 92, 0.7),
+        0 1rem 3rem rgba(8, 20, 16, 0.35) !important;
+    cursor: pointer;
+    animation: guided-tour-click-target 1.2s ease-in-out infinite;
+}
+
+@keyframes guided-tour-click-target {
+    50% {
+        box-shadow:
+            0 0 0 15px rgba(255, 207, 92, 0.2),
+            0 1rem 3rem rgba(8, 20, 16, 0.35) !important;
+    }
+}
+
 .guided-tour-target-busy {
     pointer-events: none;
 }
@@ -111,10 +128,11 @@
 }
 
 .guided-tour-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     width: 2.5rem;
     height: 2.5rem;
-    font-size: 1.7rem;
-    line-height: 1;
 }
 
 .guided-tour-tooltip h2 {
@@ -162,6 +180,10 @@
 @media (prefers-reduced-motion: reduce) {
     .guided-tour-spotlight {
         transition: none;
+    }
+
+    .guided-tour-target-action {
+        animation: none;
     }
 }
 

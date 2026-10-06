@@ -18,7 +18,6 @@ const COPY = {
         cards: ["tour.cards_title", "tour.cards_body"],
         "transactions-link": ["tour.transactions_link_title", "tour.transactions_link_body"],
         transactions: ["tour.transactions_title", "tour.transactions_body"],
-        "report-transaction": ["tour.report_title", "tour.report_body"],
         izzy: ["tour.izzy_title", "tour.izzy_body"],
         "complaints-link": ["tour.complaints_link_title", "tour.complaints_link_body"],
         complaints: ["tour.complaints_title", "tour.complaints_body"],
@@ -51,18 +50,12 @@ const STEPS = [
     {
         id: "transactions",
         route: "/transactions",
-        target: ".transaction-item",
-        action: "activate",
-        allowMissingTarget: true,
     },
     {
-        id: "report-transaction",
-        route: transactionDetailRoute,
-        target: ".report-card",
-        actionTarget: "#report-button",
-        action: "activate",
+        id: "izzy",
+        route: "/home",
+        target: "[data-tour='izzy']",
     },
-    { id: "izzy", route: "/agent" },
     {
         id: "complaints-link",
         route: "/home",
@@ -72,7 +65,6 @@ const STEPS = [
     {
         id: "complaints",
         route: "/complaints",
-        target: ".page-heading",
     },
     {
         id: "profile-link",
@@ -85,13 +77,17 @@ const STEPS = [
         id: "finish",
         route: "/home",
         target: "[data-tour='shady-business']",
+        action: "activate",
         actionTarget: ".shady-link",
-        action: "finish-and-activate",
     },
 ];
 
 const SAVE_ATTEMPTS = 3;
 const MOBILE_BREAKPOINT = 600;
+const TOUR_MODE_KEY = "factored_tour_mode";
+const FIRST_EXPERIENCE = "first-experience";
+const FIRST_EXPERIENCE_SKIPPED = "first-experience-skipped";
+const REPLAY = "replay";
 
 let active = false;
 let currentIndex = 0;
@@ -103,12 +99,6 @@ let activationElements = [];
 let targetActivationHandler = null;
 let repositionHandler = null;
 let transitioning = false;
-
-async function transactionDetailRoute() {
-    const transactions = await apiRequest("/transactions", { method: "GET" });
-    const first = transactions[0];
-    return first ? `/transactions/${encodeURIComponent(first.transaction_id)}` : null;
-}
 
 async function routeFor(step) {
     return typeof step.route === "function" ? step.route() : step.route;
@@ -128,7 +118,9 @@ function waitForTarget(selector, timeout = 3000) {
     return new Promise((resolve) => {
         const started = performance.now();
         function check() {
-            const target = document.querySelector(selector);
+            const target = [...document.querySelectorAll(selector)].find(
+                (candidate) => !candidate.hidden && candidate.getClientRects().length > 0,
+            );
             if (target && !target.hidden && target.getClientRects().length > 0) {
                 resolve(target);
                 return;
@@ -177,7 +169,7 @@ function createLayer() {
 }
 
 function requiresTargetActivation(step = STEPS[currentIndex]) {
-    return ["activate", "finish-and-activate"].includes(step?.action);
+    return step?.action === "activate";
 }
 
 function focusableControls() {
@@ -247,7 +239,11 @@ function clearTarget() {
             element.removeEventListener("click", targetActivationHandler, true);
         }
     }
-    targetElement?.classList.remove("guided-tour-target", "guided-tour-target-busy");
+    targetElement?.classList.remove(
+        "guided-tour-target",
+        "guided-tour-target-action",
+        "guided-tour-target-busy",
+    );
     targetElement?.removeAttribute("aria-disabled");
     targetContext?.classList.remove("guided-tour-target-context");
     targetElement = null;
@@ -261,6 +257,7 @@ function setTarget(target, step) {
     targetElement = target;
     if (!target) return;
     target.classList.add("guided-tour-target");
+    target.classList.toggle("guided-tour-target-action", requiresTargetActivation(step));
     targetContext = target.closest(".app-header, .bottom-nav");
     targetContext?.classList.add("guided-tour-target-context");
     if (!requiresTargetActivation(step)) return;
@@ -482,7 +479,7 @@ async function showCurrentStep() {
         COPY.controls.progress,
         { current: currentIndex + 1, total: STEPS.length },
     );
-    layer.querySelector(".guided-tour-close").textContent = "×";
+    layer.querySelector(".guided-tour-close").innerHTML = '<svg class="ui-icon" aria-hidden="true"><use href="/static/assets/icons/ui.svg#close"></use></svg>';
     layer.querySelector(".guided-tour-close").setAttribute("aria-label", t(COPY.controls.close));
     layer.querySelector("#guided-tour-title").textContent = t(titleKey);
     layer.querySelector("#guided-tour-body").textContent = t(bodyKey);
@@ -523,11 +520,8 @@ async function activateTarget(target) {
     const step = STEPS[currentIndex];
     const completedId = step.id;
     emitMetric("target_activated");
-    if (step.action === "finish-and-activate") {
-        await saveProgress("completed", completedId);
-        emitMetric("completed");
-        removeLayer();
-        if (destination) window.location.assign(destination);
+    if (currentIndex === STEPS.length - 1) {
+        await finishTour(destination);
         return;
     }
     await saveProgress("in_progress", completedId);
@@ -558,17 +552,37 @@ async function previousStep() {
     await showCurrentStep();
 }
 
-async function finishTour() {
-    await saveProgress("completed", STEPS.at(-1).id);
+async function finishTour(destination = null) {
+    const mode = window.sessionStorage.getItem(TOUR_MODE_KEY);
+    const completedStep = mode === REPLAY ? "replay-finish" : STEPS.at(-1).id;
+    await saveProgress("completed", completedStep);
     emitMetric("completed");
     removeLayer();
+    window.sessionStorage.removeItem(TOUR_MODE_KEY);
+    if (destination) {
+        window.location.assign(destination);
+        return;
+    }
+    if (mode === FIRST_EXPERIENCE && window.location.pathname === "/home") {
+        window.dispatchEvent(new CustomEvent("factored:shady-start"));
+    }
 }
 
 async function skipTour(source) {
-    const lastCompleted = currentIndex > 0 ? STEPS[currentIndex - 1].id : null;
+    const mode = window.sessionStorage.getItem(TOUR_MODE_KEY);
+    const lastCompleted = mode === FIRST_EXPERIENCE
+        ? FIRST_EXPERIENCE_SKIPPED
+        : (currentIndex > 0 ? STEPS[currentIndex - 1].id : null);
     await saveProgress("skipped", lastCompleted);
     emitMetric("skipped", { source });
     removeLayer();
+    window.sessionStorage.removeItem(TOUR_MODE_KEY);
+    if (mode !== FIRST_EXPERIENCE) return;
+    if (window.location.pathname === "/home") {
+        window.dispatchEvent(new CustomEvent("factored:shady-start"));
+        return;
+    }
+    window.location.assign("/home");
 }
 
 function indexAfter(lastCompletedStep) {
@@ -598,6 +612,12 @@ async function runGuidedTour() {
         || state.status === "in_progress"
         || (state.should_offer && window.location.pathname === "/home");
     if (!shouldRun) return;
+
+    if (restart) {
+        window.sessionStorage.setItem(TOUR_MODE_KEY, REPLAY);
+    } else if (state.status === "not_started") {
+        window.sessionStorage.setItem(TOUR_MODE_KEY, FIRST_EXPERIENCE);
+    }
 
     active = true;
     currentIndex = restart ? 0 : indexAfter(state.last_completed_step);

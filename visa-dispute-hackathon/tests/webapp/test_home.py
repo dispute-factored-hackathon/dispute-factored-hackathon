@@ -137,6 +137,22 @@ def test_home_contains_required_navigation() -> None:
         assert expected_link in response.text
 
 
+def test_home_sections_follow_the_intended_priority_order() -> None:
+    client = TestClient(app)
+    home = client.get("/home").text
+
+    expected_sections = (
+        'class="banking-section"',
+        'id="shady-business"',
+        'class="izzy-hero"',
+        'id="tutorial-replay"',
+        'id="logout-button"',
+    )
+    positions = [home.index(section) for section in expected_sections]
+
+    assert positions == sorted(positions)
+
+
 def test_navigation_uses_consistent_svg_icons_and_transactions_label() -> None:
     client = TestClient(app)
 
@@ -149,6 +165,48 @@ def test_navigation_uses_consistent_svg_icons_and_transactions_label() -> None:
     assert 'labelKey: "nav.transactions"' in navigation
     assert 'labelKey: "nav.activity"' not in navigation
     assert 'icon: "↕"' not in navigation
+
+
+def test_interface_controls_use_platform_independent_svg_icons() -> None:
+    client = TestClient(app)
+    icon_asset = client.get("/static/assets/icons/ui.svg")
+
+    assert icon_asset.status_code == 200
+    assert icon_asset.headers["content-type"] == "image/svg+xml"
+    for icon_name in (
+        "home",
+        "chevron-right",
+        "arrow-up",
+        "arrow-up-right",
+        "alert",
+        "close",
+        "cart",
+        "check",
+    ):
+        assert f'id="{icon_name}"' in icon_asset.text
+
+    unstable_glyphs = ("←", "→", "↗", "↑", "\u00d7", "🛒", "✓")
+    for route in (
+        "/home",
+        "/cards",
+        "/transactions",
+        "/transactions/example",
+        "/complaints",
+        "/complaints/example",
+        "/profile",
+        "/agent",
+        "/shop/products/example",
+        "/shop/cart",
+    ):
+        page = client.get(route).text
+        assert not any(glyph in page for glyph in unstable_glyphs)
+
+    for asset in (
+        "/static/js/components/guided-tour.js",
+        "/static/js/pages/transactions.js",
+    ):
+        script = client.get(asset).text
+        assert not any(glyph in script for glyph in unstable_glyphs)
 
 
 def test_home_contains_replay_tutorial() -> None:

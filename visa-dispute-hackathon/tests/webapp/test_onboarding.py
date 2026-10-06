@@ -1,3 +1,5 @@
+import re
+
 from fakes import (
     complaint_repository,
     customer_repository,
@@ -240,7 +242,7 @@ def test_new_tutorial_version_is_offered_again() -> None:
     }
 
 
-def test_contextual_tour_is_interactive_and_english_only() -> None:
+def test_contextual_tour_is_interactive_and_handles_empty_accounts() -> None:
     client = TestClient(app)
     response = client.get("/static/js/components/guided-tour.js")
 
@@ -250,24 +252,171 @@ def test_contextual_tour_is_interactive_and_english_only() -> None:
         'id: "cards-link"',
         'target: ".bank-card.is-active"',
         'id: "transactions"',
-        'id: "report-transaction"',
         'id: "izzy"',
+        "target: \"[data-tour='izzy']\"",
         'id: "complaints-link"',
-        'target: ".page-heading"',
         'id: "profile-link"',
-        "target: \"[data-tour='shady-business']\"",
         'id: "finish"',
-        'action: "finish-and-activate"',
         'action: "activate"',
-        'actionTarget: "#report-button"',
         "element.addEventListener",
         "guided-tour-no-target",
     ):
         assert expected in content
     assert "pt:" not in content
     assert "es:" not in content
+    assert 'id: "report-transaction"' not in content
+    assert "transactionDetailRoute" not in content
     assert 'id: "complaint-detail"' not in content
     assert 'target: ".complaint-item"' not in content
+    transactions_step = content.split('id: "transactions"', 1)[1].split("},", 1)[0]
+    assert "target:" not in transactions_step
+    complaints_step = content.split('id: "complaints"', 1)[1].split("},", 1)[0]
+    assert "target:" not in complaints_step
+    assert "action:" not in complaints_step
+    profile_link_step = content.split('id: "profile-link"', 1)[1].split("},", 1)[0]
+    assert "target: \"[data-tour='profile-link']\"" in profile_link_step
+    assert 'action: "activate"' in profile_link_step
+    finish_step = content.split('id: "finish"', 1)[1].split("},", 1)[0]
+    assert "target: \"[data-tour='shady-business']\"" in finish_step
+    assert 'action: "activate"' in finish_step
+    assert 'actionTarget: ".shady-link"' in finish_step
+
+
+def test_empty_transaction_history_has_truthful_tour_copy() -> None:
+    client = TestClient(app)
+    create_customer(client)
+    login(client)
+    transaction_repository._transactions.clear()
+
+    assert client.get("/api/transactions").json() == []
+    javascript = client.get("/static/js/components/guided-tour.js").text
+    assert "document.querySelectorAll(selector)" in javascript
+    assert 'route: "/home",\n        target: "[data-tour=\'izzy\']"' in javascript
+
+    expected_copy = {
+        "en": ("no purchases yet", "no transactions yet", "no complaints yet"),
+        "pt": ("ainda não tem compras", "nenhuma transação ainda", "nenhuma contestação ainda"),
+        "es": ("todavía no tiene compras", "aún no hay transacciones", "aún no hay reclamos"),
+    }
+    for language, phrases in expected_copy.items():
+        catalog = client.get(f"/static/locales/v1/{language}.json").json()
+        combined = " ".join(
+            (
+                catalog["tour.welcome_body"],
+                catalog["tour.transactions_link_body"],
+                catalog["tour.transactions_title"],
+                catalog["tour.transactions_body"],
+                catalog["tour.complaints_title"],
+                catalog["tour.complaints_body"],
+                catalog["tour.finish_body"],
+            )
+        ).lower()
+        assert all(phrase in combined for phrase in phrases)
+        assert "shady business" in combined
+
+
+def test_first_tour_end_prompts_shady_business_after_overlay_closes() -> None:
+    client = TestClient(app)
+    javascript = client.get("/static/js/components/guided-tour.js").text
+    home_javascript = client.get("/static/js/pages/home.js").text
+    home = client.get("/home").text
+    css = client.get("/static/css/pages/home.css").text
+
+    assert 'const FIRST_EXPERIENCE = "first-experience"' in javascript
+    assert 'const FIRST_EXPERIENCE_SKIPPED = "first-experience-skipped"' in javascript
+    assert 'CustomEvent("factored:shady-start")' in javascript
+    assert 'window.location.assign("/home")' in javascript
+    assert 'last_completed_step: "shady-business-started"' in home_javascript
+    assert 'state.last_completed_step === "finish"' in home_javascript
+    assert 'state.last_completed_step === "first-experience-skipped"' in home_javascript
+    assert 'id="shady-start-hint"' in home
+    assert "Start here" in home
+    assert ".shady-business-start" in css
+    assert ".shady-business .shady-start-hint[hidden]" in css
+    assert "function scrollToShadyBusinessStart()" in home_javascript
+    assert "window.requestAnimationFrame" in home_javascript
+    assert 'scrollIntoView({ block: "center", behavior })' in home_javascript
+    assert "prefers-reduced-motion" in css
+
+
+def test_replayed_tour_does_not_restore_first_login_store_prompt() -> None:
+    client = TestClient(app)
+    javascript = client.get("/static/js/components/guided-tour.js").text
+
+    assert 'const completedStep = mode === REPLAY ? "replay-finish"' in javascript
+    assert "mode === FIRST_EXPERIENCE" in javascript
+    assert "mode === FIRST_EXPERIENCE\n        ? FIRST_EXPERIENCE_SKIPPED" in javascript
+
+
+def test_shady_business_prompt_state_is_accepted_and_persisted() -> None:
+    client = TestClient(app)
+    created = create_customer(client)
+    login(client)
+
+    finished = client.patch(
+        "/api/onboarding/tour",
+        json={"status": "completed", "last_completed_step": "finish"},
+    )
+    skipped = client.patch(
+        "/api/onboarding/tour",
+        json={"status": "skipped", "last_completed_step": "first-experience-skipped"},
+    )
+    started = client.patch(
+        "/api/onboarding/tour",
+        json={"status": "completed", "last_completed_step": "shady-business-started"},
+    )
+
+    assert finished.status_code == 200
+    assert skipped.status_code == 200
+    assert skipped.json()["last_completed_step"] == "first-experience-skipped"
+    assert started.status_code == 200
+    assert started.json()["last_completed_step"] == "shady-business-started"
+    stored = customer_repository.get_by_id(created["customer_id"])
+    assert stored is not None
+    assert stored.tutorial_last_completed_step == "shady-business-started"
+
+
+def test_start_here_copy_exists_in_all_supported_languages() -> None:
+    client = TestClient(app)
+    expected = {
+        "en": "Start here",
+        "pt": "Comece por aqui",
+        "es": "Comienza aquí",
+    }
+    for language, copy in expected.items():
+        catalog = client.get(f"/static/locales/v1/{language}.json").json()
+        assert catalog["home.start_here"] == copy
+
+
+def test_start_here_badge_meets_wcag_aa_text_contrast() -> None:
+    client = TestClient(app)
+    css = client.get("/static/css/pages/home.css").text
+    badge = re.search(
+        r"\.shady-business \.shady-start-hint \{(?P<rules>.*?)\n\}",
+        css,
+        re.DOTALL,
+    )
+
+    assert badge is not None
+    rules = badge.group("rules")
+    foreground = re.search(r"color: (?P<color>#[0-9a-f]{6});", rules)
+    background = re.search(r"background: (?P<color>#[0-9a-f]{6});", rules)
+    assert foreground is not None
+    assert background is not None
+
+    def luminance(color: str) -> float:
+        channels = [int(color[index : index + 2], 16) / 255 for index in (1, 3, 5)]
+        linear = [
+            value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+            for value in channels
+        ]
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+    lighter, darker = sorted(
+        (luminance(foreground.group("color")), luminance(background.group("color"))),
+        reverse=True,
+    )
+    assert (lighter + 0.05) / (darker + 0.05) >= 4.5
 
 
 def test_empty_complaint_history_does_not_block_contextual_tour() -> None:
@@ -279,7 +428,8 @@ def test_empty_complaint_history_does_not_block_contextual_tour() -> None:
     assert client.get("/api/complaints").json() == []
     javascript = client.get("/static/js/components/guided-tour.js").text
     assert 'id: "complaints"' in javascript
-    assert 'target: ".page-heading"' in javascript
+    complaints_step = javascript.split('id: "complaints"', 1)[1].split("},", 1)[0]
+    assert "target:" not in complaints_step
     assert 'id: "complaint-detail"' not in javascript
     assert 'target: ".complaint-item"' not in javascript
 
@@ -335,8 +485,29 @@ def test_complaint_details_resume_the_contextual_tour() -> None:
     client = TestClient(app)
     content = client.get("/static/js/pages/complaint-detail.js").text
 
-    assert 'from "../components/guided-tour.js?v=7"' in content
+    assert 'from "../components/guided-tour.js?v=14"' in content
     assert "await initializeGuidedTour();" in content
+
+
+def test_pages_load_the_cache_busted_empty_account_tour() -> None:
+    client = TestClient(app)
+    expected_version = "v=20261005-onboarding-targets1"
+
+    home = client.get("/static/pages/home.html").text
+    assert expected_version in home
+
+    for page in (
+        "cards",
+        "transactions",
+        "agent",
+        "complaints",
+        "profile",
+        "transaction-detail",
+        "complaint-detail",
+        "coming-soon",
+    ):
+        html = client.get(f"/static/pages/{page}.html").text
+        assert expected_version in html
 
 
 def test_contextual_tour_keeps_targets_visible_clickable_and_non_overlapping() -> None:
@@ -345,12 +516,28 @@ def test_contextual_tour_keeps_targets_visible_clickable_and_non_overlapping() -
     javascript = client.get("/static/js/components/guided-tour.js").text
 
     assert ".guided-tour-target" in css
+    assert ".guided-tour-target-action" in css
+    assert "guided-tour-click-target" in css
+    assert '"guided-tour-target-action", requiresTargetActivation(step)' in javascript
     assert "z-index: 102" in css
     assert "pointer-events: none" in css
     assert "tooltipPlacement" in javascript
     assert "window.innerWidth" in javascript
     assert "window.innerHeight" in javascript
     assert "prefers-reduced-motion" in css
+
+
+def test_click_targets_are_distinct_from_informational_highlights() -> None:
+    client = TestClient(app)
+    css = client.get("/static/css/components.css").text
+    javascript = client.get("/static/js/components/guided-tour.js").text
+
+    assert "outline-color: #ffcf5c" in css
+    assert "animation: guided-tour-click-target" in css
+    assert 'target.classList.toggle("guided-tour-target-action"' in javascript
+    for language in ("en", "pt", "es"):
+        instruction = client.get(f"/static/locales/v1/{language}.json").json()["tour.activate"]
+        assert any(color in instruction.lower() for color in ("gold", "dourado", "dorado"))
 
 
 def test_contextual_tour_reenables_controls_after_changing_steps() -> None:

@@ -40,6 +40,7 @@ analytics = [
     "matplotlib>=3.11.2",
     "pandas>=3.0.6",
     "seaborn>=0.13.2",
+    "streamlit>=1.50,<2",
     "wordcloud>=1.9.6",
 ]
 
@@ -47,6 +48,7 @@ analytics = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = [
+    "analytics*",
     "dispute_agent*",
     "webapp*",
 ]
@@ -64,9 +66,11 @@ package = true
 [dependency-groups]
 dev = [
     "coverage>=7.16.2",
+    "duckdb>=1.5.5",
     "ipykernel>=6,<8",
     "jupyterlab>=4,<5",
     "matplotlib-inline>=0.1,<1",
+    "pandas>=3.0.6",
     "pytest>=9.1.1",
     "radon>=6.0.1",
     "ruff>=0.14,<1",
