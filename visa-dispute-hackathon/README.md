@@ -2,11 +2,11 @@
 
 Issuer-side Visa dispute intake through a multilingual telephone agent and a synthetic banking web application.
 
-Project documentation is maintained in the [GitHub Wiki](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki).
+Project documentation is maintained in the [GitHub Wiki](https://github.com/dispute-factored-hackathon/factored-hackathon-2026-ateam/wiki).
 
-Try the public [Factored Bank application](https://dispute-factored-hackathon.github.io/dispute-factored-hackathon/),
+Try the public [Factored Bank application](https://dispute-factored-hackathon.github.io/factored-hackathon-2026-ateam/),
 explore the [LATAM dispute-service analytics dashboard](https://dispute-factored-analytics.streamlit.app/),
-or review the executed [analytics notebook](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/blob/main/visa-dispute-hackathon/notebooks/latam_service_analytics.ipynb).
+or review the executed [analytics notebook](https://github.com/dispute-factored-hackathon/factored-hackathon-2026-ateam/blob/main/visa-dispute-hackathon/notebooks/latam_service_analytics.ipynb).
 
 ## Implementation map
 
@@ -26,7 +26,7 @@ or review the executed [analytics notebook](https://github.com/dispute-factored-
 
 The AI layer never receives authority to choose customer scope, execute arbitrary SQL, block cards, create complaints or select the transfer destination. It returns typed interpretations; server-owned services validate evidence and perform permitted actions.
 
-For diagrams, deployment status, design boundaries and the full technology inventory, read [Solution architecture and technology stack](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki/Solution-Architecture-and-Technology-Stack). For diagnostics, read [Application logs and traces](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki/Application-Logs-and-Traces).
+For diagrams, deployment status, design boundaries and the full technology inventory, read [Solution architecture and technology stack](https://github.com/dispute-factored-hackathon/factored-hackathon-2026-ateam/wiki/Solution-Architecture-and-Technology-Stack). For diagnostics, read [Application logs and traces](https://github.com/dispute-factored-hackathon/factored-hackathon-2026-ateam/wiki/Application-Logs-and-Traces).
 
 ## Synthetic GUI login contract
 
@@ -183,7 +183,7 @@ The web Lambda remains on demand and does not use continuously billed Provisione
 
 At the 512 MB voice configuration, the São Paulo SnapStart cache is approximately USD 2.57 for a continuously active 30-day version, plus a very small charge for each restored environment and normal Lambda execution. This estimate uses the São Paulo entries in the [AWS Lambda public price list](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSLambda/current/index.json); verify current prices before budgeting. Delete obsolete versions and set `VOICE_SNAPSTART_APPLY_ON=None` when running `deploy.sh` if the optimization is no longer required.
 
-SnapStart improves Lambda initialization, but it cannot remove Twilio routing, OpenAI call acceptance, model response or downstream database latency. AWS documents the supported runtimes and version/alias lifecycle in [Improving startup performance with Lambda SnapStart](https://docs.aws.amazon.com/lambda/latest/dg/snapstart.html). Diagnose the intervals independently with the structured events documented in [Application logs and traces](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki/Application-Logs-and-Traces).
+SnapStart improves Lambda initialization, but it cannot remove Twilio routing, OpenAI call acceptance, model response or downstream database latency. AWS documents the supported runtimes and version/alias lifecycle in [Improving startup performance with Lambda SnapStart](https://docs.aws.amazon.com/lambda/latest/dg/snapstart.html). Diagnose the intervals independently with the structured events documented in [Application logs and traces](https://github.com/dispute-factored-hackathon/factored-hackathon-2026-ateam/wiki/Application-Logs-and-Traces).
 
 The call media does not pass through AWS. Browser traffic uses a separate Lambda so a website request cannot interfere with the long-running call worker:
 
@@ -361,7 +361,7 @@ Limitations: the data is synthetic, and the parody shop catalog is static copy. 
 
 ## Analytics notebook and public dashboard
 
-The executed [LATAM service analytics notebook](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/blob/main/visa-dispute-hackathon/notebooks/latam_service_analytics.ipynb) reads the
+The executed [LATAM service analytics notebook](https://github.com/dispute-factored-hackathon/factored-hackathon-2026-ateam/blob/main/visa-dispute-hackathon/notebooks/latam_service_analytics.ipynb) reads the
 treated `lakehouse.silver` tables directly through DuckDB/MotherDuck. It establishes comparable
 baselines for card-dispute intake, call-center outcomes, SLA performance, repeat complainants,
 resolution time, evidence coverage, data lineage, agent capacity and a duration-based labor-cost

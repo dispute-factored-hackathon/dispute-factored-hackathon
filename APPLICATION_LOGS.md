@@ -216,11 +216,11 @@ The colleague credential can inspect and deploy only these named database stacks
 
 ## 4. GitHub Actions logs
 
-Open the repository's [Actions page](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/actions) to inspect pull-request validation and deployments. With GitHub CLI authenticated to an authorized account:
+Open the repository's [Actions page](https://github.com/dispute-factored-hackathon/factored-hackathon-2026-ateam/actions) to inspect pull-request validation and deployments. With GitHub CLI authenticated to an authorized account:
 
 ```bash
-gh run list --repo dispute-factored-hackathon/dispute-factored-hackathon --limit 20
-gh run view RUN_ID --repo dispute-factored-hackathon/dispute-factored-hackathon --log-failed
+gh run list --repo dispute-factored-hackathon/factored-hackathon-2026-ateam --limit 20
+gh run view RUN_ID --repo dispute-factored-hackathon/factored-hackathon-2026-ateam --log-failed
 ```
 
 Relevant workflows include Python tests and Ruff, Semgrep, Gitleaks, SonarQube, and AWS deployment. GitHub redacts configured Actions secrets, but logs must still not print credentials intentionally.

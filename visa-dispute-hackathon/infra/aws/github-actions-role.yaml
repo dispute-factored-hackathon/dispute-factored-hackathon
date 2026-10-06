@@ -15,7 +15,7 @@ Parameters:
     Description: Immutable numeric GitHub organization ID used in OIDC subject claims.
   GitHubRepository:
     Type: String
-    Default: dispute-factored-hackathon
+    Default: factored-hackathon-2026-ateam
   GitHubRepositoryId:
     Type: String
     Default: "1389807294"

@@ -11,7 +11,7 @@ The working journey can identify a synthetic customer, retrieve and rank card tr
 
 | Experience | Link |
 |---|---|
-| Factored Bank application | [Open the interactive demo](https://dispute-factored-hackathon.github.io/dispute-factored-hackathon/) |
+| Factored Bank application | [Open the interactive demo](https://dispute-factored-hackathon.github.io/factored-hackathon-2026-ateam/) |
 | LATAM dispute-service dashboard | [Open the Streamlit analytics dashboard](https://dispute-factored-analytics.streamlit.app/) |
 
 The application uses a stable GitHub Pages address that forwards visitors to the current deployment. The dashboard is designed for aggregate synthetic analytics and no customer-level records; Streamlit may request sign-in when its sharing settings are restricted.
@@ -39,7 +39,7 @@ flowchart LR
 
 The model interprets natural language and proposes schema-constrained actions. Trusted backend code remains authoritative for identity state, customer scope, transaction access, ranking, Visa mapping, card state, complaint persistence and handoff destination.
 
-Read the detailed [solution architecture and technology stack](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki/Solution-Architecture-and-Technology-Stack) in the Wiki.
+Read the detailed [solution architecture and technology stack](https://github.com/dispute-factored-hackathon/factored-hackathon-2026-ateam/wiki/Solution-Architecture-and-Technology-Stack) in the Wiki.
 
 ## Technology stack
 
@@ -75,7 +75,7 @@ The web and voice Lambdas, Function URLs, ECR image, server-side secrets, CloudW
 | Path | Purpose |
 |---|---|
 | [`visa-dispute-hackathon/`](visa-dispute-hackathon/) | Python backend, browser application, voice agent, infrastructure, tests and runtime configuration |
-| [GitHub Wiki](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki) | Canonical research, product, architecture and operating documentation |
+| [GitHub Wiki](https://github.com/dispute-factored-hackathon/factored-hackathon-2026-ateam/wiki) | Canonical research, product, architecture and operating documentation |
 | [`data/`](data/) | Authorized synthetic hackathon data and classifier labels |
 | [`agents/`](agents/) | Tool-agnostic review-agent definitions |
 | [`AGENTS.md`](AGENTS.md) | Instructions for coding agents working in the repository |
@@ -92,8 +92,8 @@ Requirements:
 - project-scoped OpenAI, Jev and LangSmith credentials only for the integrations being exercised.
 
 ```bash
-git clone https://github.com/dispute-factored-hackathon/dispute-factored-hackathon.git
-cd dispute-factored-hackathon/visa-dispute-hackathon
+git clone https://github.com/dispute-factored-hackathon/factored-hackathon-2026-ateam.git
+cd factored-hackathon-2026-ateam/visa-dispute-hackathon
 cp .env.example .env
 uv sync --group dev
 ```
@@ -131,13 +131,13 @@ The normal automated suite uses controlled model doubles and should not consume 
 
 ## Documentation
 
-The [GitHub Wiki](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki) is the canonical documentation location. Useful starting points:
+The [GitHub Wiki](https://github.com/dispute-factored-hackathon/factored-hackathon-2026-ateam/wiki) is the canonical documentation location. Useful starting points:
 
-- [Solution architecture and technology stack](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki/Solution-Architecture-and-Technology-Stack)
-- [Application logs and traces](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki/Application-Logs-and-Traces)
-- [System data and controls](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki/System-Data-and-Controls)
-- [Visa classification and codes](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki/Visa-Classification-and-Codes)
-- [Functional and non-functional requirements](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki/Functional-and-Nonfunctional-Requirements)
+- [Solution architecture and technology stack](https://github.com/dispute-factored-hackathon/factored-hackathon-2026-ateam/wiki/Solution-Architecture-and-Technology-Stack)
+- [Application logs and traces](https://github.com/dispute-factored-hackathon/factored-hackathon-2026-ateam/wiki/Application-Logs-and-Traces)
+- [System data and controls](https://github.com/dispute-factored-hackathon/factored-hackathon-2026-ateam/wiki/System-Data-and-Controls)
+- [Visa classification and codes](https://github.com/dispute-factored-hackathon/factored-hackathon-2026-ateam/wiki/Visa-Classification-and-Codes)
+- [Functional and non-functional requirements](https://github.com/dispute-factored-hackathon/factored-hackathon-2026-ateam/wiki/Functional-and-Nonfunctional-Requirements)
 
 ## Safety and scope
 
