@@ -133,6 +133,24 @@ class JevVoiceRouterTests(unittest.TestCase):
         self.assertEqual(decision.tool_name, "confirm_dispute_classification")
         self.assertEqual(decision.arguments, {"confirmation_intent": "CONFIRM"})
 
+    def test_web_dispute_suggestion_maps_yes_and_no_to_transaction_intents(self):
+        for choice_name in ("CONFIRM", "DENY"):
+            with self.subTest(choice=choice_name):
+                decision, client = self._route(
+                    "confirm_dispute_suggestion",
+                    choice(choice_name),
+                )
+
+                self.assertEqual(decision.tool_name, "confirm_transaction")
+                self.assertEqual(
+                    decision.arguments,
+                    {"confirmation_intent": choice_name},
+                )
+                criteria = client.requests[0]["questions"]["stage_intent"]["criteria"]
+                self.assertIn("sim", criteria["CONFIRM"])
+                self.assertIn("sí", criteria["CONFIRM"])
+                self.assertIn("não", criteria["DENY"])
+
     def test_csat_rating_maps_to_integer(self):
         decision, _ = self._route(
             "dispute_classified",

@@ -397,6 +397,23 @@ class JevVoiceRouter:
                 "DENY": "Rejects or corrects Izzy's proposed dispute category.",
                 "UNCLEAR": "Does not clearly accept or reject the proposed dispute category.",
             },
+            "confirm_dispute_suggestion": {
+                "CONFIRM": (
+                    "Accepts Izzy's immediately preceding suggestion about the selected "
+                    "transaction. This includes short and natural equivalents of yes in all "
+                    "supported languages: yes, yeah, yep, correct, exactly, that's right; sim, "
+                    "isso, correto, exato, é isso; sí, correcto, exacto, así es, claro."
+                ),
+                "DENY": (
+                    "Rejects or corrects Izzy's immediately preceding suggestion. This includes "
+                    "short and natural equivalents of no in all supported languages: no, nope, "
+                    "not that, that's wrong; não, negativo, não é isso, está errado; no, "
+                    "negativo, no es eso, está equivocado."
+                ),
+                "UNCLEAR": (
+                    "Does not clearly accept or reject Izzy's immediately preceding suggestion."
+                ),
+            },
             "dispute_classified": {
                 "rating_1": "Rating 1: 1, one, um/uma, or uno/una, including a bare answer.",
                 "rating_2": "Rating 2: 2, two, dois/duas, or dos, including a bare answer.",
@@ -490,6 +507,11 @@ class JevVoiceRouter:
             if choice not in {"CONFIRM", "DENY", "UNCLEAR"}:
                 return None
             return "confirm_dispute_classification", {"confirmation_intent": choice}
+
+        if stage == "confirm_dispute_suggestion":
+            if choice not in {"CONFIRM", "DENY", "UNCLEAR"}:
+                return None
+            return "confirm_transaction", {"confirmation_intent": choice}
 
         if stage == "dispute_classified":
             if choice.startswith("rating_") and choice[-1:] in {"1", "2", "3", "4", "5"}:

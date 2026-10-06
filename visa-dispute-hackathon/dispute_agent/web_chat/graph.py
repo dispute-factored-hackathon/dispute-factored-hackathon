@@ -230,6 +230,7 @@ class IzzyChatGraph:
                 message=state["message"],
                 language=workflow_state.locale.language,
                 candidate=self._candidate_summary(workflow_state),
+                prompt_context=self._prompt_context(workflow_state, state),
             )
         except InterpreterUnavailableError as error:
             _log("web_chat.interpret.unavailable", reason=str(error))
@@ -363,7 +364,41 @@ class IzzyChatGraph:
 
         if self.service.awaiting_complaint_confirmation(workflow_state):
             return "confirm_complaint"
+        if (
+            workflow_state.stage is VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION
+            and self.service.pending_suggestion(workflow_state.call_id) is not None
+        ):
+            return "confirm_dispute_suggestion"
         return workflow_state.stage.value
+
+    def _prompt_context(
+        self,
+        workflow_state: VoiceCallState,
+        graph_state: ChatGraphState,
+    ) -> str:
+        """Return the exact question a short yes/no answer is responding to."""
+
+        suggestion = self.service.pending_suggestion(workflow_state.call_id)
+        if suggestion == "UNAUTHORIZED_CARD":
+            return reference_message(
+                workflow_state,
+                "suggest_unauthorized",
+                phone=self.phone_number,
+            )
+        if suggestion == "DUPLICATE_PROCESSING":
+            return reference_message(
+                workflow_state,
+                "suggest_duplicate",
+                phone=self.phone_number,
+            )
+        return next(
+            (
+                str(item.get("content", ""))
+                for item in reversed(graph_state.get("history", []))
+                if item.get("role") == "izzy" and item.get("content")
+            ),
+            "",
+        )
 
     @staticmethod
     def _decision(state: ChatGraphState) -> TurnDecision:
