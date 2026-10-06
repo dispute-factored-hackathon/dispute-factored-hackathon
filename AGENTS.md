@@ -9,7 +9,7 @@ Help build and document an issuer-side Visa dispute experience for a Latin Ameri
 ## Repository structure
 
 - `visa-dispute-hackathon/`: Python package, LangGraph workflow, classifiers, CLI, and tests.
-- [GitHub Wiki](https://github.com/dispute-factored-hackathon/dispute-factored-hackathon/wiki): product, research, architecture, and operating documentation.
+- [GitHub Wiki](https://github.com/dispute-factored-hackathon/factored-hackathon-2026-ateam/wiki): product, research, architecture, and operating documentation.
 - `data/`: synthetic hackathon data and derived labels.
 - `agents/AGENTIC_UX_REVIEWER.md`: reusable rubric for agentic UX review.
 
