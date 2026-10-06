@@ -378,8 +378,9 @@ uv run --extra analytics streamlit run analytics/streamlit_app.py
 ```
 
 Deployment and the lower-cost Streamlit-versus-QuickSight decision are documented in
-[`analytics/README.md`](analytics/README.md). Store `MOTHERDUCK_TOKEN` only in local environment
-variables or the hosting platform's encrypted secrets.
+[`analytics/README.md`](analytics/README.md). The preferred source is the private, versioned
+DuckDB file in S3; MotherDuck remains a compatibility fallback. Store all database credentials
+only in local environment variables or the hosting platform's encrypted secrets.
 
 ## Izzy web chat (`/agent`)
 
