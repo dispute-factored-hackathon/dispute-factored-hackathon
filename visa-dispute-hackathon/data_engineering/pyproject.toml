@@ -1,0 +1,34 @@
+[project]
+name = "hackaton-factored-data-eng"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "mpg-data" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "dlt[duckdb]>=1.30.0",
+    "dotenv>=0.9.9",
+    "duckdb>=1.5.5",
+    "pendulum>=3.2.0",
+    "pyarrow>=25.0.1",
+    "s3fs>=2026.9.0",
+    "soda-duckdb>=4.25.0",
+    "sqlmesh[duckdb,motherduck]>=0.236.2",
+]
+
+[project.scripts]
+hackaton-factored = "hackaton_factored:main"
+
+[build-system]
+requires = ["uv_build>=0.12.7,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = [
+    "jupyter>=1.1.1",
+]

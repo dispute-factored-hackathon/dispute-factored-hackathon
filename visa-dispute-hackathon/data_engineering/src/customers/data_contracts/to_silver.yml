@@ -1,0 +1,364 @@
+dataset: lakehouse/bronze/customers
+
+variables:
+  LOAD_IDS:
+
+# Scope the contract to a single delivery (one contract run = one load)
+filter: "list_contains(string_split('${var.LOAD_IDS}', ','), _dlt_load_id)"
+
+checks:
+  - schema:
+      allow_extra_columns: false
+      allow_other_column_order: true
+  - row_count:
+
+  # Exactly one snapshot date per load (the filter above already scopes the expression to the load)
+  # NOTE: verify the v4 `metric` syntax (expression vs query) before relying on it
+  - metric:
+      name: Exactly one distinct snapshot_ts per load
+      expression: COUNT(DISTINCT snapshot_ts)
+      threshold:
+        must_be: 1
+
+  # Date coherence, all warn-level. Compared date to date so same-day updates are not flagged
+  - failed_rows:
+      qualifier: date_coherence_1
+      name: last_updated later than snapshot
+      expression: "TRY_CAST(last_updated AS TIMESTAMP)::DATE > snapshot_ts"
+      threshold:
+        must_be: 0
+        level: warn
+  - failed_rows:
+      qualifier: date_coherence_2
+      name: registration_date later than snapshot
+      expression: "TRY_CAST(registration_date AS TIMESTAMP)::DATE > snapshot_ts"
+      threshold:
+        must_be: 0
+        level: warn
+  - failed_rows:
+      qualifier: date_coherence_3
+      name: registration_date later than last_updated
+      expression: "TRY_CAST(registration_date AS TIMESTAMP) > TRY_CAST(last_updated AS TIMESTAMP)"
+      threshold:
+        must_be: 0
+        level: warn
+
+columns:
+  - name: customer_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      # ~2 % duplicates are a known property of the source; silver handles them
+      - duplicate:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 20
+
+  - name: document_number
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - duplicate:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 20
+
+  - name: document_type
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 10
+          valid_values: ['DNI', 'CURP', 'CC', 'CE', 'Pasaporte', 'Passport']
+
+  - name: first_name
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          column_expression: STRIP_ACCENTS(UPPER(first_name))
+          valid_max_length: 100
+          valid_format:
+            name: Uppercase letters and spaces regex
+            regex: '^[A-Z\s]+$'
+
+  - name: last_name
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          column_expression: STRIP_ACCENTS(UPPER(last_name))
+          valid_max_length: 100
+          valid_format:
+            name: Uppercase letters and spaces regex
+            regex: '^[A-Z\s]+$'
+
+  - name: date_of_birth
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: Date format check
+          valid_format:
+            name: Date regex
+            regex: '^\d{4}-\d{2}-\d{2}$'
+      - failed_rows:
+          name: Verify date_of_birth is castable to DATE
+          expression: "date_of_birth IS NOT NULL AND TRY_CAST(date_of_birth AS DATE) IS NULL"
+
+  - name: gender
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 1
+          valid_values: ['M', 'F', 'O']
+
+  - name: email
+    data_type: VARCHAR
+    checks:
+      - invalid:
+          valid_max_length: 100
+          # valid_format: email
+
+  - name: mobile_phone
+    data_type: VARCHAR
+    checks:
+      - invalid:
+          name: Mobile phone format check
+          valid_max_length: 20
+          valid_format:
+            name: Phone regex
+            regex: '^\+?[0-9\s\-\(\)]{7,20}$'
+
+  - name: landline_phone
+    data_type: VARCHAR
+    checks:
+      - invalid:
+          name: Landline phone format check
+          valid_max_length: 20
+          valid_format:
+            name: Phone regex
+            regex: '^\+?[0-9\s\-\(\)]{7,20}$'
+
+  - name: address
+    data_type: VARCHAR
+    checks:
+      - invalid:
+          valid_max_length: 200
+
+  - name: city
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: City letters and spaces only
+          column_expression: STRIP_ACCENTS(UPPER(city))
+          valid_max_length: 100
+          valid_format:
+            name: Uppercase letters and spaces regex
+            regex: '^[A-Z\s]+$'
+
+  - name: state
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: State letters and spaces only
+          column_expression: STRIP_ACCENTS(UPPER(state))
+          valid_max_length: 100
+          valid_format:
+            name: Uppercase letters and spaces regex
+            regex: '^[A-Z\s]+$'
+
+  - name: country
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          column_expression: STRIP_ACCENTS(country)
+          valid_max_length: 50
+          # (!) Open question: the data dictionary lists only Mexico, Colombia and Argentina
+          valid_values: ['Argentina', 'Brazil', 'Colombia', 'Mexico', 'Spain', 'USA']
+
+  - name: postal_code
+    data_type: VARCHAR
+    checks:
+      - invalid:
+          name: Postal code format check
+          valid_max_length: 10
+          valid_format:
+            name: Postal code regex
+            regex: '^[0-9A-Za-z\s\-]{4,10}$'
+
+  - name: detected_accent
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 50
+          valid_values: ['argentine', 'colombian', 'neutral', 'mexican']
+
+  - name: segment
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 50
+          valid_values: ['Premium', 'Plus', 'Basic', 'Student']
+
+  - name: credit_score
+    data_type: VARCHAR
+    checks:
+      - invalid:
+          qualifier: range
+          column_expression: TRY_CAST(credit_score AS USMALLINT)
+          valid_min: 300
+          valid_max: 850
+      - failed_rows:
+          name: Verify credit_score is castable to INTEGER
+          expression: "credit_score IS NOT NULL AND TRY_CAST(credit_score AS INTEGER) IS NULL"
+
+  - name: estimated_monthly_income
+    data_type: VARCHAR
+    checks:
+      - invalid:
+          name: Decimal(12,2) string format check
+          valid_format:
+            name: Decimal 12_2 regex
+            regex: '^\d{1,10}(\.\d{1,2})?$'
+      - invalid:
+          qualifier: range
+          column_expression: TRY_CAST(estimated_monthly_income AS DECIMAL(12,2))
+          valid_min: 0
+      - failed_rows:
+          name: Verify estimated_monthly_income is castable to DECIMAL(12,2)
+          expression: "estimated_monthly_income IS NOT NULL AND TRY_CAST(estimated_monthly_income AS DECIMAL(12,2)) IS NULL"
+
+  - name: occupation
+    data_type: VARCHAR
+    checks:
+      - invalid:
+          column_expression: STRIP_ACCENTS(UPPER(occupation))
+          name: Letters and spaces only
+          valid_max_length: 100
+          valid_format:
+            name: Letters and spaces regex
+            regex: '^[A-Z\s]+$'
+
+  - name: marital_status
+    data_type: VARCHAR
+    checks:
+      - invalid:
+          column_expression: STRIP_ACCENTS(UPPER(marital_status))
+          valid_max_length: 20
+          valid_format:
+            name: Letters and spaces regex
+            regex: '^[A-Z\s]+$'
+
+  - name: education_level
+    data_type: VARCHAR
+    checks:
+      - invalid:
+          column_expression: STRIP_ACCENTS(UPPER(education_level))
+          name: Letters and spaces only
+          valid_max_length: 50
+          valid_format:
+            name: Letters and spaces regex
+            regex: '^[A-Z\s]+$'
+
+  - name: registration_date
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: ISO timestamp format check
+          valid_format:
+            name: Timestamp regex
+            regex: '^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}:?\d{2}|Z)?$'
+      - failed_rows:
+          name: Verify registration_date is castable to TIMESTAMP
+          expression: "registration_date IS NOT NULL AND TRY_CAST(registration_date AS TIMESTAMP) IS NULL"
+
+  - name: registration_branch_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 20
+
+  - name: customer_status
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 20
+          valid_values: ['Active', 'Inactive', 'Suspended', 'Closed']
+
+  - name: last_updated
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: ISO timestamp format check
+          valid_format:
+            name: Timestamp regex
+            regex: '^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}:?\d{2}|Z)?$'
+      - failed_rows:
+          name: Verify last_updated is castable to TIMESTAMP
+          expression: "last_updated IS NOT NULL AND TRY_CAST(last_updated AS TIMESTAMP) IS NULL"
+
+  - name: accepts_marketing
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: Boolean literal format check
+          valid_format:
+            name: Boolean regex
+            regex: '(?i)^(true|false|1|0|t|f)$'
+      - failed_rows:
+          name: Verify accepts_marketing is castable to BOOLEAN
+          expression: "accepts_marketing IS NOT NULL AND TRY_CAST(accepts_marketing AS BOOLEAN) IS NULL"
+
+  # Business date of the delivered photo, stamped by to_bronze.py from the CLI argument
+  - name: snapshot_ts
+    data_type: DATE
+    checks:
+      - missing:
+
+  - name: _source_file
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 255
+
+  - name: _processed_at
+    data_type: TIMESTAMP WITH TIME ZONE
+    checks:
+      - missing:
+
+  - name: _dlt_load_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 64
+
+  - name: _dlt_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 64

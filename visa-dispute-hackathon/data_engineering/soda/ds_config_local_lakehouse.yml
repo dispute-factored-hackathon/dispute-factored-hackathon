@@ -1,0 +1,4 @@
+type: duckdb
+name: lakehouse
+connection:
+  database: ${env.LAKEHOUSE_LOCAL_PATH}

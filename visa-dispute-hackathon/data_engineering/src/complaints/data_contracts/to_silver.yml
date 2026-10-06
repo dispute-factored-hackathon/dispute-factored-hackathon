@@ -1,0 +1,419 @@
+dataset: lakehouse/bronze/complaints
+
+variables:
+  # Comma-separated load ids of the run being validated, as emitted by to_bronze
+  # (LOAD_IDS=... / steps.<id>.outputs.load_ids). One id for --full-load, one per
+  # batch for the daily replay.
+  LOAD_IDS:
+# Validate only the rows this run appended. Bronze is append-only, so a replayed
+# day keeps its older versions; filtering by date would count them as duplicates.
+filter: "list_contains(string_split('${var.LOAD_IDS}', ','), _dlt_load_id)"
+
+checks:
+  - schema:
+      allow_extra_columns: false
+      allow_other_column_order: true
+  - row_count:
+# Complaints chronological order checks
+  - failed_rows:
+      qualifier: c1
+      name: Creation date should not be after assignment date
+      expression: >-
+        creation_date::TIMESTAMP IS NOT NULL
+        AND assignment_date::TIMESTAMP IS NOT NULL
+        AND creation_date::TIMESTAMP > assignment_date::TIMESTAMP
+  - failed_rows:
+      qualifier: c2
+      name: Assignment date should not be after first response date
+      expression: >-
+        assignment_date::TIMESTAMP IS NOT NULL
+        AND first_response_date::TIMESTAMP IS NOT NULL
+        AND assignment_date::TIMESTAMP > first_response_date::TIMESTAMP
+  - failed_rows:
+      qualifier: c3
+      name: Resolution date should not be after closing date
+      expression: >-
+        resolution_date::TIMESTAMP IS NOT NULL
+        AND closing_date::TIMESTAMP IS NOT NULL
+        AND resolution_date::TIMESTAMP > closing_date::TIMESTAMP
+  - failed_rows:
+      qualifier: c4
+      name: First response date should not be after resolution date
+      expression: >-
+        first_response_date::TIMESTAMP IS NOT NULL
+        AND resolution_date::TIMESTAMP IS NOT NULL
+        AND first_response_date::TIMESTAMP > resolution_date::TIMESTAMP
+      threshold:
+        must_be: 0
+        level: warn
+
+
+columns:
+  - name: complaint_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - duplicate:
+      - invalid:
+          valid_max_length: 30
+
+  - name: creation_date
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: ISO timestamp format check
+          valid_format:
+            name: Timestamp regex
+            regex: '^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}:?\d{2}|Z)?$'
+      - failed_rows:
+          qualifier: castable
+          name: Verify creation_date is castable to TIMESTAMP
+          expression: "creation_date IS NOT NULL AND TRY_CAST(creation_date AS TIMESTAMP) IS NULL"
+      - failed_rows:
+          qualifier: not_future_dated
+          name: Verify creation_date is not greater than today
+          expression: "TRY_CAST(creation_date AS TIMESTAMP) > CURRENT_TIMESTAMP"
+
+  - name: process_date
+    data_type: DATE
+    checks:
+      - missing:
+
+  - name: customer_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 20
+
+  - name: case_type
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 30
+          valid_values: ['Claim', 'Complaint', 'Request', 'Suggestion']
+
+  - name: category
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 100
+
+  - name: subcategory
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 100
+
+  - name: reception_channel
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 30
+          valid_values: ['App', 'Branch', 'Call Center', 'Email', 'Regulator', 'Web']
+
+  - name: affected_product_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 20
+
+  - name: related_branch_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 20
+
+  - name: origin_interaction_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 30
+
+  - name: description
+    data_type: VARCHAR
+    checks:
+      - missing:
+
+  - name: claimed_amount
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          name: Decimal(15,2) string format check
+          valid_format:
+            name: Decimal 15_2 regex
+            regex: '^-?\d{1,13}(\.\d{1,2})?$'
+      - invalid:
+          qualifier: range
+          column_expression: TRY_CAST(claimed_amount AS DECIMAL(15,2))
+          valid_min: 0
+      - failed_rows:
+          name: Verify claimed_amount is castable to DECIMAL(15,2)
+          expression: "claimed_amount IS NOT NULL AND TRY_CAST(claimed_amount AS DECIMAL(15,2)) IS NULL"
+
+  - name: currency
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 3
+          valid_values: ['ARS', 'COP', 'MXN', 'USD']
+
+  - name: priority
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 20
+          valid_values: ['Low', 'Medium', 'High', 'Critical']
+
+  - name: status
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 30
+          valid_values: ['Open', 'In Process', 'Escalated', 'Resolved', 'Closed', 'Rejected']
+
+  - name: assigned_agent_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          valid_max_length: 20
+
+  - name: assignment_date
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          name: ISO timestamp format check
+          valid_format:
+            name: Timestamp regex
+            regex: '^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}:?\d{2}|Z)?$'
+      - failed_rows:
+          qualifier: castable
+          name: Verify assignment_date is castable to TIMESTAMP
+          expression: "assignment_date IS NOT NULL AND TRY_CAST(assignment_date AS TIMESTAMP) IS NULL"
+      - failed_rows:
+          qualifier: not_future_dated
+          name: Verify assignment_date is not greater than today
+          expression: "TRY_CAST(assignment_date AS TIMESTAMP) > CURRENT_TIMESTAMP"
+
+  - name: first_response_date
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          name: ISO timestamp format check
+          valid_format:
+            name: Timestamp regex
+            regex: '^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}:?\d{2}|Z)?$'
+      - failed_rows:
+          qualifier: castable
+          name: Verify first_response_date is castable to TIMESTAMP
+          expression: "first_response_date IS NOT NULL AND TRY_CAST(first_response_date AS TIMESTAMP) IS NULL"
+      - failed_rows:
+          qualifier: not_future_dated
+          name: Verify first_response_date is not greater than today
+          expression: "TRY_CAST(first_response_date AS TIMESTAMP) > CURRENT_TIMESTAMP"
+
+  - name: resolution_date
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          name: ISO timestamp format check
+          valid_format:
+            name: Timestamp regex
+            regex: '^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}:?\d{2}|Z)?$'
+      - failed_rows:
+          qualifier: castable
+          name: Verify resolution_date is castable to TIMESTAMP
+          expression: "resolution_date IS NOT NULL AND TRY_CAST(resolution_date AS TIMESTAMP) IS NULL"
+      - failed_rows:
+          qualifier: not_future_dated
+          name: Verify resolution_date is not greater than today
+          expression: "TRY_CAST(resolution_date AS TIMESTAMP) > CURRENT_TIMESTAMP"
+
+  - name: closing_date
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          name: ISO timestamp format check
+          valid_format:
+            name: Timestamp regex
+            regex: '^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}:?\d{2}|Z)?$'
+      - failed_rows:
+          qualifier: castable
+          name: Verify closing_date is castable to TIMESTAMP
+          expression: "closing_date IS NOT NULL AND TRY_CAST(closing_date AS TIMESTAMP) IS NULL"
+      - failed_rows:
+          qualifier: not_future_dated
+          name: Verify closing_date is not greater than today
+          expression: "TRY_CAST(closing_date AS TIMESTAMP) > CURRENT_TIMESTAMP"
+
+  - name: sla_breached
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: Boolean literal format check
+          valid_format:
+            name: Boolean regex
+            regex: '(?i)^(true|false|1|0|t|f)$'
+      - failed_rows:
+          name: Verify sla_breached is castable to BOOLEAN
+          expression: "sla_breached IS NOT NULL AND TRY_CAST(sla_breached AS BOOLEAN) IS NULL"
+
+  - name: resolution_days
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          qualifier: range
+          column_expression: TRY_CAST(resolution_days AS INTEGER)
+          valid_min: 0
+      - failed_rows:
+          name: Verify resolution_days is castable to INTEGER
+          expression: "resolution_days IS NOT NULL AND TRY_CAST(resolution_days AS INTEGER) IS NULL"
+
+  - name: resolution
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+
+  - name: compensation_granted
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          name: Decimal(15,2) string format check
+          valid_format:
+            name: Decimal 15_2 regex
+            regex: '^-?\d{1,13}(\.\d{1,2})?$'
+      - invalid:
+          qualifier: range
+          column_expression: TRY_CAST(compensation_granted AS DECIMAL(15,2))
+          valid_min: 0
+      - failed_rows:
+          name: Verify compensation_granted is castable to DECIMAL(15,2)
+          expression: "compensation_granted IS NOT NULL AND TRY_CAST(compensation_granted AS DECIMAL(15,2)) IS NULL"
+
+  - name: resolution_satisfaction
+    data_type: VARCHAR
+    checks:
+      - missing:
+          threshold:
+            must_be: 0
+            level: warn
+      - invalid:
+          qualifier: range
+          column_expression: TRY_CAST(resolution_satisfaction AS INTEGER)
+          valid_min: 1
+          valid_max: 5
+      - failed_rows:
+          name: Verify resolution_satisfaction is castable to INTEGER
+          expression: "resolution_satisfaction IS NOT NULL AND TRY_CAST(resolution_satisfaction AS INTEGER) IS NULL"
+
+  - name: is_repeat_complainer
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: Boolean literal format check
+          valid_format:
+            name: Boolean regex
+            regex: '(?i)^(true|false|1|0|t|f)$'
+      - failed_rows:
+          name: Verify is_repeat_complainer is castable to BOOLEAN
+          expression: "is_repeat_complainer IS NOT NULL AND TRY_CAST(is_repeat_complainer AS BOOLEAN) IS NULL"
+
+  - name: _source_file
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 255
+
+  # MD5 of the source file content; drives change detection in the daily replay
+  - name: _source_fingerprint
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          name: MD5 hex digest format check
+          valid_format:
+            name: MD5 regex
+            regex: '^[0-9a-f]{32}$'
+
+  - name: _processed_at
+    data_type: TIMESTAMP WITH TIME ZONE
+    checks:
+      - missing:
+
+  - name: _dlt_load_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 64
+
+  - name: _dlt_id
+    data_type: VARCHAR
+    checks:
+      - missing:
+      - invalid:
+          valid_max_length: 64
