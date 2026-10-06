@@ -7,6 +7,15 @@ The working journey can identify a synthetic customer, retrieve and rank card tr
 > [!WARNING]
 > All customers, transactions, complaints, identity mechanisms and banking actions are synthetic. The application is a hackathon demonstration, not a production banking system. It does not submit a Visa chargeback, issue a refund or provide secure customer authentication.
 
+## Live project links
+
+| Experience | Link |
+|---|---|
+| Factored Bank application | [Open the interactive demo](https://dispute-factored-hackathon.github.io/dispute-factored-hackathon/) |
+| LATAM dispute-service dashboard | [Open the Streamlit analytics dashboard](https://dispute-factored-analytics.streamlit.app/) |
+
+The application uses a stable GitHub Pages address that forwards visitors to the current deployment. The dashboard is designed for aggregate synthetic analytics and no customer-level records; Streamlit may request sign-in when its sharing settings are restricted.
+
 ## Solution architecture
 
 ```mermaid
