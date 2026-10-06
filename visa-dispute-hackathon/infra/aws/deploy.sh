@@ -87,27 +87,35 @@ elif [[ "${ACTION}" == "application" || "${ACTION}" == "all" ]]; then
   fi
 
   REGISTRY="${REPOSITORY_URI%%/*}"
+  REPOSITORY_NAME="${REPOSITORY_URI##*/}"
   IMAGE_URI="${REPOSITORY_URI}:${IMAGE_TAG}"
-  DOCKER_DESKTOP_CONTEXT="$(docker context show)"
-  DOCKER_HOST="$(docker context inspect "${DOCKER_DESKTOP_CONTEXT}" --format '{{.Endpoints.docker.Host}}')"
-  export DOCKER_HOST
-  DEPLOY_DOCKER_CONFIG="$(mktemp -d "${TMPDIR:-/tmp}/dispute-docker-config.XXXXXX")"
-  export DOCKER_CONFIG="${DEPLOY_DOCKER_CONFIG}"
-  cleanup() {
-    if [[ "$(basename "${DEPLOY_DOCKER_CONFIG}")" == dispute-docker-config.* ]]; then
-      rm -rf -- "${DEPLOY_DOCKER_CONFIG}"
-    fi
-  }
-  trap cleanup EXIT
+  if aws ecr describe-images \
+    --region "${AWS_REGION}" \
+    --repository-name "${REPOSITORY_NAME}" \
+    --image-ids imageTag="${IMAGE_TAG}" >/dev/null 2>&1; then
+    echo "Image already exists and ECR tags are immutable; reusing ${IMAGE_URI}."
+  else
+    DOCKER_DESKTOP_CONTEXT="$(docker context show)"
+    DOCKER_HOST="$(docker context inspect "${DOCKER_DESKTOP_CONTEXT}" --format '{{.Endpoints.docker.Host}}')"
+    export DOCKER_HOST
+    DEPLOY_DOCKER_CONFIG="$(mktemp -d "${TMPDIR:-/tmp}/dispute-docker-config.XXXXXX")"
+    export DOCKER_CONFIG="${DEPLOY_DOCKER_CONFIG}"
+    cleanup() {
+      if [[ "$(basename "${DEPLOY_DOCKER_CONFIG}")" == dispute-docker-config.* ]]; then
+        rm -rf -- "${DEPLOY_DOCKER_CONFIG}"
+      fi
+    }
+    trap cleanup EXIT
 
-  aws ecr get-login-password --region "${AWS_REGION}" | \
-    python3 infra/aws/write_docker_auth.py "${DOCKER_CONFIG}/config.json" "${REGISTRY}"
+    aws ecr get-login-password --region "${AWS_REGION}" | \
+      python3 infra/aws/write_docker_auth.py "${DOCKER_CONFIG}/config.json" "${REGISTRY}"
 
-  docker buildx build \
-    --platform linux/amd64 \
-    --file Dockerfile.aws \
-    --tag "${IMAGE_URI}" \
-    --push .
+    docker buildx build \
+      --platform linux/amd64 \
+      --file Dockerfile.aws \
+      --tag "${IMAGE_URI}" \
+      --push .
+  fi
 
   aws cloudformation deploy \
     --region "${AWS_REGION}" \
