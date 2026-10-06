@@ -12,6 +12,8 @@ The working journey can identify a synthetic customer, retrieve and rank card tr
 | Experience | Link |
 |---|---|
 | Factored Bank application | [Open the interactive demo](https://dispute-factored-hackathon.github.io/factored-hackathon-2026-ateam/) |
+| Project video | [Watch the demo on YouTube](https://www.youtube.com/watch?v=e81QooqKe4A) |
+| Hackathon presentation | [View the presentation slides](assets/2026-factored-hackathon-slides.pdf) |
 | LATAM dispute-service dashboard | [Open the Streamlit analytics dashboard](https://dispute-factored-analytics.streamlit.app/) |
 
 The application uses a stable GitHub Pages address that forwards visitors to the current deployment. The dashboard is designed for aggregate synthetic analytics and no customer-level records; Streamlit may request sign-in when its sharing settings are restricted.
