@@ -58,6 +58,15 @@ def test_known_phone_uses_profile_locale_and_skips_language_question() -> None:
     assert "autenticação pelo número desta ligação é automática" in opening
     assert "Factored ID" in opening
     assert "atendente humano a qualquer momento" in opening
+    assert opening.count("atendente humano") == 1
+
+    authenticated = calls.choose_authentication_method(state.call_id, method="phone")
+    next_message = SipRealtimeGateway._message_for(authenticated, "phone_auth_success")
+    next_instructions = SipRealtimeGateway._system_instructions(authenticated)
+
+    assert "atendente humano" not in next_message
+    assert "only once, in the opening message" in next_instructions
+    assert "never proactively repeat" in next_instructions
 
 
 def test_document_authentication_uses_same_shared_backend_profile() -> None:

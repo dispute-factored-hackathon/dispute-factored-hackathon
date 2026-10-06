@@ -2084,6 +2084,49 @@ class RealtimeSidebandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("data", next_question)
         self.assertNotIn("nome do estabelecimento", next_question)
 
+    def test_filter_controls_are_announced_only_on_first_search_in_each_language(self):
+        scenarios = {
+            "pt": ("brazilian", "Você pode corrigir um filtro", "Você pode corrigir"),
+            "es": ("colombian", "Puedes corregir un filtro", "Puedes corregir"),
+            "en": ("american", "You can correct a filter", "You can correct"),
+        }
+
+        for index, (language, (accent, first_guidance, repeated_guidance)) in enumerate(
+            scenarios.items(),
+            start=1,
+        ):
+            with self.subTest(language=language):
+                transactions = fruit_search_repository("CLI-002")
+                self.addCleanup(transactions.close)
+                gateway, _, _ = self._gateway([], transaction_repository=transactions)
+                call_id = f"call_filter_guidance_{index}"
+                state = gateway.calls.start("+5511999990001", call_id=call_id)
+                state = gateway.calls.confirm_language(state.call_id)
+                state = gateway.calls.choose_authentication_method(
+                    state.call_id,
+                    method="phone",
+                )
+                gateway.calls.choose_language(
+                    state.call_id,
+                    language=language,
+                    accent=accent,
+                )
+
+                first = gateway.calls.search_transactions(
+                    state.call_id,
+                    TransactionSearchCriteria(approximate_amount=13),
+                )
+                first_message = gateway._message_for(first.state, "transaction_candidate")
+                gateway.calls.resolve_transaction_candidate(state.call_id, confirmed=False)
+                second = gateway.calls.search_transactions(
+                    state.call_id,
+                    TransactionSearchCriteria(city="São Paulo"),
+                )
+                second_message = gateway._message_for(second.state, "transaction_candidate")
+
+                self.assertEqual(first_message.count(first_guidance), 1)
+                self.assertNotIn(repeated_guidance, second_message)
+
     def test_three_denials_use_configured_handoff_availability(self):
         transactions = fruit_search_repository("CLI-002")
         self.addCleanup(transactions.close)
