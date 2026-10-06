@@ -64,6 +64,8 @@ This remains a synthetic demonstration. A SIP `From` header can be spoofed and i
 
 The call worker sends each completed synthetic caller transcript to TypeSafe Jev before asking the Realtime model to act. Jev handles only bounded decisions with typed probabilities: prompt abuse, an explicit human request, initial language choice, authentication method, transaction confirmation, fraud-versus-duplicate classification, card environment, and the optional satisfaction rating. High-confidence decisions call the existing server-owned tools directly. Low-confidence, unavailable, open-ended, or composite cases fall back to Realtime without failing the call.
 
+Every Jev request carries the current workflow stage, conversation language, the customer's current answer and Izzy's immediately preceding question. Context-dependent stages—including language and authentication choices, transaction and dispute confirmations, complaint filing, and CSAT—fail closed to the channel's structured fallback when that preceding question is unavailable; Jev is never asked to interpret an isolated “yes”, “no”, or number. Only the minimum conversational context is sent: full history, customer identity and transaction records remain in the application.
+
 OpenAI Realtime remains responsible for speech recognition, speech generation, contextual questions, and extracting variable transaction-search fields such as merchant, approximate amount, date, and location. A denial that also contains corrected transaction details deliberately falls back so Realtime can extract those details; Jev still provides the global abuse and human-request guard. The backend continues to own identity, transaction access, Visa mapping, card blocking, complaint filing, and human transfer.
 
 `JEV_API_KEY` is server-only. It must stay in `.env` locally and in the existing combined Secrets Manager JSON in AWS; it must never be sent to a browser, included in a model prompt, or written to logs. Jev telemetry contains only model, action, confidence, latency, and token counts. Because the external decision request contains the completed caller transcript, this integration is authorized only for the synthetic demonstration data used by this repository.
@@ -376,8 +378,9 @@ uv run --extra analytics streamlit run analytics/streamlit_app.py
 ```
 
 Deployment and the lower-cost Streamlit-versus-QuickSight decision are documented in
-[`analytics/README.md`](analytics/README.md). Store `MOTHERDUCK_TOKEN` only in local environment
-variables or the hosting platform's encrypted secrets.
+[`analytics/README.md`](analytics/README.md). The preferred source is the private, versioned
+DuckDB file in S3; MotherDuck remains a compatibility fallback. Store all database credentials
+only in local environment variables or the hosting platform's encrypted secrets.
 
 ## Izzy web chat (`/agent`)
 

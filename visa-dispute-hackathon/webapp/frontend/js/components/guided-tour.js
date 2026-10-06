@@ -65,17 +65,20 @@ const STEPS = [
     {
         id: "complaints",
         route: "/complaints",
-        target: ".complaint-item, #empty-state",
-        allowMissingTarget: true,
     },
     {
         id: "profile-link",
         route: "/home",
+        target: "[data-tour='profile-link']",
+        action: "activate",
     },
     { id: "profile", route: "/profile" },
     {
         id: "finish",
         route: "/home",
+        target: "[data-tour='shady-business']",
+        action: "activate",
+        actionTarget: ".shady-link",
     },
 ];
 
@@ -476,7 +479,7 @@ async function showCurrentStep() {
         COPY.controls.progress,
         { current: currentIndex + 1, total: STEPS.length },
     );
-    layer.querySelector(".guided-tour-close").textContent = "×";
+    layer.querySelector(".guided-tour-close").innerHTML = '<svg class="ui-icon" aria-hidden="true"><use href="/static/assets/icons/ui.svg#close"></use></svg>';
     layer.querySelector(".guided-tour-close").setAttribute("aria-label", t(COPY.controls.close));
     layer.querySelector("#guided-tour-title").textContent = t(titleKey);
     layer.querySelector("#guided-tour-body").textContent = t(bodyKey);
@@ -517,6 +520,10 @@ async function activateTarget(target) {
     const step = STEPS[currentIndex];
     const completedId = step.id;
     emitMetric("target_activated");
+    if (currentIndex === STEPS.length - 1) {
+        await finishTour(destination);
+        return;
+    }
     await saveProgress("in_progress", completedId);
     currentIndex += 1;
     if (destination) {
@@ -545,13 +552,17 @@ async function previousStep() {
     await showCurrentStep();
 }
 
-async function finishTour() {
+async function finishTour(destination = null) {
     const mode = window.sessionStorage.getItem(TOUR_MODE_KEY);
     const completedStep = mode === REPLAY ? "replay-finish" : STEPS.at(-1).id;
     await saveProgress("completed", completedStep);
     emitMetric("completed");
     removeLayer();
     window.sessionStorage.removeItem(TOUR_MODE_KEY);
+    if (destination) {
+        window.location.assign(destination);
+        return;
+    }
     if (mode === FIRST_EXPERIENCE && window.location.pathname === "/home") {
         window.dispatchEvent(new CustomEvent("factored:shady-start"));
     }

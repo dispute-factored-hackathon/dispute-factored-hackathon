@@ -21,7 +21,7 @@ import {
 
 import {
     initializeGuidedTour,
-} from "../components/guided-tour.js?v=12";
+} from "../components/guided-tour.js?v=14";
 
 
 const page =
@@ -119,10 +119,10 @@ function createTransactionItem(
         "true",
     );
 
-    icon.textContent =
-        transaction.is_fraud
-            ? "!"
-            : "↗";
+    const iconName = transaction.is_fraud
+        ? "alert"
+        : "arrow-up-right";
+    icon.innerHTML = `<svg class="ui-icon" aria-hidden="true"><use href="/static/assets/icons/ui.svg#${iconName}"></use></svg>`;
 
     const main =
         document.createElement("div");

@@ -128,6 +128,7 @@ only the schema.
 Current workflow stage: {stage}
 Allowed intents now: {allowed}
 Today's date: {today}
+Izzy's immediately preceding message: {prompt_context}
 Purchases currently offered to the customer, numbered (if any): {candidate}
 
 Rules:
@@ -145,8 +146,11 @@ Rules:
 - report_problem: the customer says whether they did not authorize the purchase
   (UNAUTHORIZED_CARD) or were charged more than once for one purchase (DUPLICATE_PROCESSING);
   use INSUFFICIENT_INFO when it is unclear. Set card_environment only if they said how it was paid.
-- In stage needs_dispute_classification: yes/no to the problem Izzy suggested is
-  confirm_transaction / deny_transaction; an answer about how it was paid (online, in person)
+- In stage confirm_dispute_suggestion, interpret the customer's answer in relation to Izzy's
+  immediately preceding suggestion. Any natural affirmative in English, Portuguese, or Spanish
+  is confirm_transaction. Any natural rejection in those languages is deny_transaction. This
+  applies equally when Izzy suggested an unauthorized transaction or duplicate processing.
+- In stage needs_dispute_classification, an answer about how it was paid (online, in person)
   is report_problem with card_environment set and allegation null.
 - In stage confirm_complaint, confirm_transaction means yes, file the dispute now, and
   deny_transaction means no, do not file it.
@@ -169,6 +173,10 @@ ALLOWED_INTENTS: dict[str, tuple[ChatIntent, ...]] = {
     ),
     "needs_dispute_classification": (
         ChatIntent.REPORT_PROBLEM,
+        ChatIntent.CONFIRM_TRANSACTION,
+        ChatIntent.DENY_TRANSACTION,
+    ),
+    "confirm_dispute_suggestion": (
         ChatIntent.CONFIRM_TRANSACTION,
         ChatIntent.DENY_TRANSACTION,
     ),
@@ -258,16 +266,25 @@ class ChatTurnInterpreter:
         message: str,
         language: str,
         candidate: list[dict[str, Any]] | None,
+        prompt_context: str = "",
         today: date | None = None,
     ) -> TurnDecision:
         jev_decision = await asyncio.to_thread(
-            self._jev_decision, stage=stage, message=message, language=language
+            self._jev_decision,
+            stage=stage,
+            message=message,
+            language=language,
+            prompt_context=prompt_context,
         )
         if jev_decision is not None and jev_decision.intent is not ChatIntent.DESCRIBE_TRANSACTION:
             return jev_decision
 
         interpretation = await self._llm_interpretation(
-            stage=stage, message=message, candidate=candidate, today=today or date.today()
+            stage=stage,
+            message=message,
+            candidate=candidate,
+            prompt_context=prompt_context,
+            today=today or date.today(),
         )
         return TurnDecision(
             intent=interpretation.intent,
@@ -277,11 +294,23 @@ class ChatTurnInterpreter:
             interpretation=interpretation,
         )
 
-    def _jev_decision(self, *, stage: str, message: str, language: str) -> TurnDecision | None:
+    def _jev_decision(
+        self,
+        *,
+        stage: str,
+        message: str,
+        language: str,
+        prompt_context: str,
+    ) -> TurnDecision | None:
         if not self.jev_router.enabled:
             return None
         try:
-            decision = self.jev_router.route(stage=stage, transcript=message, language=language)
+            decision = self.jev_router.route(
+                stage=stage,
+                transcript=message,
+                language=language,
+                prompt_context=prompt_context,
+            )
         except JevDecisionError as error:
             LOGGER.info(
                 json.dumps(
@@ -321,6 +350,7 @@ class ChatTurnInterpreter:
         stage: str,
         message: str,
         candidate: list[dict[str, Any]] | None,
+        prompt_context: str,
         today: date,
     ) -> ChatTurnInterpretation:
         allowed = (*ALLOWED_INTENTS.get(stage, ()), *GLOBAL_INTENTS)
@@ -328,6 +358,7 @@ class ChatTurnInterpreter:
             stage=stage,
             allowed=", ".join(intent.value for intent in allowed),
             today=today.isoformat(),
+            prompt_context=prompt_context or "not available",
             candidate=json.dumps(candidate, ensure_ascii=False) if candidate else "none",
         )
         try:

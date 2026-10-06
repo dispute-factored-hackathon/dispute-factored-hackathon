@@ -94,6 +94,7 @@ class VoiceCallStage(StrEnum):
     NEEDS_TRANSACTION_DETAILS = "needs_transaction_details"
     CONFIRM_TRANSACTION = "confirm_transaction"
     NEEDS_DISPUTE_CLASSIFICATION = "needs_dispute_classification"
+    CONFIRM_DISPUTE_CLASSIFICATION = "confirm_dispute_classification"
     DISPUTE_CLASSIFIED = "dispute_classified"
     COMPLETED = "completed"
     HANDOFF = "handoff"
@@ -792,6 +793,7 @@ class VoiceCallService:
         customer_denies_authorization: bool = False,
         customer_reports_duplicate: bool = False,
         customer_reported_card_environment: CardEnvironment | str | None = None,
+        require_confirmation: bool = False,
     ) -> DisputeClassificationResult:
         """Validate the allegation and store an auditable Visa condition candidate."""
         state = self.get(call_id)
@@ -821,7 +823,11 @@ class VoiceCallService:
         updated = replace(
             state,
             stage=(
-                VoiceCallStage.DISPUTE_CLASSIFIED
+                (
+                    VoiceCallStage.CONFIRM_DISPUTE_CLASSIFICATION
+                    if require_confirmation
+                    else VoiceCallStage.DISPUTE_CLASSIFIED
+                )
                 if outcome is DisputeClassificationOutcome.CLASSIFIED
                 else VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION
             ),
@@ -829,10 +835,11 @@ class VoiceCallService:
         )
         if (
             outcome is DisputeClassificationOutcome.CLASSIFIED
+            and not require_confirmation
             and classification.allegation is DisputeAllegation.UNAUTHORIZED_CARD
         ):
             updated = self._block_confirmed_transaction_card(updated)
-        if outcome is DisputeClassificationOutcome.CLASSIFIED:
+        if outcome is DisputeClassificationOutcome.CLASSIFIED and not require_confirmation:
             updated = self._file_classified_complaint(updated)
         self._calls[call_id] = updated
         self.call_interactions.sync(updated)
@@ -845,6 +852,46 @@ class VoiceCallService:
             outcome=outcome.value,
         )
         return DisputeClassificationResult(updated, outcome)
+
+    def confirm_dispute_classification(
+        self,
+        call_id: str,
+        *,
+        confirmed: bool,
+    ) -> VoiceCallState:
+        """Apply irreversible workflow actions only after caller confirmation."""
+
+        state = self.get(call_id)
+        if state.stage is not VoiceCallStage.CONFIRM_DISPUTE_CLASSIFICATION:
+            raise ValueError("there is no dispute classification awaiting confirmation")
+        classification = state.dispute_classification
+        if classification is None or classification.visa_condition_code is None:
+            raise ValueError("the dispute classification candidate is missing")
+
+        if not confirmed:
+            updated = replace(
+                state,
+                stage=VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION,
+                dispute_classification=None,
+            )
+            self._calls[call_id] = updated
+            self.call_interactions.sync(updated)
+            _telemetry("voice.dispute.classification_rejected", call_id=call_id)
+            return updated
+
+        updated = replace(state, stage=VoiceCallStage.DISPUTE_CLASSIFIED)
+        if classification.allegation is DisputeAllegation.UNAUTHORIZED_CARD:
+            updated = self._block_confirmed_transaction_card(updated)
+        updated = self._file_classified_complaint(updated)
+        self._calls[call_id] = updated
+        self.call_interactions.sync(updated)
+        _telemetry(
+            "voice.dispute.classification_confirmed",
+            call_id=call_id,
+            allegation=classification.allegation.value,
+            visa_condition_code=classification.visa_condition_code,
+        )
+        return updated
 
     def _file_classified_complaint(self, state: VoiceCallState) -> VoiceCallState:
         """Persist the validated intake result without letting the model own the write."""

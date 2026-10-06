@@ -20,6 +20,19 @@ import httpx
 
 LOGGER = logging.getLogger(__name__)
 
+CONTEXTUAL_STAGES = frozenset(
+    {
+        "needs_language_confirmation",
+        "needs_auth_method",
+        "confirm_transaction",
+        "needs_dispute_classification",
+        "confirm_dispute_classification",
+        "confirm_dispute_suggestion",
+        "confirm_complaint",
+        "dispute_classified",
+    }
+)
+
 
 def _telemetry(event: str, **fields: Any) -> None:
     LOGGER.info(json.dumps({"event": event, **fields}, ensure_ascii=False, default=str))
@@ -172,16 +185,22 @@ class JevVoiceRouter:
         stage: str,
         transcript: str,
         language: str,
+        prompt_context: str = "",
     ) -> JevVoiceDecision:
-        """Choose a bounded action or explicitly defer to the Realtime model."""
+        """Choose a bounded action only when the preceding prompt supplies enough context."""
 
         if self.client is None:
+            return JevVoiceDecision(JevAction.FALLBACK, 0.0)
+
+        if stage in CONTEXTUAL_STAGES and not prompt_context.strip():
+            _telemetry("jev.context.missing", stage=stage)
             return JevVoiceDecision(JevAction.FALLBACK, 0.0)
 
         questions = self._questions_for(stage)
         payload = self.client.decide(
             state={
                 "customer_utterance": transcript,
+                "previous_agent_prompt": prompt_context,
                 "workflow_stage": stage,
                 "conversation_language": language,
             },
@@ -358,8 +377,16 @@ class JevVoiceRouter:
                 "unclear": "No explicit supported-language choice or unrelated input.",
             },
             "needs_auth_method": {
-                "phone": "Explicitly chooses authentication using the calling phone number.",
-                "document": "Explicitly chooses authentication using a document number.",
+                "phone": (
+                    "Chooses the phone, telephone, this number, calling number, or automatic "
+                    "phone-number authentication. Interpret the answer in the context of Izzy's "
+                    "immediately preceding authentication-method question, including imperfect "
+                    "speech transcription such as 'through phone number' or 'your phone number'."
+                ),
+                "document": (
+                    "Chooses a document number, identification number, or Factored ID, interpreted "
+                    "in the context of Izzy's immediately preceding authentication-method question."
+                ),
                 "unclear": "No explicit authentication-method choice or unrelated input.",
             },
             "confirm_transaction": {
@@ -373,12 +400,48 @@ class JevVoiceRouter:
             },
             "needs_dispute_classification": {
                 "UNAUTHORIZED_CARD": (
-                    "Explicitly denies making, approving, or authorizing the selected transaction."
+                    "Says the selected purchase is fraud, a scam, not recognized, not theirs, or "
+                    "that they did not make, approve, or authorize it. Equivalent meanings in "
+                    "English, Portuguese, or Spanish count even when phrased briefly."
                 ),
                 "DUPLICATE_PROCESSING": (
                     "Recognizes the purchase but says that same purchase was charged more than once."
                 ),
                 "INSUFFICIENT_INFO": "Neither claim is explicit, both conflict, or input is unrelated.",
+            },
+            "confirm_dispute_classification": {
+                "CONFIRM": "Confirms that Izzy's proposed dispute category is correct.",
+                "DENY": "Rejects or corrects Izzy's proposed dispute category.",
+                "UNCLEAR": "Does not clearly accept or reject the proposed dispute category.",
+            },
+            "confirm_dispute_suggestion": {
+                "CONFIRM": (
+                    "Accepts Izzy's immediately preceding suggestion about the selected "
+                    "transaction. This includes short and natural equivalents of yes in all "
+                    "supported languages: yes, yeah, yep, correct, exactly, that's right; sim, "
+                    "isso, correto, exato, é isso; sí, correcto, exacto, así es, claro."
+                ),
+                "DENY": (
+                    "Rejects or corrects Izzy's immediately preceding suggestion. This includes "
+                    "short and natural equivalents of no in all supported languages: no, nope, "
+                    "not that, that's wrong; não, negativo, não é isso, está errado; no, "
+                    "negativo, no es eso, está equivocado."
+                ),
+                "UNCLEAR": (
+                    "Does not clearly accept or reject Izzy's immediately preceding suggestion."
+                ),
+            },
+            "confirm_complaint": {
+                "CONFIRM": (
+                    "Confirms that Izzy should file the dispute now. This includes natural "
+                    "affirmatives in English, Portuguese, and Spanish when answering Izzy's "
+                    "immediately preceding filing question."
+                ),
+                "DENY": (
+                    "Declines or rejects filing the dispute now, including natural negative "
+                    "answers in English, Portuguese, and Spanish."
+                ),
+                "UNCLEAR": "Does not clearly accept or reject filing the dispute.",
             },
             "dispute_classified": {
                 "rating_1": "Rating 1: 1, one, um/uma, or uno/una, including a bare answer.",
@@ -468,6 +531,21 @@ class JevVoiceRouter:
                 "customer_reports_duplicate": choice == "DUPLICATE_PROCESSING",
                 "customer_reported_card_environment": environment,
             }
+
+        if stage == "confirm_dispute_classification":
+            if choice not in {"CONFIRM", "DENY", "UNCLEAR"}:
+                return None
+            return "confirm_dispute_classification", {"confirmation_intent": choice}
+
+        if stage == "confirm_dispute_suggestion":
+            if choice not in {"CONFIRM", "DENY", "UNCLEAR"}:
+                return None
+            return "confirm_transaction", {"confirmation_intent": choice}
+
+        if stage == "confirm_complaint":
+            if choice not in {"CONFIRM", "DENY", "UNCLEAR"}:
+                return None
+            return "confirm_transaction", {"confirmation_intent": choice}
 
         if stage == "dispute_classified":
             if choice.startswith("rating_") and choice[-1:] in {"1", "2", "3", "4", "5"}:

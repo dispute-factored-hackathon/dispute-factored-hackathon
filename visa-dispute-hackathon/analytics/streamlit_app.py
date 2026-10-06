@@ -14,7 +14,11 @@ APP_ROOT = Path(__file__).resolve().parents[1]
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
-from analytics.data import AnalyticsRepository, connect_motherduck  # noqa: E402
+from analytics.data import (  # noqa: E402
+    AnalyticsRepository,
+    connect_duckdb_file,
+    connect_motherduck,
+)
 
 st.set_page_config(
     page_title="LATAM dispute service analytics",
@@ -32,6 +36,28 @@ def _secret(name: str, default: str | None = None) -> str | None:
 
 @st.cache_resource(show_spinner="Connecting to the synthetic analytics database…")
 def repository() -> AnalyticsRepository:
+    duckdb_uri = _secret("ANALYTICS_DUCKDB_URI")
+    if duckdb_uri:
+        # Streamlit secrets remain server-side. DuckDB's credential-chain provider reads these
+        # values only to open the private S3 object; no credential is rendered or logged.
+        for name in (
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+        ):
+            value = _secret(name)
+            if value:
+                os.environ[name] = str(value)
+        catalog = str(_secret("ANALYTICS_DUCKDB_CATALOG", "lakehouse"))
+        schema = str(_secret("ANALYTICS_DUCKDB_SCHEMA", "silver"))
+        region = str(_secret("AWS_REGION", "sa-east-1"))
+        connection = connect_duckdb_file(
+            str(duckdb_uri),
+            catalog=catalog,
+            aws_region=region,
+        )
+        return AnalyticsRepository(connection, catalog=catalog, schema=schema)
+
     token = _secret("MOTHERDUCK_TOKEN")
     database = _secret("MOTHERDUCK_DATABASE", "lakehouse")
     schema = _secret("MOTHERDUCK_SCHEMA", "silver")
@@ -260,9 +286,11 @@ with sustainability:
 
 with methods:
     st.markdown(
-        "The app runs read-only aggregate SQL against `lakehouse.silver` in MotherDuck through "
-        "DuckDB. Queries are cached for one hour. No row-level customer, transcript, document, "
-        "telephone, email, address, card number or free-text complaint data is rendered."
+        "The app runs read-only aggregate SQL against `lakehouse.silver` through DuckDB. Its "
+        "configured source can be the private, versioned DuckDB file in AWS S3 or MotherDuck as "
+        "a compatibility fallback. Queries are cached for one hour. No row-level customer, "
+        "transcript, document, telephone, email, address, card number or free-text complaint data "
+        "is rendered."
     )
     st.dataframe(data["inventory"], width="stretch", hide_index=True)
     st.subheader("Known data gaps")

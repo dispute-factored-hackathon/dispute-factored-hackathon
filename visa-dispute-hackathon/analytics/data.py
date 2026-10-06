@@ -5,12 +5,14 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import duckdb
 import pandas as pd
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_S3_DUCKDB_URI = re.compile(r"^s3://[a-z0-9][a-z0-9.-]*/[A-Za-z0-9._/-]+\.duckdb$")
 DISPUTE_SUBCATEGORIES = ("CARGO NO RECONOCIDO", "COBRO INDEBIDO")
 CARD_PRODUCT_TYPES = ("CREDIT CARD", "DEBIT CARD")
 
@@ -30,6 +32,43 @@ def connect_motherduck(
     if not _IDENTIFIER.fullmatch(resolved_database):
         raise ValueError("MOTHERDUCK_DATABASE must be a plain SQL identifier.")
     return duckdb.connect(f"md:{resolved_database}")
+
+
+def connect_duckdb_file(
+    source: str,
+    *,
+    catalog: str = "lakehouse",
+    aws_region: str | None = None,
+) -> duckdb.DuckDBPyConnection:
+    """Attach a local or private-S3 DuckDB file read-only under a stable catalog name."""
+
+    if not _IDENTIFIER.fullmatch(catalog):
+        raise ValueError("catalog must be a plain SQL identifier")
+    resolved = source.strip()
+    if resolved.startswith("s3://"):
+        if not _S3_DUCKDB_URI.fullmatch(resolved):
+            raise ValueError("ANALYTICS_DUCKDB_URI must reference one S3 .duckdb object")
+    else:
+        path = Path(resolved).expanduser().resolve()
+        if not path.is_file() or path.suffix != ".duckdb":
+            raise ValueError("ANALYTICS_DUCKDB_URI must reference an existing .duckdb file")
+        resolved = str(path)
+
+    connection = duckdb.connect()
+    if resolved.startswith("s3://"):
+        connection.execute("INSTALL httpfs; LOAD httpfs")
+        region = aws_region or os.getenv("AWS_REGION", "sa-east-1")
+        if not re.fullmatch(r"[a-z]{2}(?:-gov)?-[a-z]+-\d", region):
+            raise ValueError("AWS_REGION is invalid")
+        connection.execute(
+            f"CREATE SECRET analytics_s3 (TYPE s3, PROVIDER credential_chain, "
+            f"CHAIN 'env', REGION '{region}')"
+        )
+    # DuckDB does not parameterize ATTACH identifiers or paths. The identifier is allow-listed and
+    # a local path is SQL-escaped; S3 URIs are constrained to the character allow-list above.
+    escaped_source = resolved.replace("'", "''")
+    connection.execute(f"ATTACH '{escaped_source}' AS \"{catalog}\" (READ_ONLY)")
+    return connection
 
 
 @dataclass(slots=True)

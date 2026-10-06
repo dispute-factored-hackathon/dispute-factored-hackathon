@@ -255,7 +255,6 @@ def test_contextual_tour_is_interactive_and_handles_empty_accounts() -> None:
         'id: "izzy"',
         "target: \"[data-tour='izzy']\"",
         'id: "complaints-link"',
-        'target: ".complaint-item, #empty-state"',
         'id: "profile-link"',
         'id: "finish"',
         'action: "activate"',
@@ -271,12 +270,16 @@ def test_contextual_tour_is_interactive_and_handles_empty_accounts() -> None:
     assert 'target: ".complaint-item"' not in content
     transactions_step = content.split('id: "transactions"', 1)[1].split("},", 1)[0]
     assert "target:" not in transactions_step
+    complaints_step = content.split('id: "complaints"', 1)[1].split("},", 1)[0]
+    assert "target:" not in complaints_step
+    assert "action:" not in complaints_step
     profile_link_step = content.split('id: "profile-link"', 1)[1].split("},", 1)[0]
-    assert "target:" not in profile_link_step
-    assert "action:" not in profile_link_step
+    assert "target: \"[data-tour='profile-link']\"" in profile_link_step
+    assert 'action: "activate"' in profile_link_step
     finish_step = content.split('id: "finish"', 1)[1].split("},", 1)[0]
-    assert "target:" not in finish_step
-    assert "action:" not in finish_step
+    assert "target: \"[data-tour='shady-business']\"" in finish_step
+    assert 'action: "activate"' in finish_step
+    assert 'actionTarget: ".shady-link"' in finish_step
 
 
 def test_empty_transaction_history_has_truthful_tour_copy() -> None:
@@ -425,7 +428,8 @@ def test_empty_complaint_history_does_not_block_contextual_tour() -> None:
     assert client.get("/api/complaints").json() == []
     javascript = client.get("/static/js/components/guided-tour.js").text
     assert 'id: "complaints"' in javascript
-    assert 'target: ".complaint-item, #empty-state"' in javascript
+    complaints_step = javascript.split('id: "complaints"', 1)[1].split("},", 1)[0]
+    assert "target:" not in complaints_step
     assert 'id: "complaint-detail"' not in javascript
     assert 'target: ".complaint-item"' not in javascript
 
@@ -481,16 +485,16 @@ def test_complaint_details_resume_the_contextual_tour() -> None:
     client = TestClient(app)
     content = client.get("/static/js/pages/complaint-detail.js").text
 
-    assert 'from "../components/guided-tour.js?v=12"' in content
+    assert 'from "../components/guided-tour.js?v=14"' in content
     assert "await initializeGuidedTour();" in content
 
 
 def test_pages_load_the_cache_busted_empty_account_tour() -> None:
     client = TestClient(app)
-    expected_version = "v=20261005-onboarding-empty4"
+    expected_version = "v=20261005-onboarding-targets1"
 
     home = client.get("/static/pages/home.html").text
-    assert "v=20261005-onboarding-empty5" in home
+    assert expected_version in home
 
     for page in (
         "cards",

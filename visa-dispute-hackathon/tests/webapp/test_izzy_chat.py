@@ -21,6 +21,7 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 
 from dispute_agent.jev_decision import JevVoiceRouter
+from dispute_agent.voice_call import VoiceCallStage
 from dispute_agent.web_chat import (
     ChatSessionNotFoundError,
     ChatTurnInterpreter,
@@ -90,6 +91,72 @@ class ScriptedReplies:
             messages
         ):
             yield chunk
+
+
+class ContextualYesNoJevClient:
+    """Minimal Jev contract fake that requires question context for short answers."""
+
+    affirmative = frozenset(
+        {
+            "yes",
+            "yeah, that's right",
+            "sim",
+            "isso mesmo",
+            "sí",
+            "así es",
+        }
+    )
+    negative = frozenset(
+        {
+            "no",
+            "nope, that's wrong",
+            "não",
+            "não é isso",
+            "no es eso",
+        }
+    )
+
+    def __init__(self) -> None:
+        self.requests = []
+
+    def decide(self, **request):
+        self.requests.append(request)
+        state = request["state"]
+        assert state["workflow_stage"] == "confirm_dispute_suggestion"
+        assert state["previous_agent_prompt"]
+        message = state["customer_utterance"].casefold().strip(" .!?")
+        if message in self.affirmative:
+            label = "CONFIRM"
+        elif message in self.negative:
+            label = "DENY"
+        else:
+            label = "UNCLEAR"
+        choice = {
+            "type": "choice",
+            "choice": label,
+            "confidence": 0.99,
+            "probabilities": {label: 0.99},
+        }
+        return {
+            "model": "jev-context-test",
+            "answers": {
+                "prompt_abuse": {"type": "noul", "noul": 0.01},
+                "explicit_human_request": {"type": "noul", "noul": 0.01},
+                "explicit_language_change": {
+                    "type": "choice",
+                    "choice": "none",
+                    "confidence": 0.99,
+                    "probabilities": {"none": 0.99},
+                },
+                "speech_clarity": {
+                    "type": "choice",
+                    "choice": "clear",
+                    "confidence": 0.99,
+                    "probabilities": {"clear": 0.99},
+                },
+                "stage_intent": choice,
+            },
+        }
 
 
 @pytest.fixture
@@ -632,6 +699,89 @@ def add_purchase(repositories, transaction_id, **overrides):
     repositories.transactions.create(
         base.model_copy(update={"transaction_id": transaction_id, **overrides})
     )
+
+
+@pytest.mark.parametrize(
+    ("locale", "affirmative", "negative"),
+    [
+        ("en-US", "yes", "nope, that's wrong"),
+        ("en-US", "yeah, that's right", "no"),
+        ("pt-BR", "sim", "não é isso"),
+        ("pt-BR", "isso mesmo", "não"),
+        ("es-CO", "sí", "no es eso"),
+        ("es-MX", "así es", "no"),
+    ],
+)
+@pytest.mark.parametrize("suggestion", ["unauthorized", "duplicate"])
+def test_short_yes_and_no_confirm_problem_suggestions_in_every_language(
+    locale,
+    affirmative,
+    negative,
+    suggestion,
+):
+    def scenario(answer):
+        repositories = new_repositories()
+        seed_demo_customers(repositories.customers)
+        seed_demo_card(repositories.products, GABRIEL)
+        for transaction in demo_fruit_transactions(GABRIEL):
+            repositories.transactions.create(transaction)
+        transaction_id = "FLAGGED-CONTEXT" if suggestion == "unauthorized" else "FRUIT-01-LEMON"
+        if suggestion == "unauthorized":
+            add_purchase(
+                repositories,
+                transaction_id,
+                is_fraud=True,
+                fraud_score=0.99,
+                channel="POS",
+            )
+        else:
+            original = demo_fruit_transactions(GABRIEL)[0]
+            add_purchase(
+                repositories,
+                "LEMON-CONTEXT-DUPLICATE",
+                transaction_date=original.transaction_date + timedelta(hours=2),
+            )
+        jev_client = ContextualYesNoJevClient()
+        fallback = ScriptedClassifier()
+        chat = IzzyWebChat(
+            WebChatDisputeService.from_repositories(repositories),
+            ChatTurnInterpreter(
+                jev_router=JevVoiceRouter(client=jev_client),
+                structured_model=fallback,
+            ),
+            phone_number=PHONE,
+            session_ttl_seconds=1800,
+            max_message_chars=500,
+            max_turns=40,
+            reply_model=ScriptedReplies(),
+        )
+        customer = repositories.customers.get_by_id(GABRIEL)
+        opening = chat.open_session(customer, locale=locale, transaction_id=transaction_id)
+        _, text = run_turn(chat, opening.session_id, answer)
+        return chat, repositories, fallback, jev_client, opening, text
+
+    accepted, accepted_repositories, accepted_fallback, accepted_jev, opening, text = scenario(
+        affirmative
+    )
+    accepted_state = accepted.service.get(opening.session_id)
+    expected_code = "10.3" if suggestion == "unauthorized" else "12.6.1"
+    assert accepted_state.dispute_classification.visa_condition_code == expected_code
+    assert (
+        "file" in text.casefold() or "registre" in text.casefold() or "registr" in text.casefold()
+    )
+    assert accepted_fallback.calls == 0
+    assert accepted_jev.requests[0]["state"]["previous_agent_prompt"] in opening.message
+    if suggestion == "unauthorized":
+        assert accepted_repositories.products.list_by_customer(GABRIEL)[0].product_status == (
+            "Blocked"
+        )
+
+    rejected, _, rejected_fallback, rejected_jev, opening, _ = scenario(negative)
+    rejected_state = rejected.service.get(opening.session_id)
+    assert rejected_state.stage is VoiceCallStage.NEEDS_DISPUTE_CLASSIFICATION
+    assert rejected.service.pending_suggestion(opening.session_id) is None
+    assert rejected_fallback.calls == 0
+    assert rejected_jev.requests[0]["state"]["previous_agent_prompt"] in opening.message
 
 
 def test_leaving_and_coming_back_resumes_the_open_chat(chat_setup):

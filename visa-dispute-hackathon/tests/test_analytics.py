@@ -3,7 +3,7 @@ from __future__ import annotations
 import duckdb
 import pytest
 
-from analytics.data import AnalyticsRepository
+from analytics.data import AnalyticsRepository, connect_duckdb_file
 
 
 @pytest.fixture
@@ -120,3 +120,27 @@ def test_interaction_cost_proxy_uses_observed_duration(repository: AnalyticsRepo
     assert result["priced_interactions"] == 2
     assert result["mean_duration_minutes"] == pytest.approx(7.5)
     assert result["mean_labor_cost_usd"] > 0
+
+
+def test_local_duckdb_file_is_attached_read_only_with_stable_catalog(tmp_path) -> None:
+    database_path = tmp_path / "treated lakehouse.duckdb"
+    writer = duckdb.connect(str(database_path))
+    writer.execute("CREATE SCHEMA silver; CREATE TABLE silver.customers(id INTEGER)")
+    writer.execute("INSERT INTO silver.customers VALUES (1)")
+    writer.close()
+
+    connection = connect_duckdb_file(str(database_path), catalog="lakehouse")
+
+    assert connection.execute("SELECT count(*) FROM lakehouse.silver.customers").fetchone() == (1,)
+    with pytest.raises(duckdb.Error):
+        connection.execute("INSERT INTO lakehouse.silver.customers VALUES (2)")
+
+
+def test_duckdb_source_rejects_unsafe_catalog_and_non_database_file(tmp_path) -> None:
+    text_file = tmp_path / "not-a-database.txt"
+    text_file.write_text("synthetic")
+
+    with pytest.raises(ValueError, match="catalog"):
+        connect_duckdb_file(str(text_file), catalog='lakehouse"; DROP SCHEMA silver')
+    with pytest.raises(ValueError, match=r"existing \.duckdb"):
+        connect_duckdb_file(str(text_file))
