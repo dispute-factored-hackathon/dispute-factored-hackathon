@@ -185,7 +185,7 @@ def test_interface_controls_use_platform_independent_svg_icons() -> None:
     ):
         assert f'id="{icon_name}"' in icon_asset.text
 
-    unstable_glyphs = ("←", "→", "↗", "↑", "×", "🛒", "✓")
+    unstable_glyphs = ("←", "→", "↗", "↑", "\u00d7", "🛒", "✓")
     for route in (
         "/home",
         "/cards",

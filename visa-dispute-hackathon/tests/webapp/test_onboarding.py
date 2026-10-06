@@ -274,10 +274,10 @@ def test_contextual_tour_is_interactive_and_handles_empty_accounts() -> None:
     assert "target:" not in complaints_step
     assert "action:" not in complaints_step
     profile_link_step = content.split('id: "profile-link"', 1)[1].split("},", 1)[0]
-    assert 'target: "[data-tour=\'profile-link\']"' in profile_link_step
+    assert "target: \"[data-tour='profile-link']\"" in profile_link_step
     assert 'action: "activate"' in profile_link_step
     finish_step = content.split('id: "finish"', 1)[1].split("},", 1)[0]
-    assert 'target: "[data-tour=\'shady-business\']"' in finish_step
+    assert "target: \"[data-tour='shady-business']\"" in finish_step
     assert 'action: "activate"' in finish_step
     assert 'actionTarget: ".shady-link"' in finish_step
 

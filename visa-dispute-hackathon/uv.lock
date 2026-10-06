@@ -880,9 +880,11 @@ analytics = [
 [package.dev-dependencies]
 dev = [
     { name = "coverage" },
+    { name = "duckdb" },
     { name = "ipykernel" },
     { name = "jupyterlab" },
     { name = "matplotlib-inline" },
+    { name = "pandas" },
     { name = "pytest" },
     { name = "radon" },
     { name = "ruff" },
@@ -917,9 +919,11 @@ provides-extras = ["analytics"]
 [package.metadata.requires-dev]
 dev = [
     { name = "coverage", specifier = ">=7.16.2" },
+    { name = "duckdb", specifier = ">=1.5.5" },
     { name = "ipykernel", specifier = ">=6,<8" },
     { name = "jupyterlab", specifier = ">=4,<5" },
     { name = "matplotlib-inline", specifier = ">=0.1,<1" },
+    { name = "pandas", specifier = ">=3.0.6" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "radon", specifier = ">=6.0.1" },
     { name = "ruff", specifier = ">=0.14,<1" },
