@@ -20,6 +20,19 @@ import httpx
 
 LOGGER = logging.getLogger(__name__)
 
+CONTEXTUAL_STAGES = frozenset(
+    {
+        "needs_language_confirmation",
+        "needs_auth_method",
+        "confirm_transaction",
+        "needs_dispute_classification",
+        "confirm_dispute_classification",
+        "confirm_dispute_suggestion",
+        "confirm_complaint",
+        "dispute_classified",
+    }
+)
+
 
 def _telemetry(event: str, **fields: Any) -> None:
     LOGGER.info(json.dumps({"event": event, **fields}, ensure_ascii=False, default=str))
@@ -174,9 +187,13 @@ class JevVoiceRouter:
         language: str,
         prompt_context: str = "",
     ) -> JevVoiceDecision:
-        """Choose a bounded action or explicitly defer to the Realtime model."""
+        """Choose a bounded action only when the preceding prompt supplies enough context."""
 
         if self.client is None:
+            return JevVoiceDecision(JevAction.FALLBACK, 0.0)
+
+        if stage in CONTEXTUAL_STAGES and not prompt_context.strip():
+            _telemetry("jev.context.missing", stage=stage)
             return JevVoiceDecision(JevAction.FALLBACK, 0.0)
 
         questions = self._questions_for(stage)
@@ -414,6 +431,18 @@ class JevVoiceRouter:
                     "Does not clearly accept or reject Izzy's immediately preceding suggestion."
                 ),
             },
+            "confirm_complaint": {
+                "CONFIRM": (
+                    "Confirms that Izzy should file the dispute now. This includes natural "
+                    "affirmatives in English, Portuguese, and Spanish when answering Izzy's "
+                    "immediately preceding filing question."
+                ),
+                "DENY": (
+                    "Declines or rejects filing the dispute now, including natural negative "
+                    "answers in English, Portuguese, and Spanish."
+                ),
+                "UNCLEAR": "Does not clearly accept or reject filing the dispute.",
+            },
             "dispute_classified": {
                 "rating_1": "Rating 1: 1, one, um/uma, or uno/una, including a bare answer.",
                 "rating_2": "Rating 2: 2, two, dois/duas, or dos, including a bare answer.",
@@ -509,6 +538,11 @@ class JevVoiceRouter:
             return "confirm_dispute_classification", {"confirmation_intent": choice}
 
         if stage == "confirm_dispute_suggestion":
+            if choice not in {"CONFIRM", "DENY", "UNCLEAR"}:
+                return None
+            return "confirm_transaction", {"confirmation_intent": choice}
+
+        if stage == "confirm_complaint":
             if choice not in {"CONFIRM", "DENY", "UNCLEAR"}:
                 return None
             return "confirm_transaction", {"confirmation_intent": choice}
