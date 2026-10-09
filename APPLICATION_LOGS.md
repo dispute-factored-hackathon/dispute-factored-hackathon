@@ -10,6 +10,7 @@ Never add an AWS access key, secret key, Twilio token, OpenAI key, or LangSmith 
 |---|---|---|---|
 | Voice agent, SIP webhook, Realtime events, call transcript telemetry, handoff, transaction search, Visa classification, complaint filing, and card blocking | AWS CloudWatch Logs | `/aws/lambda/dispute-factored-demo-sip` | Supplied AWS credential |
 | Web application runtime and Lambda errors | AWS CloudWatch Logs | `/aws/lambda/dispute-factored-demo-web` | Supplied AWS credential |
+| Judge startup, web/data readiness and idle egress shutdown | AWS CloudWatch Logs | `/aws/lambda/dispute-factored-demo-judge-wake` | Project AWS access |
 | PostgreSQL and DuckDB deployment progress | AWS CloudFormation stack events | `dispute-factored-postgres` and `dispute-factored-duckdb` | Supplied AWS credential |
 | Pull-request tests, security scans, and releases | GitHub Actions | Repository **Actions** tab | GitHub repository access |
 | PSTN call status, duration, routing, and Twilio errors | Twilio Console | **Monitor > Logs > Calls** | Twilio project access |
@@ -51,7 +52,7 @@ export AWS_REGION=sa-east-1
 
 ## 2. Read the AWS application logs
 
-The deployed demo has two Lambda log groups. Both currently retain logs for **3 days**, as configured in the application CloudFormation stack. Use a narrow time range whenever possible.
+The deployed demo has separate voice, web, database-bootstrap and judge-wake Lambda log groups. Application groups retain logs according to the CloudFormation setting. Use a narrow time range whenever possible.
 
 List the available application groups:
 
@@ -159,6 +160,19 @@ aws logs tail /aws/lambda/dispute-factored-demo-web \
 
 Lambda platform records such as `START`, `END`, and `REPORT` show invocation boundaries, duration, memory, and failures. Application tracebacks appear in the same group.
 
+### Judge startup and idle shutdown
+
+Inspect the on-demand controller when the GitHub Pages screen does not redirect, or when the egress instance does not stop after inactivity:
+
+```bash
+aws logs tail /aws/lambda/dispute-factored-demo-judge-wake \
+  --region sa-east-1 \
+  --since 30m \
+  --format short
+```
+
+The controller starts the egress instance on a browser wake request, synchronously warms the web/data Lambda after EC2 is running, and checks recent web and voice invocation metrics on the EventBridge schedule. If CloudWatch activity cannot be read, it deliberately keeps egress running rather than interrupting a judge or telephone call.
+
 ### CloudWatch Logs Insights
 
 For multi-event investigations, open **CloudWatch > Logs Insights** in region **South America (São Paulo) / `sa-east-1`**, select only the `sip` or `web` group, and use a short time window. Example query for one telephone call:
@@ -190,7 +204,7 @@ fields @timestamp, @message
 
 For the SIP Lambda, compare `webhook.gateway.ready` with `webhook.handler.started`, `worker.started`, `sip.accept.completed`, `realtime.sideband.connected`, and first-response events. SnapStart only addresses Lambda initialization; these timestamps distinguish application setup from OpenAI, SIP, database and model-response latency. The deployed function keeps Lambda system logging at `WARN` to limit log volume, so platform `REPORT` records and `@restoreDuration` are not normally emitted. Temporarily use `INFO` only when a platform-level benchmark is required.
 
-Logs Insights charges for data scanned. Select one log group, keep the time range small, and avoid repeatedly querying all retained data. The restricted credential can query only the two application groups.
+Logs Insights charges for data scanned. Select one log group, keep the time range small, and avoid repeatedly querying all retained data. The restricted credential can query only the web and voice application groups; the judge-wake group requires project AWS access.
 
 AWS references: [CloudWatch Logs permissions](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/permissions-reference-cwl.html), [`aws logs tail`](https://docs.aws.amazon.com/cli/latest/reference/logs/tail.html), and [`aws logs start-query`](https://docs.aws.amazon.com/cli/latest/reference/logs/start-query.html).
 

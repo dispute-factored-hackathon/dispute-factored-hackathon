@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+
 import s3fs
 from dotenv import load_dotenv
 
@@ -16,11 +17,12 @@ fs = s3fs.S3FileSystem(
     client_kwargs={"region_name": os.getenv("FACTORED_REGION")},
 )
 
+
 def download_file_if_not_exists(s3_path: str, local_path: Path):
     """Downloads a single file from S3, skipping it if it already exists locally."""
     if not fs.exists(s3_path):
-            print(f"[Aviso - No encontrado en S3] {s3_path}")
-            return
+        print(f"[Aviso - No encontrado en S3] {s3_path}")
+        return
 
     if local_path.exists():
         print(f"[Skipping - Already exists] {local_path}")
@@ -29,6 +31,7 @@ def download_file_if_not_exists(s3_path: str, local_path: Path):
     local_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"[Downloading file] {s3_path} -> {local_path}")
     fs.get(s3_path, str(local_path))
+
 
 def download_folder_if_not_exists(s3_prefix: str, local_base_dir: Path):
     """Recursively downloads a directory from S3, skipping existing files."""
@@ -50,6 +53,7 @@ def download_folder_if_not_exists(s3_prefix: str, local_base_dir: Path):
         print(f"[Downloading] {remote_file} -> {local_dest}")
         fs.get(remote_file, str(local_dest))
 
+
 if __name__ == "__main__":
     branches_s3 = f"{bucket_data_folder}/branches.csv"
     branches_local = copper_folder / "branches/branches.csv"
@@ -70,7 +74,7 @@ if __name__ == "__main__":
     customers_s3 = f"{bucket_data_folder}/customers.csv"
     customers_local = copper_folder / "customers/customers.csv"
     download_file_if_not_exists(customers_s3, customers_local)
-    
+
     products_s3 = f"{bucket_data_folder}/products.csv"
     products_local = copper_folder / "products/products.csv"
     download_file_if_not_exists(products_s3, products_local)

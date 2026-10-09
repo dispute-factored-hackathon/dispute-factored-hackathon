@@ -16,7 +16,7 @@ The working journey can identify a synthetic customer, retrieve and rank card tr
 | Hackathon presentation | [View the presentation slides](assets/2026-factored-hackathon-slides.pdf) |
 | LATAM dispute-service dashboard | [Open the Streamlit analytics dashboard](https://dispute-factored-analytics.streamlit.app/) |
 
-The application uses a stable GitHub Pages address that forwards visitors to the current deployment. The dashboard is designed for aggregate synthetic analytics and no customer-level records; Streamlit may request sign-in when its sharing settings are restricted.
+The application uses a stable GitHub Pages address. When the judge environment is sleeping, that page starts the low-cost network path, prepares the application and data, displays progress, and redirects automatically when the demo is ready. The dashboard is designed for aggregate synthetic analytics and no customer-level records; Streamlit may request sign-in when its sharing settings are restricted.
 
 ## Solution architecture
 
@@ -57,7 +57,7 @@ Read the detailed [solution architecture and technology stack](https://github.co
 
 ### Current deployment boundary
 
-The web and voice Lambdas, Function URLs, ECR image, server-side secrets, CloudWatch groups and private Aurora PostgreSQL database are deployed in `sa-east-1`. Both channels use the same least-privilege `factored_app` role; the mock-backend Lambda settings have been removed. An isolated deployment Lambda owns Alembic migrations, grants and the idempotent 100-customer synthetic lakehouse seed. The voice Function URL targets a stable published-version alias so Lambda SnapStart can reduce initialization latency without paying for continuously provisioned instances.
+The web and voice Lambdas, Function URLs, ECR image, server-side secrets, CloudWatch groups and private Aurora PostgreSQL database are deployed in `sa-east-1`. Both channels use the same least-privilege `factored_app` role; the mock-backend Lambda settings have been removed. An isolated deployment Lambda owns Alembic migrations, grants and the idempotent 100-customer synthetic lakehouse seed. The voice Function URL targets a stable published-version alias so Lambda SnapStart can reduce initialization latency without paying for continuously provisioned instances. A separate wake controller runs outside the VPC: it starts the egress instance only when the judge page is opened and stops it after 30 minutes without web or voice activity; Aurora independently pauses after five idle minutes.
 
 ## What the prototype demonstrates
 

@@ -74,6 +74,8 @@ jobs:
           aws cloudformation validate-template --template-body file://infra/aws/bootstrap.yaml >/dev/null
           aws cloudformation validate-template --template-body file://infra/aws/database.yaml >/dev/null
           aws cloudformation validate-template --template-body file://infra/aws/application.yaml >/dev/null
+          aws cloudformation validate-template --template-body file://infra/aws/github-actions-role.yaml >/dev/null
+          aws cloudformation validate-template --template-body file://infra/aws/database-deployer-access.yaml >/dev/null
 
       - name: Build, push, and deploy
         run: ./infra/aws/deploy.sh application

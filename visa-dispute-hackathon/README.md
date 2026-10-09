@@ -20,7 +20,7 @@ or review the executed [analytics notebook](https://github.com/dispute-factored-
 | Persistence | Repository contracts, PostgreSQL 16, psycopg/pool and Alembic | Shared web/voice operational data, schema evolution and replaceable test adapters |
 | Data ingestion | MotherDuck, Python seed pipeline and Pydantic mapping | Read-only synthetic source, validation, masking and idempotent PostgreSQL loads |
 | Analytics | DuckDB, MotherDuck, pandas, Jupyter and Streamlit | Aggregate baselines, operational diagnostics and a public decision dashboard |
-| Cloud | Lambda, Function URLs, EventBridge, ECR, Secrets Manager, CloudWatch, IAM and CloudFormation | Cost-conscious runtime, warm-up scheduling, secret retrieval, logs and repeatable infrastructure in `sa-east-1` |
+| Cloud | Lambda, Function URLs, EventBridge, ECR, Secrets Manager, CloudWatch, IAM and CloudFormation | On-demand judge runtime, idle shutdown, secret retrieval, logs and repeatable infrastructure in `sa-east-1` |
 | Observability | Structured CloudWatch events, LangSmith, PostgreSQL telemetry, Twilio/OpenAI consoles and GitHub Actions | Call reconstruction, model/tool traces, interaction state, provider diagnosis and delivery evidence |
 | Engineering | `uv`, Docker, Pytest, Ruff, Coverage.py, Radon, Semgrep and optional SonarQube/Gitleaks | Reproducible environments, tests, code quality, security checks and deployment |
 
@@ -161,8 +161,9 @@ The hackathon deployment avoids redundant services. It does **not** create App R
 
 The components are:
 
-- **Web Lambda Function URL:** serves the FastAPI backend and both browser interfaces from the same immutable image. Public pages and static assets start without opening PostgreSQL or loading the AI stack; those dependencies initialize only when their APIs are first used. The public GitHub Pages address redirects here.
-- **Web warm-up schedule:** EventBridge invokes the web Lambda every five minutes and initializes the database pool and Izzy chat runtime. The deploy script also warms the newly deployed function before reporting success.
+- **Web Lambda Function URL:** serves the FastAPI backend and both browser interfaces from the same immutable image. Public pages and static assets start without opening PostgreSQL or loading the AI stack; those dependencies initialize only when their APIs are first used.
+- **Judge wake Function URL:** the public GitHub Pages entrypoint calls a small Lambda outside the VPC. It starts the egress instance, warms the web/data runtime and returns the application URL when the environment is ready. The page presents an accessible English, Portuguese or Spanish startup message while it waits.
+- **Idle shutdown schedule:** EventBridge checks web and voice Lambda activity every five minutes. The egress instance stops after 30 minutes without either channel, while lookup failures fail safe and leave it running. The former unconditional five-minute web warm-up has been removed so Aurora can pause.
 - **Voice Lambda Function URL:** receives the signed OpenAI webhook; standard Lambda invocation and duration charges still apply.
 - **Voice SnapStart alias:** the Function URL and asynchronous worker invoke a published `live` alias restored from a Python 3.12 snapshot. This reduces cold initialization without keeping paid capacity continuously provisioned.
 - **Lambda ingress invocation:** verifies the signature and accepts the SIP call immediately.
@@ -172,14 +173,14 @@ The components are:
 - **CloudWatch Logs:** keeps JSON logs for three days. The application never logs document digits.
 - **Aurora PostgreSQL Serverless v2:** one encrypted private PostgreSQL 16.8 instance, limited to 0–1 ACU and configured to auto-pause after five idle minutes. It stores shared web/voice state.
 - **Database bootstrap Lambda:** alone can read the owner credential; it serializes bootstrap runs with a PostgreSQL advisory lock, runs Alembic, refreshes the restricted `factored_app` grants, guarantees the canonical Izzy service-agent row and imports 100 synthetic customers idempotently.
-- **Low-cost egress instance:** provides outbound-only access from private Lambdas to OpenAI, MotherDuck and AWS APIs. It replaces the much more expensive NAT Gateway.
+- **Low-cost egress instance:** provides outbound-only access from private Lambdas to OpenAI, MotherDuck and AWS APIs. It replaces the much more expensive NAT Gateway and now runs only during a judge session or deployment.
 - **Concurrency:** uses the account's unreserved Lambda capacity. The demo account currently has a total concurrency quota of 10, so the stack does not reserve concurrency; AWS requires all 10 executions to remain unreserved at that quota. Use account quotas and OpenAI-side limits as the cost and abuse boundary until the Lambda quota is increased.
 
 #### Low-cost cold-start control
 
 `application.yaml` enables Lambda SnapStart only for the SIP function. Every application deploy publishes a new immutable version, updates the stable `live` alias, and points both the public Function URL and internal asynchronous worker invocation at that alias. CloudFormation deletes the replaced version so unused cached snapshots do not accumulate charges. The deploy script verifies that the published version reports `SnapStart.OptimizationStatus=On` before declaring success.
 
-The web Lambda remains on demand and does not use continuously billed Provisioned Concurrency. It receives 1,024 MB rather than 512 MB, which also gives initialization more CPU, and an EventBridge rule sends a warm-up event every five minutes. The event eagerly opens the database pool and Izzy chat runtime, while ordinary public-page requests remain lightweight through lazy imports. A five-minute schedule produces about 8,640 short Lambda invocations in a 30-day month; normal Lambda and EventBridge pricing applies, but this volume is normally covered by their free tiers and is materially cheaper than keeping provisioned capacity active. The schedule reduces, but cannot guarantee the elimination of, cold starts because Lambda may recycle or scale execution environments.
+The web Lambda remains on demand and does not use continuously billed Provisioned Concurrency. It receives 1,024 MB rather than 512 MB, which also gives initialization more CPU. The GitHub Pages entrypoint now performs the deliberate cold-start wait before redirecting the judge, instead of keeping the web and database layers artificially warm. The controller polls readiness, and EventBridge only performs the inexpensive idle check. Lambda may still recycle or scale execution environments, so the startup page communicates a 30–90 second planning range rather than promising an immediate start.
 
 At the 512 MB voice configuration, the São Paulo SnapStart cache is approximately USD 2.57 for a continuously active 30-day version, plus a very small charge for each restored environment and normal Lambda execution. This estimate uses the São Paulo entries in the [AWS Lambda public price list](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSLambda/current/index.json); verify current prices before budgeting. Delete obsolete versions and set `VOICE_SNAPSTART_APPLY_ON=None` when running `deploy.sh` if the optimization is no longer required.
 
@@ -193,10 +194,13 @@ Caller → SIP provider → OpenAI Realtime
                            ├─ signed webhook → Lambda Function URL
                            └─ private sideband ↔ Lambda call worker
 
-Browser → GitHub Pages redirect → Web Lambda Function URL → FastAPI + static frontend
+Browser → GitHub Pages wake page → Judge wake Lambda → egress EC2 + web/data warm-up
+                                      └─ ready → Web Lambda Function URL → FastAPI + static frontend
 ```
 
-Lambda and Aurora application compute are on demand; Aurora pauses when idle. The egress EC2 instance and its public IPv4 address remain running, and encrypted storage, Secrets Manager, ECR and CloudWatch are billed separately. The fixed AWS baseline is expected to be roughly USD 10–15/month in São Paulo before Aurora active time and traffic; verify the current AWS price list before budgeting. OpenAI Realtime, MotherDuck and the SIP provider are billed separately.
+Lambda and Aurora application compute are on demand; Aurora pauses when idle. The egress EC2 compute also stops after 30 minutes without web or voice activity. Its encrypted disk and public IPv4 address, plus Secrets Manager, ECR, CloudWatch and Aurora storage, remain billable while compute sleeps. OpenAI Realtime, MotherDuck and the SIP provider are billed separately. See the Wiki infrastructure-cost page for the current planning model.
+
+Judges should open the public GitHub Pages address before testing either the browser or telephone flow. The startup page wakes the shared outbound path used by both channels and keeps it available while web or voice activity continues.
 
 Prerequisites are an AWS account, an AWS CLI profile with deployment permissions, and Docker Buildx. From `visa-dispute-hackathon/`, create the persistent ECR repository and secret:
 
@@ -223,13 +227,14 @@ AWS_REGION=sa-east-1 ./infra/aws/deploy.sh application
 
 The one-time `database` action creates the private cluster/network and copies `MOTHERDUCK_TOKEN` from the local ignored `.env` into its retained runtime secret without printing it. The `application` action builds the image, wires web/voice to the database, invokes the idempotent migration/seed function, and fails if it does not return `ready`. Later CI releases update only the application stack and invoke the same safe migration; the GitHub OIDC role cannot create or delete database/network resources.
 
-The command prints both `Application` and `Webhook` addresses. The application address serves the browser experience. Use the exact webhook address to create the OpenAI project webhook, copy its new signing secret, and replace `OPENAI_WEBHOOK_SECRET` in the same AWS secret **before placing the first call**. No voice Lambda environment has started yet, so the first call reads the correct value. After a later secret rotation, deploy a new image tag to replace any warm environments.
+The command prints `Application`, `Judge wake page API` and `Webhook` addresses. GitHub Pages calls the wake API and redirects to the application after readiness succeeds. Use the exact webhook address to create the OpenAI project webhook, copy its new signing secret, and replace `OPENAI_WEBHOOK_SECRET` in the same AWS secret **before placing the first call**. No voice Lambda environment has started yet, so the first call reads the correct value. After a later secret rotation, deploy a new image tag to replace any warm environments.
 
 The infrastructure definitions are split because ECR must exist before Docker can push the image:
 
 - `infra/aws/bootstrap.yaml`: ECR and the retained secret.
 - `infra/aws/database.yaml`: private auto-pausing Aurora, restricted credentials, subnets/security groups and low-cost outbound routing.
-- `infra/aws/application.yaml`: least-privilege IAM, web/voice/bootstrap Lambdas, database wiring, Function URLs, bounded asynchronous invocation and log retention.
+- `infra/aws/application.yaml`: least-privilege IAM, web/voice/bootstrap/wake Lambdas, database wiring, Function URLs, activity-based idle shutdown, bounded asynchronous invocation and log retention.
+- `infra/aws/judge-landing.html`: source for the multilingual GitHub Pages startup experience; deployment-specific wake and application URLs replace its placeholders.
 - `Dockerfile.aws`: reproducible Python 3.12 Lambda image using the locked `uv` dependencies. BuildKit adds only `data/raw/customers.csv` from the supplied 150,000-row synthetic dataset; it does not upload the other raw tables to Docker.
 - `infra/aws/deploy.sh`: repeatable bootstrap/build/deploy commands.
 
@@ -245,7 +250,7 @@ The workflow uses GitHub OIDC to obtain short-lived AWS credentials. It does not
 
 The complete synthetic customer table is intentionally not committed. On GitHub-hosted runners, the deploy script extracts `customers.csv` from the newest immutable image already present in the project's ECR repository, then embeds it in the new image. Consequently, the first deployment must still be performed locally with `CUSTOMERS_BUILD_CONTEXT` pointing to a directory containing `customers.csv`. Subsequent automated deployments need no additional data service or paid storage.
 
-Each deployment uses the full Git commit SHA as its immutable image tag, runs Ruff and the complete unit-test suite, validates all CloudFormation templates, updates the application stack, migrates/seeds the existing private database, warms the web runtime, verifies the web health and login pages, and confirms that an unsigned webhook request is rejected with `invalid_webhook_signature`.
+Each deployment uses the full Git commit SHA as its immutable image tag, runs Ruff and the complete unit-test suite, validates all CloudFormation templates, starts egress only for deployment, updates the application stack, migrates/seeds the existing private database, warms the web runtime, verifies the web health and login pages, and confirms that an unsigned webhook request is rejected with `invalid_webhook_signature`. The idle controller later returns egress to the stopped state.
 
 ### Performance and workflow regression tests
 
