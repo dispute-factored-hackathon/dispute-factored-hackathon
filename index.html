@@ -3,56 +3,183 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta
-      http-equiv="refresh"
-      content="0; url=https://dss4vbay7fkct4nmk2chl2eioa0lkaog.lambda-url.sa-east-1.on.aws/"
-    />
-    <link
-      rel="canonical"
-      href="https://dss4vbay7fkct4nmk2chl2eioa0lkaog.lambda-url.sa-east-1.on.aws/"
-    />
+    <meta name="theme-color" content="#071b24" />
     <title>Factored Bank Demo</title>
     <style>
       :root {
         color-scheme: dark;
-        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
         background: #071b24;
         color: #f4fbf8;
       }
+      * { box-sizing: border-box; }
       body {
         min-height: 100vh;
         margin: 0;
         display: grid;
         place-items: center;
+        background:
+          radial-gradient(circle at 15% 10%, rgba(44, 214, 146, 0.16), transparent 32rem),
+          #071b24;
       }
       main {
-        width: min(32rem, calc(100% - 3rem));
+        width: min(34rem, calc(100% - 2rem));
+        padding: clamp(1.5rem, 6vw, 3rem);
+        border: 1px solid rgba(140, 245, 191, 0.25);
+        border-radius: 1.5rem;
+        background: rgba(10, 38, 49, 0.88);
+        box-shadow: 0 1.5rem 4rem rgba(0, 0, 0, 0.28);
         text-align: center;
       }
-      a {
-        display: inline-block;
-        margin-top: 1rem;
-        padding: 0.8rem 1.1rem;
-        border-radius: 999px;
+      .mark {
+        width: 3.25rem;
+        height: 3.25rem;
+        margin: 0 auto 1.25rem;
+        display: grid;
+        place-items: center;
+        border-radius: 1rem;
         background: #8cf5bf;
         color: #071b24;
-        font-weight: 700;
-        text-decoration: none;
+        font-size: 1.55rem;
+        font-weight: 900;
       }
+      h1 { margin: 0; font-size: clamp(1.75rem, 6vw, 2.5rem); line-height: 1.1; }
+      p { margin: 1rem 0 0; color: #c7ded7; line-height: 1.55; }
+      .status { min-height: 1.6rem; color: #f4fbf8; font-weight: 650; }
+      .progress {
+        height: 0.5rem;
+        margin: 1.5rem 0;
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.1);
+      }
+      .progress::after {
+        content: "";
+        display: block;
+        width: 42%;
+        height: 100%;
+        border-radius: inherit;
+        background: #8cf5bf;
+        animation: loading 1.4s ease-in-out infinite;
+      }
+      @keyframes loading {
+        from { transform: translateX(-110%); }
+        to { transform: translateX(340%); }
+      }
+      button, a {
+        min-height: 2.75rem;
+        padding: 0.75rem 1.1rem;
+        border: 0;
+        border-radius: 999px;
+        font: inherit;
+        font-weight: 750;
+      }
+      button { background: #8cf5bf; color: #071b24; cursor: pointer; }
+      button:disabled { cursor: wait; opacity: 0.72; }
+      a { display: none; color: #8cf5bf; }
+      .note { font-size: 0.875rem; color: #9cbab1; }
+      @media (prefers-reduced-motion: reduce) { .progress::after { animation-duration: 3s; } }
     </style>
-    <script>
-      window.location.replace(
-        "https://dss4vbay7fkct4nmk2chl2eioa0lkaog.lambda-url.sa-east-1.on.aws/",
-      );
-    </script>
   </head>
   <body>
     <main>
-      <h1>Opening Factored Bank…</h1>
-      <p>If the application does not open automatically, use the button below.</p>
-      <a href="https://dss4vbay7fkct4nmk2chl2eioa0lkaog.lambda-url.sa-east-1.on.aws/">
-        Open the application
-      </a>
+      <div class="mark" aria-hidden="true">F</div>
+      <h1 data-copy="title">Starting Factored Bank</h1>
+      <p data-copy="description">
+        The judge environment sleeps when nobody is using it. We are securely starting the website and phone demo for you.
+      </p>
+      <div class="progress" role="progressbar" aria-label="Starting the demo"></div>
+      <p class="status" id="status" aria-live="polite">Connecting…</p>
+      <button id="retry" type="button" hidden>Try again</button>
+      <a id="open-app" href="https://dss4vbay7fkct4nmk2chl2eioa0lkaog.lambda-url.sa-east-1.on.aws/">Open Factored Bank</a>
+      <p class="note" data-copy="note">This normally takes between 30 and 90 seconds.</p>
     </main>
+    <script>
+      const wakeUrl = "https://balru4aw2axvtnkkshxjfwi3qe0ysocx.lambda-url.sa-east-1.on.aws/";
+      const fallbackApplicationUrl = "https://dss4vbay7fkct4nmk2chl2eioa0lkaog.lambda-url.sa-east-1.on.aws/";
+      const copy = {
+        en: {
+          title: "Starting Factored Bank",
+          description: "The judge environment sleeps when nobody is using it. We are securely starting the website and phone demo for you.",
+          note: "This normally takes between 30 and 90 seconds.",
+          connecting: "Connecting…",
+          starting: "Starting the secure environment…",
+          warming: "Preparing the application and data…",
+          error: "The environment is taking longer than expected.",
+          retry: "Try again",
+          open: "Open Factored Bank",
+        },
+        pt: {
+          title: "Iniciando o Factored Bank",
+          description: "O ambiente dos jurados dorme quando ninguém está usando. Estamos iniciando o site e a demonstração por telefone com segurança para você.",
+          note: "Isso normalmente leva entre 30 e 90 segundos.",
+          connecting: "Conectando…",
+          starting: "Iniciando o ambiente seguro…",
+          warming: "Preparando a aplicação e os dados…",
+          error: "O ambiente está levando mais tempo do que o esperado.",
+          retry: "Tentar novamente",
+          open: "Abrir o Factored Bank",
+        },
+        es: {
+          title: "Iniciando Factored Bank",
+          description: "El entorno de evaluación se suspende cuando nadie lo usa. Estamos iniciando el sitio y la demostración telefónica de forma segura.",
+          note: "Normalmente tarda entre 30 y 90 segundos.",
+          connecting: "Conectando…",
+          starting: "Iniciando el entorno seguro…",
+          warming: "Preparando la aplicación y los datos…",
+          error: "El entorno está tardando más de lo esperado.",
+          retry: "Intentar de nuevo",
+          open: "Abrir Factored Bank",
+        },
+      };
+      const browserLanguage = (navigator.language || "").toLowerCase();
+      const language = browserLanguage.startsWith("pt")
+        ? "pt"
+        : browserLanguage.startsWith("es") ? "es" : "en";
+      const messages = copy[language];
+      document.documentElement.lang = language;
+      document.querySelector('[data-copy="title"]').textContent = messages.title;
+      document.querySelector('[data-copy="description"]').textContent = messages.description;
+      document.querySelector('[data-copy="note"]').textContent = messages.note;
+
+      const status = document.querySelector("#status");
+      const retry = document.querySelector("#retry");
+      const openApp = document.querySelector("#open-app");
+      retry.textContent = messages.retry;
+      openApp.textContent = messages.open;
+      let attempts = 0;
+
+      function scheduleRetry(seconds = 5) {
+        window.setTimeout(wake, Math.max(3, seconds) * 1000);
+      }
+
+      async function wake() {
+        retry.hidden = true;
+        retry.disabled = true;
+        attempts += 1;
+        status.textContent = attempts === 1 ? messages.connecting : messages.starting;
+        try {
+          const response = await fetch(wakeUrl, { cache: "no-store" });
+          if (!response.ok) throw new Error(`Wake request failed: ${response.status}`);
+          const result = await response.json();
+          if (result.ready) {
+            status.textContent = messages.warming;
+            window.location.replace(result.application_url || fallbackApplicationUrl);
+            return;
+          }
+          status.textContent = result.state === "warming" ? messages.warming : messages.starting;
+          scheduleRetry(result.retry_after_seconds);
+        } catch (error) {
+          console.error(error);
+          status.textContent = messages.error;
+          retry.hidden = false;
+          retry.disabled = false;
+          openApp.style.display = "inline-block";
+        }
+      }
+
+      retry.addEventListener("click", wake);
+      wake();
+    </script>
   </body>
 </html>
