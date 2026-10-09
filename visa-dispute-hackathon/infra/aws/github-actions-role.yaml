@@ -60,6 +60,7 @@ Resources:
                 Action:
                   - cloudformation:DescribeStacks
                   - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeStackResource
                   - cloudformation:DescribeChangeSet
                   - cloudformation:GetTemplateSummary
                   - cloudformation:ValidateTemplate
@@ -93,9 +94,19 @@ Resources:
                 Effect: Allow
                 Action:
                   - ec2:DescribeSecurityGroups
+                  - ec2:DescribeInstanceStatus
+                  - ec2:DescribeInstances
                   - ec2:DescribeSubnets
                   - ec2:DescribeVpcs
                 Resource: "*"
+              - Sid: StartTaggedDemoEgress
+                Effect: Allow
+                Action: ec2:StartInstances
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
+                Condition:
+                  StringEquals:
+                    ec2:ResourceTag/Name: !Sub "${ProjectName}-demo-nat"
               - Sid: ResolveDeploymentSecrets
                 Effect: Allow
                 Action: secretsmanager:DescribeSecret
@@ -138,12 +149,14 @@ Resources:
                     arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-demo-web
                   - !Sub >-
                     arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-demo-database-bootstrap
-              - Sid: InvokeWebWarmup
+                  - !Sub >-
+                    arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-demo-judge-wake
+              - Sid: InvokeWebDeploymentWarmup
                 Effect: Allow
                 Action: lambda:InvokeFunction
                 Resource: !Sub >-
                   arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-demo-web
-              - Sid: ManageWebWarmupSchedule
+              - Sid: ManageDemoSchedules
                 Effect: Allow
                 Action:
                   - events:DeleteRule

@@ -41,6 +41,16 @@ Parameters:
     Type: CommaDelimitedList
   LambdaSecurityGroupId:
     Type: AWS::EC2::SecurityGroup::Id
+  EgressInstanceId:
+    Type: AWS::EC2::Instance::Id
+    Description: Small egress instance started only while judges use the demo.
+
+  EgressIdleMinutes:
+    Type: Number
+    Default: 30
+    MinValue: 20
+    MaxValue: 180
+    Description: Stop egress after both web and voice Lambdas are idle for this interval.
 
   LangSmithProject:
     Type: String
@@ -143,6 +153,40 @@ Resources:
                   - !Ref MotherDuckSecretArn
                   - !Ref OpenAISecretArn
                   - !Ref LangSmithSecretArn
+
+  JudgeWakeExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ManageOnDemandDemo
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:StartInstances
+                  - ec2:StopInstances
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${EgressInstanceId}
+              - Effect: Allow
+                Action: ec2:DescribeInstances
+                Resource: "*"
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-${EnvironmentName}-web
+              - Effect: Allow
+                Action: cloudwatch:GetMetricStatistics
+                Resource: "*"
 
   DatabaseBootstrapExecutionRole:
     Type: AWS::IAM::Role
@@ -284,24 +328,79 @@ Resources:
       AuthType: NONE
       InvokeMode: BUFFERED
 
-  WebWarmupRule:
+  JudgeWakeFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${EnvironmentName}-judge-wake"
+      Description: Starts the judge environment on demand and stops idle egress.
+      PackageType: Image
+      Code:
+        ImageUri: !Ref ContainerImageUri
+      ImageConfig:
+        Command: ["webapp.backend.judge_wake.lambda_handler"]
+      Role: !GetAtt JudgeWakeExecutionRole.Arn
+      Architectures: [x86_64]
+      MemorySize: 256
+      Timeout: 45
+      Environment:
+        Variables:
+          EGRESS_INSTANCE_ID: !Ref EgressInstanceId
+          IDLE_MINUTES: !Ref EgressIdleMinutes
+          WEB_FUNCTION_NAME: !Ref WebFunction
+          VOICE_FUNCTION_NAME: !Ref SipFunction
+          APPLICATION_URL: !GetAtt WebFunctionUrl.FunctionUrl
+      LoggingConfig:
+        LogFormat: JSON
+        ApplicationLogLevel: INFO
+        SystemLogLevel: WARN
+
+  JudgeWakeFunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt JudgeWakeFunction.Arn
+      AuthType: NONE
+      InvokeMode: BUFFERED
+      Cors:
+        AllowOrigins:
+          - https://dispute-factored-hackathon.github.io
+        AllowMethods: [GET]
+        AllowHeaders: [content-type]
+        MaxAge: 3600
+
+  PublicJudgeWakeFunctionUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref JudgeWakeFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+
+  PublicJudgeWakeFunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref JudgeWakeFunction
+      Action: lambda:InvokeFunction
+      Principal: "*"
+      InvokedViaFunctionUrl: true
+
+  EgressIdleRule:
     Type: AWS::Events::Rule
     Properties:
-      Description: Low-cost warm ping for the hackathon web and chat demo.
+      Description: Stops demo egress after web and voice inactivity.
       ScheduleExpression: rate(5 minutes)
       State: ENABLED
       Targets:
-        - Arn: !GetAtt WebFunction.Arn
-          Id: WebFunctionWarmup
-          Input: '{"warmup":true}'
+        - Arn: !GetAtt JudgeWakeFunction.Arn
+          Id: EgressIdleCheck
+          Input: '{"action":"idle_check"}'
 
-  WebWarmupPermission:
+  EgressIdlePermission:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !Ref WebFunction
+      FunctionName: !Ref JudgeWakeFunction
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
-      SourceArn: !GetAtt WebWarmupRule.Arn
+      SourceArn: !GetAtt EgressIdleRule.Arn
 
   DatabaseBootstrapFunction:
     Type: AWS::Lambda::Function
@@ -396,6 +495,12 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/${ProjectName}-${EnvironmentName}-database-bootstrap"
       RetentionInDays: !Ref LogRetentionDays
 
+  JudgeWakeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ProjectName}-${EnvironmentName}-judge-wake"
+      RetentionInDays: !Ref LogRetentionDays
+
 Outputs:
   FunctionUrl:
     Value: !GetAtt SipFunctionUrl.FunctionUrl
@@ -406,8 +511,11 @@ Outputs:
   WebFunctionName:
     Value: !Ref WebFunction
 
-  WebWarmupSchedule:
-    Value: !GetAtt WebWarmupRule.Arn
+  JudgeWakeUrl:
+    Value: !GetAtt JudgeWakeFunctionUrl.FunctionUrl
+
+  EgressIdleSchedule:
+    Value: !GetAtt EgressIdleRule.Arn
 
   DatabaseBootstrapFunctionName:
     Value: !Ref DatabaseBootstrapFunction

@@ -22,6 +22,34 @@ stack_output() {
     --output text
 }
 
+stack_resource() {
+  aws cloudformation describe-stack-resource \
+    --region "${AWS_REGION}" \
+    --stack-name "$1" \
+    --logical-resource-id "$2" \
+    --query "StackResourceDetail.PhysicalResourceId" \
+    --output text
+}
+
+ensure_egress_running() {
+  local instance_id="$1"
+  local state
+  state="$(aws ec2 describe-instances \
+    --region "${AWS_REGION}" \
+    --instance-ids "${instance_id}" \
+    --query "Reservations[0].Instances[0].State.Name" \
+    --output text)"
+  if [[ "${state}" == "stopping" ]]; then
+    aws ec2 wait instance-stopped --region "${AWS_REGION}" --instance-ids "${instance_id}"
+    state="stopped"
+  fi
+  if [[ "${state}" == "stopped" ]]; then
+    aws ec2 start-instances --region "${AWS_REGION}" --instance-ids "${instance_id}" >/dev/null
+  fi
+  aws ec2 wait instance-running --region "${AWS_REGION}" --instance-ids "${instance_id}"
+  aws ec2 wait instance-status-ok --region "${AWS_REGION}" --instance-ids "${instance_id}"
+}
+
 deploy_database() {
   aws cloudformation deploy \
     --region "${AWS_REGION}" \
@@ -77,6 +105,8 @@ elif [[ "${ACTION}" == "application" || "${ACTION}" == "all" ]]; then
   DATABASE_OWNER_SECRET_ARN="$(stack_output "${DATABASE_STACK}" DatabaseOwnerSecretArn)"
   DATABASE_APP_SECRET_ARN="$(stack_output "${DATABASE_STACK}" DatabaseAppSecretArn)"
   MOTHERDUCK_SECRET_ARN="$(stack_output "${DATABASE_STACK}" MotherDuckSecretArn)"
+  EGRESS_INSTANCE_ID="$(stack_resource "${DATABASE_STACK}" EgressInstance)"
+  ensure_egress_running "${EGRESS_INSTANCE_ID}"
   uv run python infra/aws/sync_runtime_secrets.py \
     --region "${AWS_REGION}" \
     --motherduck-secret-arn "${MOTHERDUCK_SECRET_ARN}"
@@ -135,6 +165,7 @@ elif [[ "${ACTION}" == "application" || "${ACTION}" == "all" ]]; then
       MotherDuckSecretArn="${MOTHERDUCK_SECRET_ARN}" \
       PrivateSubnetIds="$(stack_output "${DATABASE_STACK}" PrivateSubnetIds)" \
       LambdaSecurityGroupId="$(stack_output "${DATABASE_STACK}" LambdaSecurityGroupId)" \
+      EgressInstanceId="${EGRESS_INSTANCE_ID}" \
       LangSmithProject="${LANGSMITH_PROJECT}" \
       HumanHandoffNumber="${HUMAN_HANDOFF_NUMBER}" \
       VoiceSnapStartApplyOn="${VOICE_SNAPSTART_APPLY_ON}"
@@ -188,6 +219,7 @@ elif [[ "${ACTION}" == "application" || "${ACTION}" == "all" ]]; then
   echo "Human handoff: configured"
   echo "Voice SnapStart: ${SNAPSTART_STATUS} (version ${SIP_PUBLISHED_VERSION})"
   echo "Web warmup: ready (${WEB_FUNCTION_NAME})"
+  echo "Judge wake page API: $(stack_output "${APPLICATION_STACK}" JudgeWakeUrl)"
   echo "Application: $(stack_output "${APPLICATION_STACK}" ApplicationUrl)"
   echo "Webhook: $(stack_output "${APPLICATION_STACK}" OpenAIWebhookUrl)"
 else

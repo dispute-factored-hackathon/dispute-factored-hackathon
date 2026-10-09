@@ -1,8 +1,8 @@
 import hashlib
 import os
+from collections.abc import Generator
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Generator
 
 import click
 import dlt
@@ -67,7 +67,7 @@ def build_destination(target: str) -> Destination:
         return dlt.destinations.motherduck(
             credentials={
                 "database": MOTHERDUCK_CATALOG,
-                "password": os.environ["MOTHERDUCK_LAKEHOUSE_TOKEN"]
+                "password": os.environ["MOTHERDUCK_LAKEHOUSE_TOKEN"],
             }
         )
     if target == "local":
@@ -153,9 +153,7 @@ def extract_snapshot(
 
 def build_window(end_date: date, lookback_days: int) -> list[date]:
     # Inclusive window [end_date - lookback_days, end_date], oldest first
-    return [
-        end_date - timedelta(days=offset) for offset in range(lookback_days, -1, -1)
-    ]
+    return [end_date - timedelta(days=offset) for offset in range(lookback_days, -1, -1)]
 
 
 def list_partition_folders(filesystem, table_root: str) -> dict[date, str]:
@@ -271,7 +269,7 @@ def extract_full_history(
 
     for partition_date, file_paths, fingerprints in partitions:
         readable_paths = duckdb_readable_paths(filesystem, file_paths)
-        for file_path, readable_path in zip(file_paths, readable_paths):
+        for file_path, readable_path in zip(file_paths, readable_paths, strict=True):
             source_paths.append(readable_path)
             partition_dates.append(partition_date)
             file_fingerprints.append(fingerprints[os.path.basename(file_path)])
@@ -308,8 +306,7 @@ def extract_full_history(
             connection.register_filesystem(filesystem)
         connection.register("file_map", file_map)
         reader = connection.execute(sql_query).fetch_record_batch(rows_per_batch)
-        for record_batch in reader:
-            yield record_batch
+        yield from reader
 
 
 def extract_partition(
@@ -494,7 +491,9 @@ def run_bronze_full_load(
     if not selected_dates:
         raise click.ClickException(f"No partitions on or before {end_date}.")
 
-    print(f"Full load: {selected_dates[0]} to {selected_dates[-1]} ({len(selected_dates)} partitions)")
+    print(
+        f"Full load: {selected_dates[0]} to {selected_dates[-1]} ({len(selected_dates)} partitions)"
+    )
 
     # Guard: bronze is append-only, so loading days it already holds would
     # duplicate them. The daily replay is the tool for days already in bronze.
@@ -572,7 +571,7 @@ def run_bronze_replay(
         return
 
     batches = [
-        pending_partitions[start:start + batch_days]
+        pending_partitions[start : start + batch_days]
         for start in range(0, len(pending_partitions), batch_days)
     ]
     print(
@@ -692,13 +691,23 @@ def build_partitioned_bronze_command(
 
         if full_load:
             run_bronze_full_load(
-                filesystem, partition_folders, end_date, target,
-                resource_name, history_resource,
+                filesystem,
+                partition_folders,
+                end_date,
+                target,
+                resource_name,
+                history_resource,
             )
         else:
             run_bronze_replay(
-                filesystem, partition_folders, end_date, lookback_days, batch_days, target,
-                resource_name, replay_resource,
+                filesystem,
+                partition_folders,
+                end_date,
+                lookback_days,
+                batch_days,
+                target,
+                resource_name,
+                replay_resource,
             )
 
     return main

@@ -1,5 +1,4 @@
 import sqlglot
-import sqlmesh
 from sqlglot import exp
 from sqlmesh import macro
 from sqlmesh.core.macros import MacroEvaluator
@@ -13,16 +12,16 @@ def LATEST_LOAD(
     partition_column: exp.Expression,
 ) -> exp.Expression:
     """Row filter: keep only rows of the most recent load for each partition value.
- 
+
     Bronze is append-only, so a re-delivered photo adds a new load; the newest one wins.
     The contract acts as a gate outside SQLMesh (the job stops before silver if it fails).
- 
+
     Usage: SELECT * FROM bronze.customers AS c WHERE @LATEST_LOAD(c, 'bronze.customers', snapshot_ts)
     """
     alias = table_alias.name
     table = table_name.name
     partition = partition_column.name
- 
+
     # dlt load ids are epoch-like strings, so compare them numerically
     predicate = f"""
         {alias}._dlt_load_id::DOUBLE = (
@@ -38,15 +37,9 @@ def LATEST_LOAD(
 def NORMALIZE_STRING(evaluator: MacroEvaluator, column_name: exp.Expression) -> exp.Expression:
     """Normalize string by trimming, converting to uppercase, and stripping accents."""
     return exp.Anonymous(
-        this="STRIP_ACCENTS",
-        expressions=[
-            exp.Trim(
-                this=exp.Upper(
-                    this=column_name
-                )
-            )
-        ]
+        this="STRIP_ACCENTS", expressions=[exp.Trim(this=exp.Upper(this=column_name))]
     )
+
 
 @macro()
 def SAFE_CAST(
